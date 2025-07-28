@@ -1,0 +1,81 @@
+#------------------------------------------------------------------------------
+# NightBloom/CMakeLists.txt
+# 
+# Root build configuration for the Nightbloom Engine
+#------------------------------------------------------------------------------
+cmake_minimum_required(VERSION 3.20)
+project(NightbloomEngine VERSION 0.1.0 LANGUAGES CXX)
+
+# Set C++ standard
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Set default build type if not specified
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
+endif()
+
+# Output directories
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+# Enable folder structure in IDEs
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+# Compiler-specific flags
+if(MSVC)
+    # Visual Studio flags
+    add_compile_options(/W4)                # Warning level 4
+    add_compile_options(/permissive-)       # Conformance mode
+    add_compile_options(/Zc:__cplusplus)    # Enable updated __cplusplus macro
+    
+    # Multi-processor compilation
+    add_compile_options(/MP)
+    
+    # Debug flags
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MDd /Zi /Ob0 /Od /RTC1")
+    
+    # Release flags  
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MD /O2 /Ob2 /DNDEBUG")
+    
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # GCC/Clang flags
+    add_compile_options(-Wall -Wextra -Wpedantic)
+    add_compile_options(-Wno-unused-parameter)
+    
+    # Debug flags
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
+    
+    # Release flags
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
+endif()
+
+# Options
+option(NIGHTBLOOM_BUILD_TESTS "Build unit tests" ON)
+
+# Add third party dependencies
+add_subdirectory(ThirdParty)
+
+# Add engine library
+add_subdirectory(Engine)
+
+# Export targets for external projects like Sandbox
+export(TARGETS NightbloomEngine
+    NAMESPACE Nightbloom::
+    FILE "${CMAKE_CURRENT_BINARY_DIR}/NightbloomEngineTargets.cmake"
+)
+
+# Create package config file
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NightbloomEngineConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/NightbloomEngineConfig.cmake"
+    INSTALL_DESTINATION lib/cmake/NightbloomEngine
+)
+
+# Enable testing if tests are built
+if(NIGHTBLOOM_BUILD_TESTS)
+    enable_testing()
+endif()
