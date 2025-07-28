@@ -6,15 +6,16 @@
 //------------------------------------------------------------------------------
 #pragma once
 
-// Platform detection
-#if defined(_WIN32) || defined(_WIN64)
-#define NIGHTBLOOM_PLATFORM_WINDOWS
-#elif defined(__linux__)
-#define NIGHTBLOOM_PLATFORM_LINUX  
-#elif defined(__APPLE__)
-#define NIGHTBLOOM_PLATFORM_MACOS
-#else
-#error "Unknown platform"
+// Disable warnings for third-party headers
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4996) // Disable deprecated warnings
+#pragma warning(disable: 4251) // Disable DLL interface warnings
+#endif
+
+// Platform detection - verify CMake defined the platform
+#if !defined(NIGHTBLOOM_PLATFORM_WINDOWS) && !defined(NIGHTBLOOM_PLATFORM_LINUX) && !defined(NIGHTBLOOM_PLATFORM_MACOS)
+#error "No platform defined! Check CMakeLists.txt"
 #endif
 
 // Standard includes
@@ -53,3 +54,7 @@ namespace Nightbloom
         NIGHTBLOOM_DISABLE_COPY(ClassName) \
         NIGHTBLOOM_DISABLE_MOVE(ClassName)
 }
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif

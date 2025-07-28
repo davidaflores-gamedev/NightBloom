@@ -1,0 +1,12 @@
+# Build folders
+Build/
+build/
+out/
+
+# Visual Studio
+.vs/
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
