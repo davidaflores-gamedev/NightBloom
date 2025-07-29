@@ -5,6 +5,7 @@
 // Copyright (c) 2024 Your Name. All rights reserved.
 //------------------------------------------------------------------------------
 
+#include "Engine.hpp"
 #include "Base.hpp"
 #include "Logger/Logger.hpp"
 #include "Logger/ConsoleLogger.hpp"
@@ -32,6 +33,20 @@ namespace Nightbloom
 			NIGHTBLOOM_VERSION_MAJOR,
 			NIGHTBLOOM_VERSION_MINOR,
 			NIGHTBLOOM_VERSION_PATCH);
+
+		const char* platformName = nullptr;
+
+#ifdef NIGHTBLOOM_PLATFORM_WINDOWS
+		platformName = "Windows";
+#elif defined(NIGHTBLOOM_PLATFORM_LINUX)
+		platformName = "Linux";
+#elif defined(NIGHTBLOOM_PLATFORM_MACOS)
+		platformName = "MacOS";
+#else
+		"Unknown Platform"
+#endif
+
+		LOG_INFO("Running on platform: {}", platformName);
     }
 
     void EngineShutdown()
