@@ -52,14 +52,14 @@ target_link_libraries(NightbloomEngine
 )
 
 # Precompiled headers
-target_precompile_headers(NightbloomEngine PRIVATE
-    <vector>
-    <string>
-    <memory>
-    <functional>
-    <algorithm>
-    <cstdint>
-)
+# target_precompile_headers(NightbloomEngine PRIVATE
+#     <vector>
+#     <string>
+#     <memory>
+#     <functional>
+#     <algorithm>
+#     <cstdint>
+# )
 
 # Group files in IDE
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/.. PREFIX "Engine" FILES ${ENGINE_SOURCES})
