@@ -19,7 +19,7 @@ namespace Nightbloom
 		int y = -1;  // -1 = centered
 		bool fullscreen = false;
 		bool resizable = true;
-		bool vsync = true;
+		bool vsync = false;
 		bool maximized = false;
 	};
 }

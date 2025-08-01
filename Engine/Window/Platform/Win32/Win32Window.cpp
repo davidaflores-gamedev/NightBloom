@@ -216,7 +216,7 @@ namespace Nightbloom
 		//MultiByteToWideChar(CP_UTF8, 0, desc.title.c_str(), -1, windowTitle, sizeof(windowTitle) / sizeof(windowTitle[0]));
 
 		// Create window
-		m_Hwnd = CreateWindowEx(
+		m_Hwnd = CreateWindowExA(
 			WS_EX_APPWINDOW,
 			windowClassDescription.lpszClassName,
 			title,
@@ -282,7 +282,7 @@ namespace Nightbloom
 		// For now, just call SwapBuffers if we have a display context
 		if (m_DisplayContext)
 		{
-			::SwapBuffers(m_DisplayContext);
+			//::SwapBuffers(m_DisplayContext);
 		}
 	}
 
