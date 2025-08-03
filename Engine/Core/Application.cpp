@@ -33,14 +33,32 @@ namespace Nightbloom
 			LOG_INFO("Window close requested");
 			Quit();
 			});
+
+		LOG_INFO("Initializing Renderer...");
+		m_Renderer = std::make_unique<Renderer>();
+		if (!m_Renderer->Initialize(m_Window->GetNativeHandle(), desc.width, desc.height))
+		{
+			LOG_ERROR("Failed to initialize Renderer");
+			throw std::runtime_error("Renderer initialization failed");
+			return;
+		}
+
+		LOG_INFO("Renderer initialized successfully");
 	}
 
 	Application::~Application()
 	{
+		LOG_INFO("Application shutting down");
+
+		// ADD THIS BLOCK
+		if (m_Renderer) {
+			m_Renderer->Shutdown();
+			m_Renderer.reset();
+		}
+
 		EngineShutdown();
 
 		//OnShutdown();
-		//LOG_INFO("Application shutting down");
 	}
 
 	void Application::Run()
@@ -58,14 +76,20 @@ namespace Nightbloom
 			m_Window->PollEvents();
 			
 			OnUpdate(deltaTime);
-			OnRender();
+			
+			// RENDER WITH THE NEW RENDERER
+			if (m_Renderer && m_Renderer->IsInitialized()) {
+				m_Renderer->BeginFrame();
+				m_Renderer->Clear(0.1f, 0.1f, 0.2f, 1.0f);  // Dark blue background
+				OnRender();  // Your app can override this
+				m_Renderer->EndFrame();
+			}
 			
 			m_Window->SwapBuffers();
-
 			lastTime = currentTime;
 
 			// Sleep to limit frame rate to ~40 FPS for now
-			std::this_thread::sleep_for(std::chrono::milliseconds(16));
+			//std::this_thread::sleep_for(std::chrono::milliseconds(16));
 		}
 
 		OnShutdown();

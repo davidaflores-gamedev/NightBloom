@@ -41,7 +41,7 @@ namespace Nightbloom
 		void Minimize() override;
 		void Restore() override;
 
-		void* GetNativeHandle() const override { return m_Hwnd; }
+		void* GetNativeHandle() const override { return static_cast<void*>(m_Hwnd); }
 
 		// Additional methods from your old code
 		//Vec2 GetNormalizedCursorPosition() const;

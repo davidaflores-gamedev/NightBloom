@@ -8,6 +8,7 @@
 #pragma once
 #include <memory>
 #include "Engine/Window/Window.hpp"
+#include "Engine/Renderer/Renderer.hpp"
 
 namespace Nightbloom
 {
@@ -20,6 +21,7 @@ namespace Nightbloom
 
 		//Called by main()
 		void Run();
+		void Quit() { m_Running = false; }
 
 		// Override these methods in game
 		virtual void OnStartup() {}
@@ -33,10 +35,11 @@ namespace Nightbloom
 		//Accessors for engine systems
 		Window* GetWindow() const { return m_Window.get(); }
 
-		void Quit() { m_Running = false; }
 
 	private:
 		std::unique_ptr<Window> m_Window;
+		std::unique_ptr<Renderer> m_Renderer;
+
 		bool m_Running = true;
 		float m_LastFrameTime = 0.0f;
 	};

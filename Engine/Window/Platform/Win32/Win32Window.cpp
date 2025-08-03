@@ -278,11 +278,24 @@ namespace Nightbloom
 
 	void Win32Window::SwapBuffers()
 	{
-		// This will be implemented when we add the graphics context
-		// For now, just call SwapBuffers if we have a display context
+		// TEMPORARY: Clear the window with GDI to test the rendering loop
 		if (m_DisplayContext)
 		{
-			//::SwapBuffers(m_DisplayContext);
+			// Get the client rect
+			RECT clientRect;
+			GetClientRect(m_Hwnd, &clientRect);
+
+			// Create a brush with a dark blue color (to match your clear color)
+			HBRUSH brush = CreateSolidBrush(RGB(25, 25, 51)); // Dark blue (0.1, 0.1, 0.2 in RGB)
+
+			// Fill the window
+			FillRect(m_DisplayContext, &clientRect, brush);
+
+			// Clean up
+			DeleteObject(brush);
+
+			// Force a redraw
+			InvalidateRect(m_Hwnd, nullptr, FALSE);
 		}
 	}
 
