@@ -108,7 +108,7 @@ namespace Nightbloom
 		{
 			int x = GET_X_LPARAM(lParam);
 			int y = GET_Y_LPARAM(lParam);
-			LOG_TRACE("Mouse move: ({}, {})", x, y);
+			//LOG_TRACE("Mouse move: ({}, {})", x, y);
 			break;
 		}
 		}

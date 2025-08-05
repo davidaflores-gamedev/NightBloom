@@ -32,7 +32,7 @@ namespace Nightbloom
 		m_Window->SetCloseCallback([this]() {
 			LOG_INFO("Window close requested");
 			Quit();
-			});
+		});
 
 		LOG_INFO("Initializing Renderer...");
 		m_Renderer = std::make_unique<Renderer>();
@@ -40,7 +40,7 @@ namespace Nightbloom
 		{
 			LOG_ERROR("Failed to initialize Renderer");
 			throw std::runtime_error("Renderer initialization failed");
-			return;
+			//return;
 		}
 
 		LOG_INFO("Renderer initialized successfully");

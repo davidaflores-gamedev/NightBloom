@@ -100,7 +100,7 @@ namespace Nightbloom
 			return;
 		}
 
-		LOG_TRACE("Beginning frame");
+		//LOG_TRACE("Beginning frame");
 	}
 
 	void Renderer::EndFrame()
@@ -111,7 +111,7 @@ namespace Nightbloom
 			return;
 		}
 
-		LOG_TRACE("Ending frame");
+		//LOG_TRACE("Ending frame");
 	}
 
 	void Renderer::Clear(float r, float g, float b, float a)
@@ -122,7 +122,7 @@ namespace Nightbloom
 			return;
 		}
 
-		LOG_TRACE("Clearing screen with color: ({}, {}, {}, {})", r, g, b, a);
+		//LOG_TRACE("Clearing screen with color: ({}, {}, {}, {})", r, g, b, a);
 	}
 
 	void Renderer::DrawTriangle()
