@@ -8,7 +8,24 @@
 #pragma once
 
 #include "Engine/Renderer/RenderDevice.hpp"
+
+// Platform-specific Vulkan includes.
+#ifdef NIGHTBLOOM_PLATFORM_WINDOWS
+#define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan.h>
+#include <vulkan/vulkan_win32.h>  // This defines VK_KHR_WIN32_SURFACE_EXTENSION_NAME
+#elif defined(NIGHTBLOOM_PLATFORM_LINUX)
+#define VK_USE_PLATFORM_XLIB_KHR
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_xlib.h>
+#elif defined(NIGHTBLOOM_PLATFORM_MACOS)
+#define VK_USE_PLATFORM_METAL_EXT
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_metal.h>
+#else
+#include <vulkan/vulkan.h>
+#endif
+
 #include <vector>
 #include <optional>
 #include <string>
@@ -53,8 +70,7 @@ namespace Nightbloom
 		void WaitForIdle() override;
 
 		// Capabilities query
-		//bool SupportsFeature(const std::string& featureName) const override {};
-		//size_t GetMinUniformBufferAlignment() const override;
+		size_t GetMinUniformBufferAlignment() const override;
 
 		// Getters for Vulkan-specific properties
 		VkInstance GetInstance() const { return m_Instance; }
@@ -97,6 +113,7 @@ namespace Nightbloom
 		QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device) const;
 		bool CheckDeviceExtensionSupport(VkPhysicalDevice device) const;
 
+
 		// Debug messenger callback
 		static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
 			VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -107,8 +124,6 @@ namespace Nightbloom
 		void PopulateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) const;
 
 		bool SupportsFeature(const std::string& feature) const;
-
-		size_t GetMinUniformBufferAlignment() const override;
 
 	private:
 		// Core Vulkan objects

@@ -7,16 +7,35 @@
 
 #pragma once
 
+#include "Vulkan/VulkanCommandPool.hpp" 
+
 #include <memory>
 #include <string>
 
 namespace Nightbloom
 {
+	class RenderDevice;
+
 	class Renderer
 	{
 	private:
 		struct RendererData;
 		std::unique_ptr<RendererData> m_Data;
+
+	private:
+		bool CreateCommandPool();
+		bool CreateCommandBuffers();
+		bool CreateSyncObjects();
+		void RecordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
+
+		void DestroySyncObjects();
+		void DestroyCommandBuffers();
+
+	private:
+		bool CreateRenderPass();
+		bool CreateFramebuffers();
+		void DestroyRenderPass();
+		void DestroyFramebuffers();
 
 	public:
 		Renderer();
@@ -33,6 +52,8 @@ namespace Nightbloom
 		// These will be implemented in steps
 		void DrawTriangle();
 		bool IsInitialized() const;
+
+		RenderDevice* GetDevice() const;
 
 		// Additional rendering methods can be added here
 		//const std::string& GetRendererName() const;

@@ -5,23 +5,6 @@
 // Each function is thoroughly commented to help you understand Vulkan
 //------------------------------------------------------------------------------
 
-// Platform-specific Vulkan includes.
-#ifdef NIGHTBLOOM_PLATFORM_WINDOWS
-#define VK_USE_PLATFORM_WIN32_KHR
-#include <vulkan/vulkan.h>
-#include <vulkan/vulkan_win32.h>  // This defines VK_KHR_WIN32_SURFACE_EXTENSION_NAME
-#elif defined(NIGHTBLOOM_PLATFORM_LINUX)
-#define VK_USE_PLATFORM_XLIB_KHR
-#include <vulkan/vulkan.h>
-#include <vulkan/vulkan_xlib.h>
-#elif defined(NIGHTBLOOM_PLATFORM_MACOS)
-#define VK_USE_PLATFORM_METAL_EXT
-#include <vulkan/vulkan.h>
-#include <vulkan/vulkan_metal.h>
-#else
-#include <vulkan/vulkan.h>
-#endif
-
 #include "Core/Platform.hpp"  
 #include "VulkanDevice.hpp"
 #include "Core/Logger/Logger.hpp"

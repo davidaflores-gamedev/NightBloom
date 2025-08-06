@@ -85,7 +85,7 @@ namespace Nightbloom
 				m_Renderer->EndFrame();
 			}
 			
-			m_Window->SwapBuffers();
+			//m_Window->SwapBuffers();
 			lastTime = currentTime;
 
 			// Sleep to limit frame rate to ~40 FPS for now
