@@ -12,7 +12,17 @@
 //#include "Vulkan/VulkanCommandPool.hpp" 
 #include "Core/Logger/Logger.hpp"
 #include "Core/Assert.hpp"
+#include "Core/FileUtils.hpp"
+#include "Engine/Renderer/Vertex.hpp"
 
+//// In Renderer.cpp or wherever you want to define it
+//const std::vector<VertexPCU> triangleVertices = {
+//	// Position          Color           UV
+//	{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},  // Bottom left - Red
+//	{{ 0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},  // Bottom right - Green  
+//	{{ 0.0f,  0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 1.0f}}   // Top - Blue
+//};
+//
 namespace Nightbloom
 {
 	struct Renderer::RendererData
@@ -162,6 +172,16 @@ namespace Nightbloom
 		}
 	}
 
+	void Renderer::PreRecordAllCommandBuffers()
+	{
+		for (uint32_t i = 0; i < m_Data->swapchain->GetImages().size(); i++) {
+			for (uint32_t j = 0; j < m_Data->MAX_FRAMES_IN_FLIGHT; j++) {
+				// Record command buffer [j] for swapchain image [i]
+				RecordCommandBuffer(m_Data->commandBuffers[j], i);
+			}
+		}
+	}
+
 	void Renderer::DestroySyncObjects()
 	{
 		if (!m_Data->device) return;
@@ -172,15 +192,19 @@ namespace Nightbloom
 		for (size_t i = 0; i < m_Data->MAX_FRAMES_IN_FLIGHT; i++) {
 			if (m_Data->imageAvailableSemaphores[i] != VK_NULL_HANDLE)
 				vkDestroySemaphore(device, m_Data->imageAvailableSemaphores[i], nullptr);
-			if (m_Data->renderFinishedSemaphores[i] != VK_NULL_HANDLE)
-				vkDestroySemaphore(device, m_Data->renderFinishedSemaphores[i], nullptr);
 			if (m_Data->inFlightFences[i] != VK_NULL_HANDLE)
 				vkDestroyFence(device, m_Data->inFlightFences[i], nullptr);
+		}
+
+		for (auto& semaphore : m_Data->renderFinishedSemaphores) {
+			if (semaphore != VK_NULL_HANDLE)
+				vkDestroySemaphore(device, semaphore, nullptr);
 		}
 
 		m_Data->imageAvailableSemaphores.clear();
 		m_Data->renderFinishedSemaphores.clear();
 		m_Data->inFlightFences.clear();
+		m_Data->imagesInFlight.clear();
 	}
 
 	void Renderer::DestroyCommandBuffers()
@@ -292,6 +316,24 @@ namespace Nightbloom
 			vkDestroyFramebuffer(device, framebuffer, nullptr);
 		}
 		m_Data->framebuffers.clear();
+	}
+
+	VkShaderModule Renderer::CreateShaderModule(const std::vector<char>& code)
+	{
+		VulkanDevice* vulkanDevice = static_cast<VulkanDevice*>(m_Data->device.get());
+
+		VkShaderModuleCreateInfo createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+		createInfo.codeSize = code.size();
+		createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+		VkShaderModule shaderModule;
+		if (vkCreateShaderModule(vulkanDevice->GetDevice(), &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+			LOG_ERROR("Failed to create shader module");
+			return VK_NULL_HANDLE;
+		}
+
+		return shaderModule;
 	}
 
 	Renderer::Renderer() : m_Data(std::make_unique<RendererData>())
@@ -444,26 +486,25 @@ namespace Nightbloom
 
 		LOG_INFO("Shutting down Renderer");
 
+		if (m_Data->device)
+		{
+			// try this
+			m_Data->device->WaitForIdle();
+		}
+
+		DestroyFramebuffers();
+
 		if (m_Data->swapchain)
 		{
 			m_Data->swapchain->Shutdown();
 			m_Data->swapchain.reset();
 		}
-		else
-		{
-			LOG_WARN("No VulkanSwapchain to shutdown");
-		}
 
-		if (m_Data->device)
-		{
-			// try this
-			m_Data->device->WaitForIdle();
-			m_Data->device->Shutdown();
-			m_Data->device.reset();
-			LOG_INFO("RenderDevice shutdown complete");
-		}
+		DestroyRenderPass();
 
 		DestroySyncObjects();
+
+		DestroyCommandBuffers();
 
 		// Command buffers are automatically destroyed with the command pool
 		m_Data->commandBuffers.clear();
@@ -476,8 +517,12 @@ namespace Nightbloom
 			LOG_INFO("Command pool shutdown complete");
 		}
 
-		DestroyFramebuffers();
-		DestroyRenderPass();
+		if (m_Data->device)
+		{
+			m_Data->device->Shutdown();
+			m_Data->device.reset();
+			LOG_INFO("RenderDevice shutdown complete");
+		}
 
 		m_Data->initialized = false;
 		m_Data->windowHandle = nullptr;

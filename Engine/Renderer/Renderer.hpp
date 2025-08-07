@@ -27,6 +27,7 @@ namespace Nightbloom
 		bool CreateCommandBuffers();
 		bool CreateSyncObjects();
 		void RecordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
+		void PreRecordAllCommandBuffers();
 
 		void DestroySyncObjects();
 		void DestroyCommandBuffers();
@@ -36,6 +37,9 @@ namespace Nightbloom
 		bool CreateFramebuffers();
 		void DestroyRenderPass();
 		void DestroyFramebuffers();
+
+	private:
+		VkShaderModule CreateShaderModule(const std::vector<char>& code);
 
 	public:
 		Renderer();
