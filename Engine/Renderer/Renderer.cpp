@@ -9,20 +9,13 @@
 #include "RenderDevice.hpp"
 #include "Vulkan/VulkanDevice.hpp"
 #include "Vulkan/VulkanSwapchain.hpp"
-//#include "Vulkan/VulkanCommandPool.hpp" 
+#include "Vulkan/VulkanCommandPool.hpp" 
+#include "Vulkan/VulkanBuffer.hpp"
 #include "Core/Logger/Logger.hpp"
 #include "Core/Assert.hpp"
 #include "Core/FileUtils.hpp"
 #include "Engine/Renderer/Vertex.hpp"
 
-//// In Renderer.cpp or wherever you want to define it
-//const std::vector<VertexPCU> triangleVertices = {
-//	// Position          Color           UV
-//	{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},  // Bottom left - Red
-//	{{ 0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},  // Bottom right - Green  
-//	{{ 0.0f,  0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 1.0f}}   // Top - Blue
-//};
-//
 namespace Nightbloom
 {
 	struct Renderer::RendererData
@@ -30,7 +23,11 @@ namespace Nightbloom
 		std::unique_ptr<RenderDevice> device; // The rendering device (e.g., VulkanDevice)
 		std::unique_ptr<VulkanSwapchain> swapchain; // Swapchain for presenting images
 		std::unique_ptr<VulkanCommandPool> commandPool; // Command pool for allocating command buffers
+		std::unique_ptr<VulkanBuffer> vertexBuffer; // Vertex buffer for triangle drawing
 
+		// Graphics pipeline
+		VkPipeline graphicsPipeline = VK_NULL_HANDLE; // Graphics pipeline for rendering
+		VkPipelineLayout pipelineLayout = VK_NULL_HANDLE; // Pipeline layout for graphics pipeline
 
 		// Frame data
 		static const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
@@ -156,13 +153,20 @@ namespace Nightbloom
 		renderPassInfo.renderArea.offset = { 0, 0 };
 		renderPassInfo.renderArea.extent = m_Data->swapchain->GetExtent();
 
-		VkClearValue clearColor = { {{1.0f, 0.0f, 1.0f, 1.0f}} };  // Purple
+		VkClearValue clearColor = { {{0.0f, 0.0f, 0.0f, 1.0f}} };  // Purple
 		renderPassInfo.clearValueCount = 1;
 		renderPassInfo.pClearValues = &clearColor;
 
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-		// Future drawing commands would go here
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Data->graphicsPipeline);
+
+		VkBuffer vertexBuffers[] = { m_Data->vertexBuffer->GetBuffer() };
+		VkDeviceSize offsets[] = { 0 };
+		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+		// Draw the triangle
+		vkCmdDraw(commandBuffer, 3, 1, 0, 0); // 3 vertices, 1 instance, first vertex at index 0
 
 		vkCmdEndRenderPass(commandBuffer);
 
@@ -336,6 +340,196 @@ namespace Nightbloom
 		return shaderModule;
 	}
 
+	bool Renderer::CreateVertexBuffer()
+	{
+		// Define triangle vertices (barycentric colors)
+		const std::vector<VertexPCU> vertices =
+		{
+			// Position             Color               UV
+		{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},  // Bottom left - Red
+		{{ 0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},  // Bottom right - Green  
+		{{ 0.0f,  0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 1.0f}}   // Top - Blue
+		};
+
+		VkDeviceSize bufferSize = sizeof(VertexPCU) * vertices.size();
+		VulkanDevice* vulkanDevice = static_cast<VulkanDevice*>(m_Data->device.get());
+
+		// Create staging buffer (CPU visible)
+		VulkanBuffer stagingBuffer(vulkanDevice);
+		stagingBuffer.Create(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+		);
+
+		// Copy vertex data to staging buffer
+		stagingBuffer.CopyData(vertices.data(), bufferSize);
+
+		// Create vertex buffer (GPU visible)
+		m_Data->vertexBuffer = std::make_unique<VulkanBuffer>(vulkanDevice);
+		m_Data->vertexBuffer->Create(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+		);
+
+		// Copy from staging buffer to vertex buffer
+		m_Data->vertexBuffer->CopyFrom(stagingBuffer, bufferSize, m_Data->commandPool.get());
+
+		// Staging buffer is automatically destroyed when it goes out of scope
+
+		LOG_INFO("Vertex buffer created with {} vertices", vertices.size());
+		return true;
+	}
+
+	bool Renderer::CreateGraphicsPipeline()
+	{
+		VulkanDevice* vulkanDevice = static_cast<VulkanDevice*> (m_Data->device.get());
+
+		// Load shaders
+		auto vertShaderCode = FileUtils::ReadFileAsChars("D:/GitLibrary/Personal/NightBloom_Engine/Sandbox/Build/bin/Debug/Shaders/triangle.vert.spv");
+		auto fragShaderCode = FileUtils::ReadFileAsChars("D:/GitLibrary/Personal/NightBloom_Engine/Sandbox/Build/bin/Debug/Shaders/triangle.frag.spv");
+
+		if (vertShaderCode.empty() || fragShaderCode.empty())
+		{
+			LOG_ERROR("Failed to load shader files");
+			return false;
+		}
+
+		VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);
+		VkShaderModule fragShaderModule = CreateShaderModule(fragShaderCode);
+
+		if (vertShaderModule == VK_NULL_HANDLE || fragShaderModule == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create shader modules");
+			return false;
+		}
+
+		// Shader stages
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vertShaderStageInfo.module = vertShaderModule;
+		vertShaderStageInfo.pName = "main"; // Entry point in shader
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main"; // Entry point in shader
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+		// Vertex input state
+		auto bindingDescription = VertexPCU::GetBindingDescription();
+		auto attributeDescriptions = VertexPCU::GetAttributeDescriptions();
+
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertexInputInfo.vertexBindingDescriptionCount = 1; // Single binding
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription; // Binding description
+		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data(); // Attribute descriptions
+
+		// Input Assembly
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; // Triangle list
+		inputAssembly.primitiveRestartEnable = VK_FALSE; // No primitive restart
+
+		// Viewport and Scissor
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = static_cast<float>(m_Data->width);
+		viewport.height = static_cast<float>(m_Data->height);
+		viewport.minDepth = 0.0f; // Min depth
+		viewport.maxDepth = 1.0f; // Max depth
+
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 }; // Scissor offset
+		scissor.extent = m_Data->swapchain->GetExtent(); // Scissor extent
+
+		VkPipelineViewportStateCreateInfo viewportState{};
+		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportState.viewportCount = 1; // Single viewport
+		viewportState.pViewports = &viewport; // Viewport
+		viewportState.scissorCount = 1; // Single scissor
+		viewportState.pScissors = &scissor; // Scissor
+
+		// Rasterization
+		VkPipelineRasterizationStateCreateInfo rasterizer{};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE; // No depth clamping
+		rasterizer.rasterizerDiscardEnable = VK_FALSE; // No discard
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL; // Fill mode
+		rasterizer.lineWidth = 1.0f; // Line width
+		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; // Cull back faces
+		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE; // Counter-clockwise front face
+		rasterizer.depthBiasEnable = VK_FALSE; // No depth bias
+
+		// Multisampling (disable for now)
+		VkPipelineMultisampleStateCreateInfo multisampling{};
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE; // No sample shading
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // No multisampling
+
+		// Color blending
+		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+			VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT; // Write all components
+		colorBlendAttachment.blendEnable = VK_FALSE; // No blending
+
+		VkPipelineColorBlendStateCreateInfo colorBlending{};
+		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlending.attachmentCount = 1; // Single attachment
+		colorBlending.pAttachments = &colorBlendAttachment; // Color blend attachment
+
+		// Pipeline layout
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.setLayoutCount = 0; // No descriptor sets
+		pipelineLayoutInfo.pushConstantRangeCount = 0; // No push constants
+
+		if (vkCreatePipelineLayout(vulkanDevice->GetDevice(), &pipelineLayoutInfo, nullptr, &m_Data->pipelineLayout) != VK_SUCCESS) {
+			LOG_ERROR("Failed to create pipeline layout");
+			vkDestroyShaderModule(vulkanDevice->GetDevice(), fragShaderModule, nullptr);
+			vkDestroyShaderModule(vulkanDevice->GetDevice(), vertShaderModule, nullptr);
+			return false;
+		}
+
+		// Create graphics pipeline
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2; // Vertex and fragment shaders
+		pipelineInfo.pStages = shaderStages; // Shader stages
+		pipelineInfo.pVertexInputState = &vertexInputInfo; // Vertex input state
+		pipelineInfo.pInputAssemblyState = &inputAssembly; // Input assembly state
+		pipelineInfo.pViewportState = &viewportState; // Viewport and scissor state
+		pipelineInfo.pRasterizationState = &rasterizer; // Rasterization state
+		pipelineInfo.pMultisampleState = &multisampling; // Multisampling state
+		pipelineInfo.pColorBlendState = &colorBlending; // Color blending state
+		pipelineInfo.layout = m_Data->pipelineLayout; // Pipeline layout
+		pipelineInfo.renderPass = m_Data->renderPass; // Render pass
+		pipelineInfo.subpass = 0; // Subpass index
+
+		if (vkCreateGraphicsPipelines(vulkanDevice->GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_Data->graphicsPipeline) != VK_SUCCESS) {
+			LOG_ERROR("Failed to create graphics pipeline");
+			vkDestroyPipelineLayout(vulkanDevice->GetDevice(), m_Data->pipelineLayout, nullptr);
+			m_Data->pipelineLayout = VK_NULL_HANDLE;
+			vkDestroyShaderModule(vulkanDevice->GetDevice(), fragShaderModule, nullptr);
+			vkDestroyShaderModule(vulkanDevice->GetDevice(), vertShaderModule, nullptr);
+			return false;
+		}
+
+		// Cleanup shader modules
+		vkDestroyShaderModule(vulkanDevice->GetDevice(), fragShaderModule, nullptr);
+		vkDestroyShaderModule(vulkanDevice->GetDevice(), vertShaderModule, nullptr);
+
+		LOG_INFO("Graphics pipeline created successfully");
+		return true;
+	}
+
 	Renderer::Renderer() : m_Data(std::make_unique<RendererData>())
 	{
 		LOG_INFO("Renderer created");
@@ -467,6 +661,18 @@ namespace Nightbloom
 			return false;
 		}
 
+		if (!CreateVertexBuffer())
+		{
+			LOG_ERROR("Failed to create vertex buffer");
+			return false;
+		}
+
+		if (!CreateGraphicsPipeline())
+		{
+			LOG_ERROR("Failed to create graphics pipeline");
+			return false;
+		}
+
 #pragma endregion
 
 //-------------------------------------------------------------//
@@ -506,6 +712,21 @@ namespace Nightbloom
 
 		DestroyCommandBuffers();
 
+		if (m_Data->vertexBuffer)
+		{
+			m_Data->vertexBuffer.reset();
+			LOG_INFO("Vertex buffer destroyed");
+		}
+
+		// Destroy graphics pipeline and layout
+		if (m_Data->graphicsPipeline != VK_NULL_HANDLE)
+		{
+			VulkanDevice* vulkanDevice = static_cast<VulkanDevice*>(m_Data->device.get());
+			vkDestroyPipeline(vulkanDevice->GetDevice(), m_Data->graphicsPipeline, nullptr);
+			m_Data->graphicsPipeline = VK_NULL_HANDLE;
+			LOG_INFO("Graphics pipeline destroyed");
+		}
+
 		// Command buffers are automatically destroyed with the command pool
 		m_Data->commandBuffers.clear();
 
@@ -519,6 +740,8 @@ namespace Nightbloom
 
 		if (m_Data->device)
 		{
+			VulkanDevice* vulkanDevice = static_cast<VulkanDevice*> (m_Data->device.get());
+			vkDestroyPipelineLayout(vulkanDevice->GetDevice(), m_Data->pipelineLayout, nullptr);
 			m_Data->device->Shutdown();
 			m_Data->device.reset();
 			LOG_INFO("RenderDevice shutdown complete");

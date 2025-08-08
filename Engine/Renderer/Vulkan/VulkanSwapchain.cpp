@@ -4,6 +4,7 @@
 // Vulkan swapchain implementation
 //------------------------------------------------------------------------------
 
+#include "VulkanDevice.hpp"
 #include "VulkanSwapchain.hpp"
 #include "Core/Logger/Logger.hpp"
 #include <algorithm>

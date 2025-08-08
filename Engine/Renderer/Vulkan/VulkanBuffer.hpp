@@ -2,8 +2,7 @@
 
 #pragma once
 
-#include <vulkan/vulkan.h>
-#include <memory>
+#include "VulkanCommon.hpp"  // This replaces <vulkan/vulkan.h>
 
 namespace Nightbloom
 {
@@ -23,7 +22,7 @@ namespace Nightbloom
 		bool CopyData(const void* data, VkDeviceSize size);
 
 		// Copy from another buffer (for staging)
-		bool CopyFrom(VulkanBuffer& srcBuffer, VkDeviceSize size, VkCommandPool* commandPool);
+		bool CopyFrom(VulkanBuffer& srcBuffer, VkDeviceSize size, VulkanCommandPool* commandPool);
 
 		// Cleanup resources
 		void Destroy();

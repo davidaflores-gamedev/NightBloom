@@ -4,6 +4,7 @@
 // Command pool implementation
 //------------------------------------------------------------------------------
 
+#include "VulkanDevice.hpp"
 #include "VulkanCommandPool.hpp"
 #include "Core/Logger/Logger.hpp"
 

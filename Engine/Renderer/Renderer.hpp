@@ -6,9 +6,7 @@
 //------------------------------------------------------------------------------
 
 #pragma once
-
-#include "Vulkan/VulkanCommandPool.hpp" 
-
+#include "Engine/Renderer//Vulkan/VulkanCommon.hpp"  // This should include all necessary Vulkan headers
 #include <memory>
 #include <string>
 
@@ -40,6 +38,14 @@ namespace Nightbloom
 
 	private:
 		VkShaderModule CreateShaderModule(const std::vector<char>& code);
+
+	private:
+		bool CreateVertexBuffer();
+		bool CreateIndexBuffer();
+
+
+	private:
+		bool CreateGraphicsPipeline();
 
 	public:
 		Renderer();

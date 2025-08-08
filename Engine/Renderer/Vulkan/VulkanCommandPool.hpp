@@ -5,7 +5,7 @@
 //------------------------------------------------------------------------------
 #pragma once
 
-#include "Engine/Renderer/Vulkan/VulkanDevice.hpp"
+#include "VulkanCommon.hpp"
 #include <vector>
 
 namespace Nightbloom
