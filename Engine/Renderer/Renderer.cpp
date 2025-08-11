@@ -11,10 +11,14 @@
 #include "Vulkan/VulkanSwapchain.hpp"
 #include "Vulkan/VulkanCommandPool.hpp" 
 #include "Vulkan/VulkanBuffer.hpp"
+#include "Vulkan/VulkanMemoryManager.hpp"
 #include "Core/Logger/Logger.hpp"
 #include "Core/Assert.hpp"
 #include "Core/FileUtils.hpp"
 #include "Engine/Renderer/Vertex.hpp"
+#include "Engine/Renderer/AssetManager.hpp"   
+#include "Engine/Core/PerformanceMetrics.hpp"  
+#include <filesystem>  
 
 namespace Nightbloom
 {
@@ -24,6 +28,7 @@ namespace Nightbloom
 		std::unique_ptr<VulkanSwapchain> swapchain; // Swapchain for presenting images
 		std::unique_ptr<VulkanCommandPool> commandPool; // Command pool for allocating command buffers
 		std::unique_ptr<VulkanBuffer> vertexBuffer; // Vertex buffer for triangle drawing
+		std::unique_ptr<VulkanMemoryManager> memoryManager;
 
 		// Graphics pipeline
 		VkPipeline graphicsPipeline = VK_NULL_HANDLE; // Graphics pipeline for rendering
@@ -343,42 +348,35 @@ namespace Nightbloom
 	bool Renderer::CreateVertexBuffer()
 	{
 		// Define triangle vertices (barycentric colors)
-		const std::vector<VertexPCU> vertices =
-		{
-			// Position             Color               UV
-		{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},  // Bottom left - Red
-		{{ 0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},  // Bottom right - Green  
-		{{ 0.0f,  0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 1.0f}}   // Top - Blue
+		const std::vector<VertexPCU> vertices = {
+		{{-0.5f,  0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},  // Bottom left - Red
+		{{ 0.5f,  0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},  // Bottom right - Green  
+		{{ 0.0f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 1.0f}}   // Top - Blue
 		};
 
 		VkDeviceSize bufferSize = sizeof(VertexPCU) * vertices.size();
 		VulkanDevice* vulkanDevice = static_cast<VulkanDevice*>(m_Data->device.get());
 
 		// Create staging buffer (CPU visible)
-		VulkanBuffer stagingBuffer(vulkanDevice);
-		stagingBuffer.Create(
+		m_Data->vertexBuffer = std::make_unique<VulkanBuffer>(vulkanDevice, m_Data->memoryManager.get());
+
+		// Create device-local buffer with transfer dst for staging
+		if (!m_Data->vertexBuffer->CreateDeviceLocal(
 			bufferSize,
-			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-		);
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT))
+		{
+			LOG_ERROR("Failed to create vertex buffer");
+			return false;
+		}
 
-		// Copy vertex data to staging buffer
-		stagingBuffer.CopyData(vertices.data(), bufferSize);
+		// Upload data using staging buffer (handled internally by VulkanBuffer)
+		if (!m_Data->vertexBuffer->UploadData(vertices.data(), bufferSize, m_Data->commandPool.get()))
+		{
+			LOG_ERROR("Failed to upload vertex data");
+			return false;
+		}
 
-		// Create vertex buffer (GPU visible)
-		m_Data->vertexBuffer = std::make_unique<VulkanBuffer>(vulkanDevice);
-		m_Data->vertexBuffer->Create(
-			bufferSize,
-			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-		);
-
-		// Copy from staging buffer to vertex buffer
-		m_Data->vertexBuffer->CopyFrom(stagingBuffer, bufferSize, m_Data->commandPool.get());
-
-		// Staging buffer is automatically destroyed when it goes out of scope
-
-		LOG_INFO("Vertex buffer created with {} vertices", vertices.size());
+		LOG_INFO("Vertex buffer created with {} vertices using VMA", vertices.size());
 		return true;
 	}
 
@@ -387,14 +385,19 @@ namespace Nightbloom
 		VulkanDevice* vulkanDevice = static_cast<VulkanDevice*> (m_Data->device.get());
 
 		// Load shaders
-		auto vertShaderCode = FileUtils::ReadFileAsChars("D:/GitLibrary/Personal/NightBloom_Engine/Sandbox/Build/bin/Debug/Shaders/triangle.vert.spv");
-		auto fragShaderCode = FileUtils::ReadFileAsChars("D:/GitLibrary/Personal/NightBloom_Engine/Sandbox/Build/bin/Debug/Shaders/triangle.frag.spv");
+
+		auto vertShaderCode = AssetManager::Get().LoadShaderBinary("triangle.vert");
+		auto fragShaderCode = AssetManager::Get().LoadShaderBinary("triangle.frag");
 
 		if (vertShaderCode.empty() || fragShaderCode.empty())
 		{
 			LOG_ERROR("Failed to load shader files");
+			LOG_ERROR("Make sure triangle.vert.spv and triangle.frag.spv are in the Shaders directory");
 			return false;
 		}
+
+		LOG_INFO("Loaded vertex shader: {} bytes", vertShaderCode.size());
+		LOG_INFO("Loaded fragment shader: {} bytes", fragShaderCode.size());
 
 		VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);
 		VkShaderModule fragShaderModule = CreateShaderModule(fragShaderCode);
@@ -465,7 +468,7 @@ namespace Nightbloom
 		rasterizer.polygonMode = VK_POLYGON_MODE_FILL; // Fill mode
 		rasterizer.lineWidth = 1.0f; // Line width
 		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; // Cull back faces
-		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE; // Counter-clockwise front face
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; // Counter-clockwise front face
 		rasterizer.depthBiasEnable = VK_FALSE; // No depth bias
 
 		// Multisampling (disable for now)
@@ -547,12 +550,16 @@ namespace Nightbloom
 	bool Renderer::Initialize(void* windowHandle, uint32_t width, uint32_t height)
 	{
 		//--------------------------------------------------------//
-		LOG_INFO("Initializing Renderer with window handle: {}, width: {}, height: {}", windowHandle, width, height);
+		LOG_INFO("=== Initializing Renderer ===");
+		LOG_INFO("Window: {}x{}", width, height);
+
+		// Start performance tracking
+		PerformanceMetrics::Get().Reset();
+		PerformanceMetrics::Get().BeginFrame();
 
 		if (m_Data->initialized)
 		{
 			LOG_WARN("Renderer is already initialized");
-			//not sure what to return here
 			return true;
 		}
 
@@ -566,11 +573,35 @@ namespace Nightbloom
 		m_Data->width = width;
 		m_Data->height = height;
 
+/////////////////////////////////////////////////////////////////
+//-------------------------------------------------------------//
+		#pragma region "AssetManager Initialization"
+
+		LOG_INFO("=== Initializing Asset Manager ===");
+
+		// Get executable path (you'll need to pass this from main.cpp)
+		// For now, use current directory
+		std::filesystem::path execPath = std::filesystem::current_path();
+
+		if (!AssetManager::Get().Initialize(execPath.string()))
+		{
+			LOG_ERROR("Failed to initialize AssetManager");
+			return false;
+		}
+
+		LOG_INFO("Asset paths configured:");
+		LOG_INFO("  Shaders: {}", AssetManager::Get().GetShadersPath());
+		LOG_INFO("  Textures: {}", AssetManager::Get().GetTexturesPath());
+		LOG_INFO("  Models: {}", AssetManager::Get().GetModelsPath());
+				 
+#pragma endregion
+
 //-------------------------------------------------------------//
 		#pragma region "Renderer Initialization"
+
 		try
 		{
-			LOG_INFO("Creating VulkanDevice...");
+			LOG_INFO("=== Creating VulkanDevice ===");
 			m_Data->device = std::make_unique<VulkanDevice>();
 
 			// Initialize the device
@@ -579,8 +610,6 @@ namespace Nightbloom
 				LOG_ERROR("Failed to initialize VulkanDevice");
 				return false;
 			}
-
-			LOG_INFO("VulkanDevice initialized successfully");
 
 			// Display device capabilities
 			LOG_INFO("=== Device Capabilities ===");
@@ -601,13 +630,31 @@ namespace Nightbloom
 			return false;
 		}
 
+		VulkanDevice* vulkanDevice = static_cast<VulkanDevice*>(m_Data->device.get());
+
+#pragma endregion
+
+//-------------------------------------------------------------//
+		#pragma region "Memory Manager Initialization"
+		LOG_INFO("=== Creating VulkanMemoryManager ===");
+
+		m_Data->memoryManager = std::make_unique<VulkanMemoryManager>(vulkanDevice);
+		if (!m_Data->memoryManager->Initialize())
+		{
+			LOG_ERROR("Failed to initialize memory manager");
+			return false;
+		}
+
+		// Log initial memory stats
+		m_Data->memoryManager->LogMemoryStats();
+
 #pragma endregion
 
 //-------------------------------------------------------------//
 		#pragma region "Swapchain Initialization"
 
-		LOG_INFO("Creating VulkanSwapchain... ");
-		VulkanDevice* vulkanDevice = static_cast<VulkanDevice*>(m_Data->device.get());
+		LOG_INFO("=== Creating VulkanSwapchain ===");
+	
 		m_Data->swapchain = std::make_unique<VulkanSwapchain>(vulkanDevice);
 
 		if (!m_Data->swapchain->Initialize(windowHandle, width, height))
@@ -622,6 +669,8 @@ namespace Nightbloom
 
 //-------------------------------------------------------------//
 		#pragma region "Render Pass Initialization"
+
+		LOG_INFO("=== Creating Render Pass ===");
 
 		if (!CreateRenderPass())
 		{
@@ -642,7 +691,7 @@ namespace Nightbloom
 #pragma endregion
 
 //-------------------------------------------------------------//
-		#pragma region "Command Pool/Buffers and sync objects Initialization"
+		#pragma region "Command Pool, Buffers and sync objects Initialization"
 		if (!CreateCommandPool())
 		{
 			LOG_ERROR("Failed to create command pool");
@@ -661,6 +710,10 @@ namespace Nightbloom
 			return false;
 		}
 
+#pragma endregion
+
+//-------------------------------------------------------------//
+		#pragma region "Resources and Pipeline Initialization"
 		if (!CreateVertexBuffer())
 		{
 			LOG_ERROR("Failed to create vertex buffer");
@@ -676,10 +729,31 @@ namespace Nightbloom
 #pragma endregion
 
 //-------------------------------------------------------------//
+		#pragma region "Final Setup"
 
 		m_Data->initialized = true;
-		LOG_INFO("Renderer initialized successfully");
+
+		// End initialization frame timing
+		PerformanceMetrics::Get().EndFrame();
+
+		// Log final memory stats after all resources created
+		m_Data->memoryManager->LogMemoryStats();
+
+		// Update memory metrics
+		auto memStats = m_Data->memoryManager->GetMemoryStats();
+		PerformanceMetrics::Get().UpdateMemoryStats(
+			memStats.totalAllocatedBytes,
+			memStats.totalUsedBytes
+		);
+
+		LOG_INFO("=== Renderer Initialization Complete ===");
+		PerformanceMetrics::Get().LogMetrics();
+
 		return true;
+
+#pragma endregion
+
+/////////////////////////////////////////////////////////////////
 	}
 
 	void Renderer::Shutdown()
@@ -690,7 +764,7 @@ namespace Nightbloom
 			return;
 		}
 
-		LOG_INFO("Shutting down Renderer");
+		LOG_INFO("=== Shutting down Renderer ===");
 
 		if (m_Data->device)
 		{
@@ -698,27 +772,10 @@ namespace Nightbloom
 			m_Data->device->WaitForIdle();
 		}
 
-		DestroyFramebuffers();
+		// Log final performance metrics
+		PerformanceMetrics::Get().LogMetrics();
 
-		if (m_Data->swapchain)
-		{
-			m_Data->swapchain->Shutdown();
-			m_Data->swapchain.reset();
-		}
-
-		DestroyRenderPass();
-
-		DestroySyncObjects();
-
-		DestroyCommandBuffers();
-
-		if (m_Data->vertexBuffer)
-		{
-			m_Data->vertexBuffer.reset();
-			LOG_INFO("Vertex buffer destroyed");
-		}
-
-		// Destroy graphics pipeline and layout
+		// 1. Destroy pipeline first (uses render pass)
 		if (m_Data->graphicsPipeline != VK_NULL_HANDLE)
 		{
 			VulkanDevice* vulkanDevice = static_cast<VulkanDevice*>(m_Data->device.get());
@@ -727,32 +784,90 @@ namespace Nightbloom
 			LOG_INFO("Graphics pipeline destroyed");
 		}
 
-		// Command buffers are automatically destroyed with the command pool
-		m_Data->commandBuffers.clear();
+		if (m_Data->pipelineLayout != VK_NULL_HANDLE)
+		{
+			VulkanDevice* vulkanDevice = static_cast<VulkanDevice*>(m_Data->device.get());
+			vkDestroyPipelineLayout(vulkanDevice->GetDevice(), m_Data->pipelineLayout, nullptr);
+			m_Data->pipelineLayout = VK_NULL_HANDLE;
+			LOG_INFO("Pipeline layout destroyed");
+		}
 
-		//Destroy command pool
+		// 2. Destroy vertex buffer (uses VMA)
+		if (m_Data->vertexBuffer)
+		{
+			m_Data->vertexBuffer.reset();
+			LOG_INFO("Vertex buffer destroyed");
+		}
+
+		// 3. Destroy sync objects
+		DestroySyncObjects();
+
+		// 4. Destroy command buffers
+		DestroyCommandBuffers();
+
+		// 5. Destroy command pool
 		if (m_Data->commandPool)
 		{
 			m_Data->commandPool->Shutdown();
 			m_Data->commandPool.reset();
-			LOG_INFO("Command pool shutdown complete");
+			LOG_INFO("Command pool destroyed");
 		}
 
+		// 6. Destroy framebuffers (depends on render pass and swapchain)
+		DestroyFramebuffers();
+
+		// 7. Destroy render pass
+		DestroyRenderPass();
+
+		// 8. Destroy swapchain
+		if (m_Data->swapchain)
+		{
+			m_Data->swapchain->Shutdown();
+			m_Data->swapchain.reset();
+			LOG_INFO("Swapchain destroyed");
+		}
+
+		// 9. Log final memory stats before destroying VMA
+		if (m_Data->memoryManager)
+		{
+			LOG_INFO("=== Final Memory Statistics ===");
+			m_Data->memoryManager->LogMemoryStats();
+
+			// Check for leaks
+			auto stats = m_Data->memoryManager->GetMemoryStats();
+			if (stats.allocationCount > 0)
+			{
+				LOG_WARN("Warning: {} allocations still active at shutdown!", stats.allocationCount);
+			}
+		}
+
+		// 10. Destroy VMA (after all buffers/images are destroyed)
+		if (m_Data->memoryManager)
+		{
+			m_Data->memoryManager->Shutdown();
+			m_Data->memoryManager.reset();
+			LOG_INFO("Memory manager destroyed");
+		}
+
+
+		// 11. Finally, destroy the device
 		if (m_Data->device)
 		{
-			VulkanDevice* vulkanDevice = static_cast<VulkanDevice*> (m_Data->device.get());
-			vkDestroyPipelineLayout(vulkanDevice->GetDevice(), m_Data->pipelineLayout, nullptr);
 			m_Data->device->Shutdown();
 			m_Data->device.reset();
-			LOG_INFO("RenderDevice shutdown complete");
+			LOG_INFO("Device destroyed");
 		}
 
+		// 12. Clean up AssetManager
+		AssetManager::Get().Shutdown();
+
+		// Reset state
 		m_Data->initialized = false;
 		m_Data->windowHandle = nullptr;
 		//m_Data->width = 0;
 		//m_Data->height = 0;
 
-		LOG_INFO("Renderer shutdown complete");
+		LOG_INFO("=== Renderer Shutdown Complete ===");
 	}
 
 	void Renderer::BeginFrame()
@@ -762,6 +877,9 @@ namespace Nightbloom
 			LOG_ERROR("Renderer not initialized, cannot begin frame");
 			return;
 		}
+
+		// Start frame timing
+		PerformanceMetrics::Get().BeginFrame();
 
 		VulkanDevice* vulkanDevice = static_cast<VulkanDevice*>(m_Data->device.get());
 		VkDevice device = vulkanDevice->GetDevice();
@@ -793,11 +911,15 @@ namespace Nightbloom
 		{
 			// Need to recreate swapchain
 			LOG_WARN("Swapchain out of date, recreation needed");
+			// TODO: Implement swapchain recreation
 			return;
 		}
 
 		// Reset fence only if we're submitting work
 		vkResetFences(device, 1, &m_Data->inFlightFences[m_Data->currentFrame]);
+
+		// Start GPU timing
+		PerformanceMetrics::Get().BeginGPUWork();
 
 		// Record command buffer
 		VkCommandBuffer commandBuffer = m_Data->commandBuffers[m_Data->currentFrame];
@@ -848,6 +970,9 @@ namespace Nightbloom
 			return;
 		}
 
+		// End GPU timing
+		PerformanceMetrics::Get().EndGPUWork();
+
 		// Present 
 		bool result = m_Data->swapchain->Present(
 			m_Data->currentImageIndex,
@@ -857,14 +982,51 @@ namespace Nightbloom
 		if (!result || m_Data->swapchain->IsOutOfDate()) {
 			// Need to recreate swapchain
 			LOG_WARN("Swapchain out of date after present");
+			// TODO: Implement swapchain recreation
+		}
+
+		// Update memory stats periodically (every 60 frames)
+		static int frameCounter = 0;
+		if (++frameCounter % 60 == 0)
+		{
+			auto memStats = m_Data->memoryManager->GetMemoryStats();
+			PerformanceMetrics::Get().UpdateMemoryStats(
+				memStats.totalAllocatedBytes,
+				memStats.totalUsedBytes
+			);
 		}
 
 		// advance to the next frame
 		m_Data->currentFrame = (m_Data->currentFrame + 1) % RendererData::MAX_FRAMES_IN_FLIGHT;
+
+		// End frame timing
+		PerformanceMetrics::Get().EndFrame();
+
+		// Log metrics every second (assuming 60 FPS)
+		static int logCounter = 0;
+		if (++logCounter >= 60)
+		{
+			PerformanceMetrics::Get().LogMetrics();
+
+			// Check frame time variance requirement (< 0.5ms)
+			float variance = PerformanceMetrics::Get().GetFrameTimeVariance();
+			if (variance > 0.5f)
+			{
+				LOG_WARN("Frame time variance ({:.2f}ms) exceeds target (0.5ms)", variance);
+			}
+
+			logCounter = 0;
+		}
 	}
 
 	void Renderer::Clear(float r, float g, float b, float a)
 	{
+		UNUSED(r);
+		UNUSED(g);
+		UNUSED(b);
+		UNUSED(a);
+
+
 		if (!m_Data->initialized)
 		{
 			LOG_ERROR("Renderer not initialized, cannot clear");

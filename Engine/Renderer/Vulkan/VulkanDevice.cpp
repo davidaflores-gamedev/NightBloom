@@ -8,6 +8,7 @@
 #include "Core/Platform.hpp"  
 #include "VulkanDevice.hpp"
 #include "Core/Logger/Logger.hpp"
+#include "Core/Assert.hpp"
 #include <set>
 
 namespace Nightbloom
@@ -99,6 +100,60 @@ namespace Nightbloom
 		}
 
 		LOG_INFO("Vulkan device shutdown complete");
+	}
+
+	Buffer* VulkanDevice::CreateBuffer(const BufferDesc& desc)
+	{
+		UNUSED(desc);
+		return nullptr;
+	}
+
+	Texture* VulkanDevice::CreateTexture(const TextureDesc& desc)
+	{
+		UNUSED(desc);
+		return nullptr;
+	}
+
+	Shader* VulkanDevice::CreateShader(const ShaderDesc& desc)
+	{
+		UNUSED(desc);
+		return nullptr;
+	}
+
+	Pipeline* VulkanDevice::CreatePipeline(const PipelineDesc& desc)
+	{
+		UNUSED(desc);
+		return nullptr;
+	}
+
+	CommandBuffer* VulkanDevice::CreateCommandBuffer()
+	{
+		return nullptr;
+	}
+
+	void VulkanDevice::DestroyBuffer(Buffer* buffer)
+	{
+		UNUSED(buffer);
+	}
+
+	void VulkanDevice::DestroyTexture(Texture* texture)
+	{
+		UNUSED(texture);
+	}
+
+	void VulkanDevice::DestroyShader(Shader* shader)
+	{
+		UNUSED(shader);
+	}
+
+	void VulkanDevice::DestroyPipeline(Pipeline* pipeline)
+	{
+		UNUSED(pipeline);
+	}
+
+	void VulkanDevice::DestroyCommandBuffer(CommandBuffer* commandBuffer)
+	{
+		UNUSED(commandBuffer);
 	}
 
 	bool VulkanDevice::CreateInstance()
@@ -459,6 +514,9 @@ namespace Nightbloom
 		const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
 		void* pUserData)
 	{
+		UNUSED(pUserData);
+		UNUSED(messageType);
+
 		// Map Vulkan severity to our logging levels
 		if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
 			LOG_ERROR("Vulkan: {}", pCallbackData->pMessage);
@@ -474,6 +532,11 @@ namespace Nightbloom
 		}
 
 		return VK_FALSE; // Don't abort
+	}
+
+	void VulkanDevice::SubmitCommandBuffer(CommandBuffer* commandBuffer)
+	{
+		UNUSED(commandBuffer);;
 	}
 
 	void VulkanDevice::WaitForIdle()

@@ -30,6 +30,8 @@
 #include <algorithm>
 #include <limits>
 
+
+
 namespace Nightbloom
 {
 	class VulkanDevice;
@@ -42,6 +44,9 @@ namespace Nightbloom
 
 		inline bool CheckVkResult(VkResult result, const std::string& operation = "")
 		{
+			//UNUSED
+			(void) (operation);
+
 			if (result != VK_SUCCESS)
 			{
 				// You can add logging here if needed

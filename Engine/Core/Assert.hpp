@@ -7,6 +7,8 @@
 
 #pragma once
 
+#define UNUSED(x) (void)(x)
+
 #include <format>
 #include <string>
 #include <string_view>

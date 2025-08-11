@@ -26,18 +26,18 @@ namespace Nightbloom
 		void Shutdown() override;
 
 		// Resource Creation, implemntation will be added later
-		Buffer* CreateBuffer(const BufferDesc& desc) override { return nullptr; }
-		Texture* CreateTexture(const TextureDesc& desc) override { return nullptr; }
-		Shader* CreateShader(const ShaderDesc& desc) override { return nullptr; }
-		Pipeline* CreatePipeline(const PipelineDesc& desc) override { return nullptr; }
-		CommandBuffer* CreateCommandBuffer() override { return nullptr; }
+		Buffer* CreateBuffer(const BufferDesc& desc) override;
+		Texture* CreateTexture(const TextureDesc& desc) override;
+		Shader* CreateShader(const ShaderDesc& desc) override;
+		Pipeline* CreatePipeline(const PipelineDesc& desc) override;
+		CommandBuffer* CreateCommandBuffer() override;
 
 		// Resource destruction, implementation will be added later
-		void DestroyBuffer(Buffer* buffer) override {}
-		void DestroyTexture(Texture* texture) override {}
-		void DestroyShader(Shader* shader) override {}
-		void DestroyPipeline(Pipeline* pipeline) override {}
-		void DestroyCommandBuffer(CommandBuffer* commandBuffer) override {}
+		void DestroyBuffer(Buffer* buffer) override;
+		void DestroyTexture(Texture* texture) override;
+		void DestroyShader(Shader* shader) override;
+		void DestroyPipeline(Pipeline* pipeline) override;
+		void DestroyCommandBuffer(CommandBuffer* commandBuffer) override;
 
 		// Frame operations, implementation will be added later
 		void BeginFrame() override {}
@@ -45,7 +45,7 @@ namespace Nightbloom
 		void Present() override {}
 
 		// Command submission, implementation will be added later
-		void SubmitCommandBuffer(CommandBuffer* commandBuffer) override {}
+		void SubmitCommandBuffer(CommandBuffer* commandBuffer) override;
 
 		// Sync operations, implementation will be added later
 		void WaitForIdle() override;

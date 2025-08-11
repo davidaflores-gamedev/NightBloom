@@ -25,7 +25,7 @@ namespace Nightbloom
 
 		// Override these methods in game
 		virtual void OnStartup() {}
-		virtual void OnUpdate(float deltaTime) {}
+		virtual void OnUpdate(float deltaTime) { (void)(deltaTime); }
 		virtual void OnRender() {}
 		virtual void OnShutdown() {}
 

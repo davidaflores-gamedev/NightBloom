@@ -1,8 +1,7 @@
-// VertexBuffer.hpp
-
 #pragma once
 
-#include "VulkanCommon.hpp"  // This replaces <vulkan/vulkan.h>
+#include "VulkanCommon.hpp"
+#include "VulkanMemoryManager.hpp"
 
 namespace Nightbloom
 {
@@ -12,34 +11,40 @@ namespace Nightbloom
 	class VulkanBuffer
 	{
 	public:
-		VulkanBuffer(VulkanDevice* device);
+		VulkanBuffer(VulkanDevice* device, VulkanMemoryManager* memoryManager);
 		~VulkanBuffer();
 
-		// Create buffer with memory
-		bool Create(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
+		// Create buffer with VMA
+		bool Create(VkDeviceSize size, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage = VMA_MEMORY_USAGE_AUTO);
 
-		// copy data to the buffer (for host visible buffers)
-		bool CopyData(const void* data, VkDeviceSize size);
+		// Create with specific requirements
+		bool CreateHostVisible(VkDeviceSize size, VkBufferUsageFlags usage);
+		bool CreateDeviceLocal(VkDeviceSize size, VkBufferUsageFlags usage);
 
-		// Copy from another buffer (for staging)
+		// Copy data to the buffer (for host visible buffers)
+		bool CopyData(const void* data, VkDeviceSize size, VkDeviceSize offset = 0);
+
+		// Copy from another buffer using staging
 		bool CopyFrom(VulkanBuffer& srcBuffer, VkDeviceSize size, VulkanCommandPool* commandPool);
+
+		// Copy from host memory using staging
+		bool UploadData(const void* data, VkDeviceSize size, VulkanCommandPool* commandPool);
 
 		// Cleanup resources
 		void Destroy();
 
 		// Getters
-		VkBuffer GetBuffer() const { return m_Buffer; }
-		VkDeviceMemory GetMemory() const { return m_Memory; }
+		VkBuffer GetBuffer() const { return m_Allocation ? m_Allocation->buffer : VK_NULL_HANDLE; }
 		VkDeviceSize GetSize() const { return m_Size; }
-
-	private: 
-		uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+		void* GetMappedData() const { return m_MappedData; }
+		bool IsMapped() const { return m_MappedData != nullptr; }
 
 	private:
 		VulkanDevice* m_Device = nullptr;
-		VkBuffer m_Buffer = VK_NULL_HANDLE;
-		VkDeviceMemory m_Memory = VK_NULL_HANDLE;
+		VulkanMemoryManager* m_MemoryManager = nullptr;
+		VulkanMemoryManager::BufferAllocation* m_Allocation = nullptr;
 		VkDeviceSize m_Size = 0;
-		void* m_MappedMemory = nullptr;  // For persistently mapped buffers
+		void* m_MappedData = nullptr;  // For persistently mapped buffers
+		bool m_IsHostVisible = false;
 	};
 }

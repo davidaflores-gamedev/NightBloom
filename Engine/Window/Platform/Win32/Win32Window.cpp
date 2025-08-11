@@ -108,6 +108,8 @@ namespace Nightbloom
 		{
 			int x = GET_X_LPARAM(lParam);
 			int y = GET_Y_LPARAM(lParam);
+			(void)(x); // UNUSED Uncomment if you want to use x and y
+			(void)(y); // UNUSED Uncomment if you want to use x and y
 			//LOG_TRACE("Mouse move: ({}, {})", x, y);
 			break;
 		}

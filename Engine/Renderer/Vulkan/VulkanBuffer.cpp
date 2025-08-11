@@ -5,8 +5,9 @@
 
 namespace Nightbloom
 {
-	Nightbloom::VulkanBuffer::VulkanBuffer(VulkanDevice* device)
+	Nightbloom::VulkanBuffer::VulkanBuffer(VulkanDevice* device, VulkanMemoryManager* memoryManager)
 		: m_Device(device)
+		, m_MemoryManager(memoryManager)
 	{
 	}
 
@@ -15,81 +16,80 @@ namespace Nightbloom
 		Destroy();
 	}
 
-	bool Nightbloom::VulkanBuffer::Create(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties)
+	bool Nightbloom::VulkanBuffer::Create(VkDeviceSize size, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage)
 	{
+		if (!m_MemoryManager)
+		{
+			LOG_ERROR("VulkanBuffer: Memory manager not set");
+			return false;
+		}
+
 		m_Size = size;
 
-		// Create buffer
-		VkBufferCreateInfo bufferInfo = {};
-		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-		bufferInfo.size = size;
-		bufferInfo.usage = usage;
-		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		VulkanMemoryManager::BufferCreateInfo createInfo = {};
+		createInfo.size = size;
+		createInfo.usage = usage;
+		createInfo.memoryUsage = memoryUsage;
 
-		if (vkCreateBuffer(m_Device->GetDevice(), &bufferInfo, nullptr, &m_Buffer) != VK_SUCCESS)
+		// If host visible, request mapping
+		if (memoryUsage == VMA_MEMORY_USAGE_CPU_TO_GPU ||
+			memoryUsage == VMA_MEMORY_USAGE_CPU_ONLY ||
+			memoryUsage == VMA_MEMORY_USAGE_GPU_TO_CPU)
 		{
-			LOG_ERROR("Failed to create Vulkan buffer");
+			createInfo.mappable = true;
+			m_IsHostVisible = true;
+		}
+
+		m_Allocation = m_MemoryManager->CreateBuffer(createInfo);
+		if (!m_Allocation)
+		{
+			LOG_ERROR("Failed to create buffer through VMA");
 			return false;
 		}
 
-		// Get memory requirements
-		VkMemoryRequirements memRequirements;
-		vkGetBufferMemoryRequirements(m_Device->GetDevice(), m_Buffer, &memRequirements);
-
-		// Allocate memory
-		VkMemoryAllocateInfo allocInfo = {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memRequirements.size;
-		allocInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, properties);
-
-		// THIS WAS MISSING! Allocate the memory
-		if (vkAllocateMemory(m_Device->GetDevice(), &allocInfo, nullptr, &m_Memory) != VK_SUCCESS) {
-			LOG_ERROR("Failed to allocate buffer memory");
-			vkDestroyBuffer(m_Device->GetDevice(), m_Buffer, nullptr);  // Clean up buffer
-			m_Buffer = VK_NULL_HANDLE;
-			return false;
+		// Store mapped pointer if available
+		if (m_Allocation->mappedData)
+		{
+			m_MappedData = m_Allocation->mappedData;
+			LOG_TRACE("Buffer created with persistent mapping");
 		}
 
-		// Bind buffer to memory
-		if (vkBindBufferMemory(m_Device->GetDevice(), m_Buffer, m_Memory, 0) != VK_SUCCESS) {
-			LOG_ERROR("Failed to bind buffer memory");
-			vkFreeMemory(m_Device->GetDevice(), m_Memory, nullptr);
-			vkDestroyBuffer(m_Device->GetDevice(), m_Buffer, nullptr);
-			m_Buffer = VK_NULL_HANDLE;
-			m_Memory = VK_NULL_HANDLE;
-			return false;
-		}
-
-		// If host visible , map it persistently
-		if (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
-			if (vkMapMemory(m_Device->GetDevice(), m_Memory, 0, size, 0, &m_MappedMemory))
-			{
-				LOG_ERROR("Failed to map buffer memory");
-				m_MappedMemory = nullptr;
-			}
-		}
-
+		LOG_TRACE("Buffer created: size={} bytes, usage=0x{:X}", size, usage);
 		return true;
 
 	}
 
-	bool Nightbloom::VulkanBuffer::CopyData(const void* data, VkDeviceSize size)
+	bool VulkanBuffer::CreateHostVisible(VkDeviceSize size, VkBufferUsageFlags usage)
 	{
-		if (!m_MappedMemory || size > m_Size)
+		return Create(size, usage, VMA_MEMORY_USAGE_CPU_TO_GPU);
+	}
+
+	bool VulkanBuffer::CreateDeviceLocal(VkDeviceSize size, VkBufferUsageFlags usage)
+	{
+		return Create(size, usage, VMA_MEMORY_USAGE_GPU_ONLY);
+	}
+
+	bool Nightbloom::VulkanBuffer::CopyData(const void* data, VkDeviceSize size, VkDeviceSize offset)
+	{
+		if (!m_MappedData || !m_IsHostVisible)
 		{
-			LOG_ERROR("Invalid buffer mapping or size");
+			LOG_ERROR("Buffer is not mapped or not host visible");
 			return false;
 		}
 
-		memcpy(m_MappedMemory, data, static_cast<size_t>(size));
+		if (offset + size > m_Size)
+		{
+			LOG_ERROR("Copy would exceed buffer size");
+			return false;
+		}
 
-		// Flush if not coherent
-		VkMappedMemoryRange range = {};
-		range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-		range.memory = m_Memory;
-		range.offset = 0;
-		range.size = size;
-		vkFlushMappedMemoryRanges(m_Device->GetDevice(), 1, &range);
+		memcpy(static_cast<uint8_t*>(m_MappedData) + offset, data, static_cast<size_t>(size));
+
+		// Flush if needed (VMA handles this based on memory type)
+		if (m_Allocation)
+		{
+			m_MemoryManager->FlushMemory(m_Allocation->allocation, offset, size);
+		}
 
 		return true;
 	}
@@ -106,49 +106,47 @@ namespace Nightbloom
 		copyRegion.srcOffset = 0; // Optional
 		copyRegion.dstOffset = 0; // Optional
 		copyRegion.size = size;
-		vkCmdCopyBuffer(commandBuffer, srcBuffer.GetBuffer(), m_Buffer, 1, &copyRegion);
+		vkCmdCopyBuffer(commandBuffer, srcBuffer.GetBuffer(), GetBuffer(), 1, &copyRegion);
 
 		cmd.End();
 		return true;
 	}
 
-	void Nightbloom::VulkanBuffer::Destroy()
+	bool VulkanBuffer::UploadData(const void* data, VkDeviceSize size, VulkanCommandPool* commandPool)
 	{
-		if (m_MappedMemory)
+		// Create staging buffer
+		StagingBuffer staging(m_MemoryManager, size);
+
+		// Copy data to staging
+		if (!staging.CopyData(data, size))
 		{
-			vkUnmapMemory(m_Device->GetDevice(), m_Memory);
-			m_MappedMemory = nullptr;
+			LOG_ERROR("Failed to copy data to staging buffer");
+			return false;
 		}
 
-		if (m_Buffer != VK_NULL_HANDLE)
-		{
-			vkDestroyBuffer(m_Device->GetDevice(), m_Buffer, nullptr);
-			m_Buffer = VK_NULL_HANDLE;
-		}
+		// Copy from staging to device
+		VulkanSingleTimeCommand cmd(m_Device, commandPool);
+		VkCommandBuffer commandBuffer = cmd.Begin();
 
-		if (m_Memory != VK_NULL_HANDLE)
-		{
-			vkFreeMemory(m_Device->GetDevice(), m_Memory, nullptr);
-			m_Memory = VK_NULL_HANDLE;
-		}
+		VkBufferCopy copyRegion = {};
+		copyRegion.size = size;
+		vkCmdCopyBuffer(commandBuffer, staging.GetBuffer(), GetBuffer(), 1, &copyRegion);
 
-		m_Size = 0;
+		cmd.End();
+
+		LOG_TRACE("Uploaded {} bytes to device buffer", size);
+		return true;
 	}
 
-	uint32_t Nightbloom::VulkanBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+	void VulkanBuffer::Destroy()
 	{
-		VkPhysicalDeviceMemoryProperties memProps;
-		vkGetPhysicalDeviceMemoryProperties(m_Device->GetPhysicalDevice(), &memProps);
-
-		for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i)
+		if (m_Allocation)
 		{
-			if ((typeFilter & (1 << i)) && (memProps.memoryTypes[i].propertyFlags & properties) == properties)
-			{
-				return i;
-			}
+			m_MemoryManager->DestroyBuffer(m_Allocation);
+			m_Allocation = nullptr;
+			m_MappedData = nullptr;
+			m_Size = 0;
+			m_IsHostVisible = false;
 		}
-
-		LOG_ERROR("Failed to find suitable memory type");
-		return UINT32_MAX; // Indicate failure
 	}
 }

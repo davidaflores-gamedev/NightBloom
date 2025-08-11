@@ -122,7 +122,7 @@ namespace Nightbloom
 		virtual void WaitForIdle() = 0;
 
 		// Capabilities query
-		virtual bool SupportsFeature(const std::string& featureName) const { return false; };
+		virtual bool SupportsFeature(const std::string& featureName) const;
 		//virtual std::vector<std::string> GetSupportedFeatures() const { return {}; }
 		virtual size_t GetMinUniformBufferAlignment() const { return 256; } // Default alignment, can be overridden by specific implementations
 

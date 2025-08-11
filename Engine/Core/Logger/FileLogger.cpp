@@ -29,6 +29,7 @@ namespace Nightbloom
 
 	void FileLogger::Write(LogLevel level, const std::string& message)
 	{
+		(void)(level);
 		std::lock_guard<std::mutex> lock(m_FileMutex);
 
 		if (!m_File.is_open())
