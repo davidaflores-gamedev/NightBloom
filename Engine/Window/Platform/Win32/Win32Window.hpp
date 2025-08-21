@@ -16,6 +16,8 @@
 
 namespace Nightbloom
 {
+
+
 	class Win32Window : public Window
 	{
 	public:
@@ -70,5 +72,6 @@ namespace Nightbloom
 		std::string m_Title;
 
 		static Win32Window* s_MainWindow;
+		InputSystem* m_InputSystem = nullptr; // Pointer to the input system for handling input events
 	};
 }

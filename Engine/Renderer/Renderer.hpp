@@ -13,7 +13,6 @@
 namespace Nightbloom
 {
 	class RenderDevice;
-
 	class Renderer
 	{
 	private:
@@ -43,9 +42,15 @@ namespace Nightbloom
 		bool CreateVertexBuffer();
 		bool CreateIndexBuffer();
 
+		void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
 
 	private:
 		bool CreateGraphicsPipeline();
+
+	private:
+		bool CreateImGuiDescriptorPool();
+		VkCommandBuffer BeginSingleTimeCommands();
+		void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
 
 	public:
 		Renderer();
@@ -64,6 +69,10 @@ namespace Nightbloom
 		bool IsInitialized() const;
 
 		RenderDevice* GetDevice() const;
+
+		void TogglePipeline();
+
+		void ReloadShaders();
 
 		// Additional rendering methods can be added here
 		//const std::string& GetRendererName() const;

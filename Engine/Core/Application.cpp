@@ -27,6 +27,11 @@ namespace Nightbloom
 		desc.resizable = true;
 
 		m_Window = Window::Create(desc);
+		
+		m_Input = std::make_unique<InputSystem>();
+
+		// Connect them
+		m_Window->SetInputSystem(m_Input.get());
 
 		// Set up window callbacks
 		m_Window->SetCloseCallback([this]() {
@@ -56,6 +61,16 @@ namespace Nightbloom
 			m_Renderer.reset();
 		}
 
+		if (m_Input) {
+			m_Input->Shutdown();
+			m_Input.reset();
+		}
+
+		if (m_Window) {
+			//m_Window->Shutdown();
+			m_Window.reset();
+		}
+
 		EngineShutdown();
 
 		//OnShutdown();
@@ -73,8 +88,20 @@ namespace Nightbloom
 			auto currentTime = Clock::now();
 			float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
 			
+			m_Input->BeginFrame();
 			m_Window->PollEvents();
-			
+			// Use input
+			if (m_Input->IsPressed(InputCode::Key_P))
+				m_Renderer->TogglePipeline();
+
+			if (m_Input->IsPressed(InputCode::Key_R))
+			{
+				m_Renderer->ReloadShaders();
+			}
+
+			m_Input->EndFrame();
+
+
 			OnUpdate(deltaTime);
 			
 			// RENDER WITH THE NEW RENDERER

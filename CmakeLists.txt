@@ -62,10 +62,19 @@ add_subdirectory(ThirdParty)
 add_subdirectory(Engine)
 
 # Export targets for external projects like Sandbox
-export(TARGETS NightbloomEngine
-    NAMESPACE Nightbloom::
-    FILE "${CMAKE_CURRENT_BINARY_DIR}/NightbloomEngineTargets.cmake"
-)
+# Include all dependencies in the export
+if(TARGET ImGui)
+    export(TARGETS NightbloomEngine VMA ImGui
+        NAMESPACE Nightbloom::
+        FILE "${CMAKE_CURRENT_BINARY_DIR}/NightbloomEngineTargets.cmake"
+    )
+else()
+    # If ImGui isn't built, just export the engine and VMA
+    export(TARGETS NightbloomEngine VMA
+        NAMESPACE Nightbloom::
+        FILE "${CMAKE_CURRENT_BINARY_DIR}/NightbloomEngineTargets.cmake"
+    )
+endif()
 
 # Create package config file
 include(CMakePackageConfigHelpers)

@@ -42,6 +42,14 @@ namespace Nightbloom
 		return nullptr;
 #endif
 	}
+	void Window::SetInputSystem(InputSystem* inputSystem)
+	{
+		m_InputSystem = inputSystem;
+		if (m_InputSystem)
+		{
+			LOG_INFO("Input system connected to Win32 window");
+		}
+	}
 }
 
 //namespace Nightbloom

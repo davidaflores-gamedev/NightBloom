@@ -61,6 +61,8 @@ endif()
 target_link_libraries(NightbloomEngine
     PUBLIC
         ${VULKAN_LIBRARY}
+	VMA
+	ImGui
     PRIVATE
         # Platform libraries
         $<$<PLATFORM_ID:Windows>:user32.lib>
@@ -77,7 +79,9 @@ target_link_libraries(NightbloomEngine
 #     <cstdint>
 # )
 # Group files in IDE
+
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/.. PREFIX "Engine" FILES ${ENGINE_SOURCES})
+
 # Build tests if enabled
 if(NIGHTBLOOM_BUILD_TESTS AND TEST_SOURCES)
     add_executable(NightbloomTests ${TEST_SOURCES})

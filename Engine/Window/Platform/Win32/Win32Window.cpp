@@ -6,12 +6,15 @@
 //------------------------------------------------------------------------------
 
 #include "Engine/Window/Platform/Win32/Win32Window.hpp"
+#include "Engine/Input/InputSystem.hpp" 
 #include "Core/Logger/Logger.hpp"
 //#include "Core/Assert.hpp"  // For GUARANTEE_OR_DIE
 #include <windowsx.h>
 
+#include <imgui.h>
+
 // Forward declaration for ImGui
-//extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 namespace Nightbloom
 {
@@ -32,6 +35,8 @@ namespace Nightbloom
 		{
 			return DefWindowProc(windowHandle, wmMessageCode, wParam, lParam);
 		}
+
+		InputSystem* input = window->GetInputSystem();
 
 		switch (wmMessageCode)
 		{
@@ -64,6 +69,10 @@ namespace Nightbloom
 
 		case WM_KILLFOCUS:
 		{
+			// Clear input state when losing focus
+			if (input)
+				input->ClearState();
+
 			if (window->m_FocusCallback)
 				window->m_FocusCallback(false);
 			return 0;
@@ -71,47 +80,205 @@ namespace Nightbloom
 
 		case WM_KEYDOWN:
 		{
-			// You can add input handling here or fire events
-			LOG_TRACE("Key pressed: {}", wParam);
-			break;
+			// Check for repeat (bit 30 of lParam)
+			bool isRepeat = (lParam & 0x40000000) != 0;
+			if (!isRepeat && input)  // Ignore key repeats for now
+			{
+				input->OnKeyDown(static_cast<unsigned int>(wParam));
+			}
+			else if (!input)
+			{
+				// Fallback logging if no input system
+				LOG_TRACE("Key pressed: {}", wParam);
+			}
+			return 0;
 		}
 
 		case WM_KEYUP:
 		{
-			LOG_TRACE("Key released: {}", wParam);
-			break;
+			if (input)
+				input->OnKeyUp(static_cast<unsigned int>(wParam));
+			else
+				LOG_TRACE("Key released: {}", wParam);
+			return 0;
+		}
+
+		case WM_SYSKEYDOWN:  // Handle Alt+ combinations
+		{
+			bool isRepeat = (lParam & 0x40000000) != 0;
+			if (!isRepeat && input)
+			{
+				input->OnKeyDown(static_cast<unsigned int>(wParam));
+			}
+			return 0;
+		}
+
+		case WM_SYSKEYUP:
+		{
+			if (input)
+				input->OnKeyUp(static_cast<unsigned int>(wParam));
+			return 0;
 		}
 
 		case WM_CHAR:
 		{
-			LOG_TRACE("Character input: {}", (char)wParam);
-			break;
+			if (input)
+				input->OnChar(static_cast<unsigned int>(wParam));
+			else
+				LOG_TRACE("Character input: {}", (char)wParam);
+			return 0;
 		}
 
 		case WM_LBUTTONDOWN:
+		{
+			if (input)
+			{
+				input->OnMouseButtonDown(0);  // 0 = left button
+				SetCapture(windowHandle);  // Capture mouse even if it leaves window
+			}
+			else
+			{
+				LOG_TRACE("Mouse button event: Left Down");
+			}
+			return 0;
+		}
+
 		case WM_LBUTTONUP:
+		{
+			if (input)
+			{
+				input->OnMouseButtonUp(0);  // 0 = left button
+				ReleaseCapture();
+			}
+			else
+			{
+				LOG_TRACE("Mouse button event: Left Up");
+			}
+			return 0;
+		}
+
 		case WM_RBUTTONDOWN:
+		{
+			if (input)
+			{
+				input->OnMouseButtonDown(1);  // 1 = right button
+				SetCapture(windowHandle);
+			}
+			else
+			{
+				LOG_TRACE("Mouse button event: Right Down");
+			}
+			return 0;
+		}
+
 		case WM_RBUTTONUP:
 		{
-			LOG_TRACE("Mouse button event");
-			break;
+			if (input)
+			{
+				input->OnMouseButtonUp(1);  // 1 = right button
+				ReleaseCapture();
+			}
+			else
+			{
+				LOG_TRACE("Mouse button event: Right Up");
+			}
+			return 0;
 		}
+
+		case WM_MBUTTONDOWN:
+		{
+			if (input)
+			{
+				input->OnMouseButtonDown(2);  // 2 = middle button
+				SetCapture(windowHandle);
+			}
+			else
+			{
+				LOG_TRACE("Mouse button event: Middle Down");
+			}
+			return 0;
+		}
+
+		case WM_MBUTTONUP:
+		{
+			if (input)
+			{
+				input->OnMouseButtonUp(2);  // 2 = middle button
+				ReleaseCapture();
+			}
+			else
+			{
+				LOG_TRACE("Mouse button event: Middle Up");
+			}
+			return 0;
+		}
+
+		case WM_XBUTTONDOWN:
+		{
+			UINT button = GET_XBUTTON_WPARAM(wParam);
+			if (input)
+			{
+				if (button == XBUTTON1)
+					input->OnMouseButtonDown(3);  // 3 = X1
+				else if (button == XBUTTON2)
+					input->OnMouseButtonDown(4);  // 4 = X2
+				SetCapture(windowHandle);
+			}
+			else
+			{
+				LOG_TRACE("Mouse button event: X{} Down", button);
+			}
+			return TRUE;  // Must return TRUE for X buttons
+		}
+
+		case WM_XBUTTONUP:
+		{
+			UINT button = GET_XBUTTON_WPARAM(wParam);
+			if (input)
+			{
+				if (button == XBUTTON1)
+					input->OnMouseButtonUp(3);  // 3 = X1
+				else if (button == XBUTTON2)
+					input->OnMouseButtonUp(4);  // 4 = X2
+				ReleaseCapture();
+			}
+			else
+			{
+				LOG_TRACE("Mouse button event: X{} Up", button);
+			}
+			return TRUE;  // Must return TRUE for X buttons
+		}
+
 
 		case WM_MOUSEWHEEL:
 		{
 			short wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
-			LOG_TRACE("Mouse wheel: {}", wheelDelta);
-			break;
+			if (input)
+			{
+				float delta = static_cast<float>(wheelDelta) / WHEEL_DELTA;
+				input->OnMouseWheel(delta);
+			}
+			else
+			{
+				LOG_TRACE("Mouse wheel: {}", wheelDelta);
+			}
+			return 0;
 		}
 
 		case WM_MOUSEMOVE:
 		{
 			int x = GET_X_LPARAM(lParam);
 			int y = GET_Y_LPARAM(lParam);
-			(void)(x); // UNUSED Uncomment if you want to use x and y
-			(void)(y); // UNUSED Uncomment if you want to use x and y
-			//LOG_TRACE("Mouse move: ({}, {})", x, y);
-			break;
+			if (input)
+			{
+				input->OnMouseMove(x, y);
+			}
+			// Only log if no input system and uncommenting the original logs
+			// else
+			// {
+			//     LOG_TRACE("Mouse move: ({}, {})", x, y);
+			// }
+			return 0;
 		}
 		}
 
@@ -127,6 +294,7 @@ namespace Nightbloom
 		, m_ShuttingDown(false)
 		, m_ClientDimensionsX(desc.width), m_ClientDimensionsY(desc.height)
 		, m_Title(desc.title)
+		, m_InputSystem(nullptr)  // Initialize the input system pointer
 	{
 		s_MainWindow = this;
 		CreateOSWindow(desc);
@@ -134,6 +302,8 @@ namespace Nightbloom
 
 	Win32Window::~Win32Window()
 	{
+		m_InputSystem = nullptr;
+
 		if (m_DisplayContext)
 		{
 			ReleaseDC(m_Hwnd, m_DisplayContext);

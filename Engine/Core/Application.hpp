@@ -8,6 +8,7 @@
 #pragma once
 #include <memory>
 #include "Engine/Window/Window.hpp"
+#include "Engine/Input/InputSystem.hpp"
 #include "Engine/Renderer/Renderer.hpp"
 
 namespace Nightbloom
@@ -39,6 +40,7 @@ namespace Nightbloom
 	private:
 		std::unique_ptr<Window> m_Window;
 		std::unique_ptr<Renderer> m_Renderer;
+		std::unique_ptr<InputSystem> m_Input;
 
 		bool m_Running = true;
 		float m_LastFrameTime = 0.0f;

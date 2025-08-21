@@ -59,7 +59,8 @@ namespace Nightbloom
 		VkDevice GetDevice() const { return m_Device; }
 		VkQueue GetGraphicsQueue() const { return m_GraphicsQueue; }
 		VkQueue GetPresentQueue() const { return m_PresentQueue; }
-
+		uint32_t GetGraphicsQueueFamily() const { return m_QueueFamilies.graphicsFamily.value_or(0); }
+		uint32_t GetPresentQueueFamily() const { return m_QueueFamilies.presentFamily.value_or(0); }
 		// Queue family indices, needed by swapchain and other components
 		struct QueueFamilyIndices
 		{

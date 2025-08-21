@@ -12,6 +12,8 @@
 
 namespace Nightbloom
 {
+	class InputSystem;
+
 	using WindowCloseCallback = std::function<void()>;
 	using WindowResizeCallback = std::function<void(int width, int height)>;
 	using WindowFocusCallback = std::function<void(bool focused)>;
@@ -55,10 +57,14 @@ namespace Nightbloom
 
 		// try sometime std::move(callback) to avoid copies
 
+		virtual void SetInputSystem(InputSystem* inputSystem);
+		virtual InputSystem* GetInputSystem() const { return m_InputSystem; };
 	protected:
 		// Callbacks that derived classes should call
 		WindowCloseCallback m_CloseCallback;
 		WindowResizeCallback m_ResizeCallback;
 		WindowFocusCallback m_FocusCallback;
+
+		InputSystem* m_InputSystem = nullptr; // Pointer to the input system
 	};
 }

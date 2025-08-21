@@ -55,6 +55,7 @@ namespace Nightbloom
 		};
 
 		BufferAllocation* CreateBuffer(const BufferCreateInfo& createInfo);
+		//void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
 		void DestroyBuffer(BufferAllocation* allocation);
 
 		// Image allocation

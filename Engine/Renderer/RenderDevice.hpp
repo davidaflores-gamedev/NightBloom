@@ -24,10 +24,10 @@ namespace Nightbloom
 
 	enum class BufferType
 	{
-		Vertex,
-		Index,
-		Uniform,
-		Storage,
+		EBuffer_Vertex,
+		EBuffer_Index,
+		EBuffer_Uniform,
+		EBuffer_Storage,
 	};
 
 	enum class TextureFormat
@@ -42,12 +42,12 @@ namespace Nightbloom
 
 	enum class ShaderStage
 	{
-		Vertex,
-		Fragment,
-		Compute,
-		Geometry,
-		TessControl,
-		TessEval
+		EShader_Vertex,
+		EShader_Fragment,
+		EShader_Compute,
+		EShader_Geometry,
+		EShader_TessControl,
+		EShader_TessEval
 	};
 
 	struct BufferDesc
@@ -164,12 +164,12 @@ namespace Nightbloom
 		//virtual void* GetNativeHandle() const = 0; // Return native handle for API-specific operations
 	};
 
-	class Pipeline
-	{
-	public:
-		virtual ~Pipeline() = default;
-		// Pipeline state is mostly internal to the implementation
-	};
+	//class Pipeline
+	//{
+	//public:
+	//	virtual ~Pipeline() = default;
+	//	// Pipeline state is mostly internal to the implementation
+	//};
 
 	class CommandBuffer
 	{
