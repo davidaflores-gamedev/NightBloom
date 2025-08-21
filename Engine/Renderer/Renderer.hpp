@@ -61,6 +61,7 @@ namespace Nightbloom
 
 		void BeginFrame();
 		void EndFrame();
+		void FinalizeFrame();
 
 		void Clear(float r = 1.0f, float g = 0.0f, float b = 1.0f, float a = 1.0f);
 

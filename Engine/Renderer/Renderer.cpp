@@ -1087,51 +1087,12 @@ namespace Nightbloom
 		// Start GPU timing
 		PerformanceMetrics::Get().BeginGPUWork();
 
-		// Record command buffer
-		VkCommandBuffer commandBuffer = m_Data->commandBuffers[m_Data->currentFrame];
-		vkResetCommandBuffer(commandBuffer, 0);
-		RecordCommandBuffer(commandBuffer, m_Data->currentImageIndex);
-
-#pragma region "ImGui BeginFrame"
+		#pragma region "ImGui BeginFrame"
 
 		if (m_Data->imguiInitialized) {
 			ImGui_ImplVulkan_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
-
-			// Create debug window
-			ImGui::Begin("Nightbloom Debug");
-
-			ImGui::Text("Performance");
-			ImGui::Separator();
-			ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-			ImGui::Text("Frame Time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
-
-			ImGui::Spacing();
-			ImGui::Text("Cube Controls");
-			ImGui::Separator();
-			ImGui::SliderFloat("Rotation Speed", &m_Data->rotationSpeed, 0.0f, 0.1f);
-
-			if (ImGui::Button("Reset Rotation")) {
-				m_Data->rotationSpeed = 0.01f;
-			}
-
-			ImGui::Spacing();
-			ImGui::Checkbox("Show ImGui Demo", &m_Data->showImGuiDemo);
-
-			if (ImGui::Button("Toggle Pipeline (P)")) {
-				TogglePipeline();
-			}
-
-			ImGui::End();
-
-			// Show demo window if requested
-			if (m_Data->showImGuiDemo) {
-				ImGui::ShowDemoWindow(&m_Data->showImGuiDemo);
-			}
-
-			// Render ImGui (prepare draw data)
-			ImGui::Render();
 		}
 
 #pragma endregion
@@ -1317,6 +1278,54 @@ namespace Nightbloom
 	RenderDevice* Renderer::GetDevice() const
 	{
 		return m_Data->device.get();
+	}
+
+	void Renderer::FinalizeFrame()
+	{
+		if (!m_Data->initialized)
+			return;
+
+		// Add Renderer's own debug UI if needed
+		if (m_Data->imguiInitialized) {
+			// Optional: Add renderer-specific debug window
+			ImGui::Begin("Renderer Debug");
+			ImGui::Text("Performance");
+			ImGui::Separator();
+			ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+			ImGui::Text("Frame Time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
+
+			ImGui::Spacing();
+			ImGui::Text("Cube Controls");
+			ImGui::Separator();
+			ImGui::SliderFloat("Rotation Speed", &m_Data->rotationSpeed, 0.0f, 0.1f);
+
+			if (ImGui::Button("Reset Rotation")) {
+				m_Data->rotationSpeed = 0.01f;
+			}
+
+			ImGui::Spacing();
+			ImGui::Checkbox("Show ImGui Demo", &m_Data->showImGuiDemo);
+
+			if (ImGui::Button("Toggle Pipeline (P)")) {
+				TogglePipeline();
+			}
+
+			ImGui::End();
+
+			// Show demo window if requested
+			if (m_Data->showImGuiDemo) {
+				ImGui::ShowDemoWindow(&m_Data->showImGuiDemo);
+			}
+
+			// NOW render ImGui after all UI has been added
+			ImGui::Render();
+		}
+
+		// Record command buffer with all the draw commands
+		VkCommandBuffer commandBuffer = m_Data->commandBuffers[m_Data->currentFrame];
+		vkResetCommandBuffer(commandBuffer, 0);
+		RecordCommandBuffer(commandBuffer, m_Data->currentImageIndex);
+
 	}
 
 	void Renderer::TogglePipeline()

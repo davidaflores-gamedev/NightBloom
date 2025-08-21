@@ -109,6 +109,7 @@ namespace Nightbloom
 				m_Renderer->BeginFrame();
 				m_Renderer->Clear(0.1f, 0.1f, 0.2f, 1.0f);  // Dark blue background
 				OnRender();  // Your app can override this
+				m_Renderer->FinalizeFrame();
 				m_Renderer->EndFrame();
 			}
 			

@@ -35,7 +35,8 @@ namespace Nightbloom
 
 		//Accessors for engine systems
 		Window* GetWindow() const { return m_Window.get(); }
-
+		Renderer* GetRenderer() const { return m_Renderer.get(); }
+		InputSystem* GetInput() const { return m_Input.get(); }
 
 	private:
 		std::unique_ptr<Window> m_Window;
