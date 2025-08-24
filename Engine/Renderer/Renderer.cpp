@@ -12,8 +12,8 @@
 #include "Vulkan/VulkanCommandPool.hpp" 
 #include "Vulkan/VulkanBuffer.hpp"
 #include "Vulkan/VulkanMemoryManager.hpp"
-#include "Vulkan/VulkanPipeline.hpp" // TODO: rename to pipeline manager
-#include "Vulkan/VulkanPushConstants.hpp"
+#include "Vulkan/VulkanPipelineAdapter.hpp"
+#include "PushConstants.hpp"
 #include "Core/Logger/Logger.hpp"
 #include "Core/Assert.hpp"
 #include "Core/FileUtils.hpp"
@@ -46,7 +46,7 @@ namespace Nightbloom
 		float rotationSpeed = 0.01f;  // Move this from being hardcoded
 		bool showImGuiDemo = false;
 
-		std::unique_ptr<VulkanPipelineManager> pipelineManager;
+		std::unique_ptr<VulkanPipelineAdapter> pipelineAdapter;
 		PipelineType currentPipeline = PipelineType::Triangle; // Current pipeline type
 
 		// Frame data
@@ -178,7 +178,7 @@ namespace Nightbloom
 
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-		m_Data->pipelineManager->BindPipeline(commandBuffer, m_Data->currentPipeline);
+		m_Data->pipelineAdapter->BindPipeline(commandBuffer, m_Data->currentPipeline);
 
 		// Handle push constants for mesh pipeline
 		if (m_Data->currentPipeline == PipelineType::Mesh)
@@ -212,7 +212,7 @@ namespace Nightbloom
 			pushConstants.proj[1][1] *= -1;
 
 			// push constants to gpu
-			m_Data->pipelineManager->PushConstants(
+			m_Data->pipelineAdapter->GetVulkanManager()->PushConstants(
 				commandBuffer,
 				m_Data->currentPipeline,
 				VK_SHADER_STAGE_VERTEX_BIT, // Vertex shader stage
@@ -553,9 +553,9 @@ namespace Nightbloom
 		VkDevice device = vulkanDevice->GetDevice();
 		VkExtent2D extent = m_Data->swapchain->GetExtent();
 
-		m_Data->pipelineManager = std::make_unique<VulkanPipelineManager>();
+		m_Data->pipelineAdapter = std::make_unique<VulkanPipelineAdapter>();
 
-		if (!m_Data->pipelineManager->Initialize(device, m_Data->renderPass, extent))
+		if (!m_Data->pipelineAdapter->Initialize(device, m_Data->renderPass, extent))
 		{
 			LOG_ERROR("Failed to initialize pipeline manager");
 			return false;
@@ -563,20 +563,20 @@ namespace Nightbloom
 
 		#pragma region "Create Triangle Pipeline"
 
-		PipelineConfig triangleConfig{};
+		PipelineConfig  triangleConfig{};
 		triangleConfig.vertexShaderPath = "triangle.vert";
 		triangleConfig.fragmentShaderPath = "triangle.frag";
 		triangleConfig.useVertexInput = true;
-		triangleConfig.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-		triangleConfig.polygonMode = VK_POLYGON_MODE_FILL;
-		triangleConfig.cullMode = VK_CULL_MODE_BACK_BIT;
-		triangleConfig.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; // CHECK THIS OUT
+		triangleConfig.topology = PrimitiveTopology::TriangleList;
+		triangleConfig.polygonMode = PolygonMode::Fill;
+		triangleConfig.cullMode = CullMode::Back;
+		triangleConfig.frontFace = FrontFace::CounterClockwise; // CHECK THIS OUT
 		triangleConfig.depthTestEnable = false;  // No depth testing for simple triangle
 		triangleConfig.depthWriteEnable = false;
 		triangleConfig.blendEnable = false;
 		triangleConfig.pushConstantSize = 0;  // No push constants for triangle
 
-		if (!m_Data->pipelineManager->CreatePipeline(PipelineType::Triangle, triangleConfig))
+		if (!m_Data->pipelineAdapter->CreatePipeline(PipelineType::Triangle, triangleConfig))
 		{
 			LOG_ERROR("Failed to create triangle pipeline");
 			return false;
@@ -590,18 +590,18 @@ namespace Nightbloom
 		meshConfig.vertexShaderPath = "Mesh.vert";
 		meshConfig.fragmentShaderPath = "Mesh.frag";
 		meshConfig.useVertexInput = true;
-		meshConfig.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-		meshConfig.polygonMode = VK_POLYGON_MODE_FILL;
-		meshConfig.cullMode = VK_CULL_MODE_BACK_BIT;
-		meshConfig.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; // CHECK THIS OUT
+		meshConfig.topology = PrimitiveTopology::TriangleList;
+		meshConfig.polygonMode = PolygonMode::Fill;
+		meshConfig.cullMode = CullMode::Back;
+		meshConfig.frontFace = FrontFace::CounterClockwise;
 		meshConfig.depthTestEnable = true;  // Enable depth testing for mesh
 		meshConfig.depthWriteEnable = true;
-		meshConfig.depthCompareOp = VK_COMPARE_OP_LESS;
+		meshConfig.depthCompareOp = CompareOp::Less;
 		meshConfig.blendEnable = false;
 		meshConfig.pushConstantSize = sizeof(PushConstantData);  // Use push constants for mesh
-		meshConfig.pushConstantStages = VK_SHADER_STAGE_VERTEX_BIT;
+		meshConfig.pushConstantStages = ShaderStage::Vertex;
 
-		if (!m_Data->pipelineManager->CreatePipeline(PipelineType::Mesh, meshConfig))
+		if (!m_Data->pipelineAdapter->CreatePipeline(PipelineType::Mesh, meshConfig))
 		{
 			LOG_ERROR("Failed to create mesh pipeline");
 			///return false;
@@ -946,10 +946,10 @@ namespace Nightbloom
 		}
 
 		// 1. Destroy pipeline first (uses render pass)
-		if (m_Data->pipelineManager)
+		if (m_Data->pipelineAdapter)
 		{
-			m_Data->pipelineManager->Cleanup();
-			m_Data->pipelineManager.reset();
+			m_Data->pipelineAdapter.reset();
+			LOG_INFO("Pipeline adapter destroyed");
 		}
 
 		// 2. Destroy vertex buffer (uses VMA)
@@ -1280,6 +1280,11 @@ namespace Nightbloom
 		return m_Data->device.get();
 	}
 
+	IPipelineManager* Renderer::GetPipelineManager() const
+	{
+		return m_Data->pipelineAdapter.get();
+	}
+
 	void Renderer::FinalizeFrame()
 	{
 		if (!m_Data->initialized)
@@ -1330,7 +1335,7 @@ namespace Nightbloom
 
 	void Renderer::TogglePipeline()
 	{
-		if (!m_Data->initialized || !m_Data->pipelineManager)
+		if (!m_Data->initialized || !m_Data->pipelineAdapter)
 		{
 			LOG_WARN("Cannot toggle pipeline - renderer not initialized");
 			return;
@@ -1344,7 +1349,7 @@ namespace Nightbloom
 		if (m_Data->currentPipeline == PipelineType::Triangle)
 		{
 			// Check if mesh pipeline exists
-			if (m_Data->pipelineManager->GetPipeline(PipelineType::Mesh) != VK_NULL_HANDLE)
+			if (m_Data->pipelineAdapter->GetPipeline(PipelineType::Mesh) != VK_NULL_HANDLE)
 			{
 				m_Data->currentPipeline = PipelineType::Mesh;
 				LOG_INFO("Switched to Mesh pipeline (with push constants)");
@@ -1366,7 +1371,7 @@ namespace Nightbloom
 
 	void Renderer::ReloadShaders()
 	{
-		if (!m_Data->initialized || !m_Data->pipelineManager)
+		if (!m_Data->initialized || !m_Data->pipelineAdapter)
 		{
 			LOG_WARN("Cannot reload shaders - renderer not initialized");
 			return;
@@ -1379,7 +1384,7 @@ namespace Nightbloom
 		vkDeviceWaitIdle(vulkanDevice->GetDevice());
 
 		// Reload all pipelines
-		if (m_Data->pipelineManager->ReloadAllPipelines())
+		if (m_Data->pipelineAdapter->ReloadAllPipelines())
 		{
 			LOG_INFO("Shaders reloaded successfully");
 

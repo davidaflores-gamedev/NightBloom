@@ -29,14 +29,16 @@ namespace Nightbloom
 		Buffer* CreateBuffer(const BufferDesc& desc) override;
 		Texture* CreateTexture(const TextureDesc& desc) override;
 		Shader* CreateShader(const ShaderDesc& desc) override;
-		Pipeline* CreatePipeline(const PipelineDesc& desc) override;
+		RenderPass* CreateRenderPass(const RenderPassDesc& desc) override;
+		Framebuffer* CreateFramebuffer(const FramebufferDesc& desc) override;
 		CommandBuffer* CreateCommandBuffer() override;
 
 		// Resource destruction, implementation will be added later
 		void DestroyBuffer(Buffer* buffer) override;
 		void DestroyTexture(Texture* texture) override;
 		void DestroyShader(Shader* shader) override;
-		void DestroyPipeline(Pipeline* pipeline) override;
+		void DestroyRenderPass(RenderPass* renderPass) override;
+		void DestroyFramebuffer(Framebuffer* framebuffer) override;
 		void DestroyCommandBuffer(CommandBuffer* commandBuffer) override;
 
 		// Frame operations, implementation will be added later

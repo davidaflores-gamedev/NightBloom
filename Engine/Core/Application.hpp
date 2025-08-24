@@ -10,6 +10,7 @@
 #include "Engine/Window/Window.hpp"
 #include "Engine/Input/InputSystem.hpp"
 #include "Engine/Renderer/Renderer.hpp"
+#include "Engine/Renderer/PipelineInterface.hpp"  // ADD THIS for PipelineType enum
 
 namespace Nightbloom
 {
@@ -37,6 +38,13 @@ namespace Nightbloom
 		Window* GetWindow() const { return m_Window.get(); }
 		Renderer* GetRenderer() const { return m_Renderer.get(); }
 		InputSystem* GetInput() const { return m_Input.get(); }
+
+		// ADD THIS - convenience method for editor
+		IPipelineManager* GetPipelineManager() const
+		{
+			return m_Renderer ? m_Renderer->GetPipelineManager() : nullptr;
+		}
+
 
 	private:
 		std::unique_ptr<Window> m_Window;

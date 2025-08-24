@@ -7,6 +7,7 @@
 
 #pragma once
 #include "Engine/Renderer//Vulkan/VulkanCommon.hpp"  // This should include all necessary Vulkan headers
+#include "Engine/Renderer/PipelineInterface.hpp"  // Interface for pipeline management
 #include <memory>
 #include <string>
 
@@ -70,6 +71,7 @@ namespace Nightbloom
 		bool IsInitialized() const;
 
 		RenderDevice* GetDevice() const;
+		IPipelineManager* GetPipelineManager() const;
 
 		void TogglePipeline();
 

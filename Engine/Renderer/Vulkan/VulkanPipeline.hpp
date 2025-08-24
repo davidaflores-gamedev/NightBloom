@@ -12,26 +12,13 @@
 #include <string>
 #include <memory>
 #include <array>
+#include "Engine/Renderer/PipelineInterface.hpp"  // For PipelineType enum
 
 namespace Nightbloom
 {
-	enum class PipelineType
-	{
-		// Current
-		Triangle,
-		Mesh,
-
-		// Future
-		Shadow,
-		Skybox,
-		Volumetric,
-		PostProcess,
-		Compute,
-
-		Count
-	};
-
-	struct PipelineConfig
+	// Vulkan-specific pipeline configuration
+	// This is internal to the Vulkan backend
+	struct VulkanPipelineConfig
 	{
 		std::string vertexShaderPath;
 		std::string fragmentShaderPath;
@@ -46,6 +33,7 @@ namespace Nightbloom
 		VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
 		VkCullModeFlags cullMode = VK_CULL_MODE_BACK_BIT;
 		VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
 		bool depthTestEnable = true;
 		bool depthWriteEnable = true;
 		VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS;
@@ -76,7 +64,7 @@ namespace Nightbloom
 		bool Initialize(VkDevice device, VkRenderPass defaultRenderPass, VkExtent2D extent);
 
 		// Create a pipeline with given configuration
-		bool CreatePipeline(PipelineType type, const PipelineConfig& config);
+		bool CreatePipeline(PipelineType type, const VulkanPipelineConfig& config);
 
 		VkPipeline GetPipeline(PipelineType type) const;
 		VkPipelineLayout GetPipelineLayout(PipelineType type) const;
@@ -101,14 +89,14 @@ namespace Nightbloom
 		{
 			VkPipeline pipeline = VK_NULL_HANDLE;
 			VkPipelineLayout layout = VK_NULL_HANDLE;
-			PipelineConfig config; // Store config for hot reload
+			VulkanPipelineConfig config; // Store config for hot reload
 			bool isValid = false;
 		};
 
 		// Helper functions
 		VkShaderModule CreateShaderModule(const std::vector<char>& code);
-		bool CreateGraphicsPipeline(const PipelineConfig& config, Pipeline& outPipeline);
-		bool CreateComputePipeline(const PipelineConfig& config, Pipeline& outPipeline);
+		bool CreateGraphicsPipeline(const VulkanPipelineConfig& config, Pipeline& outPipeline);
+		bool CreateComputePipeline(const VulkanPipelineConfig& config, Pipeline& outPipeline);
 		void DestroyPipeline(Pipeline& pipeline);
 
 		// Device references

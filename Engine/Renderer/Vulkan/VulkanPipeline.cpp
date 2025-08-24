@@ -23,7 +23,7 @@ namespace Nightbloom
 		return true;
 	}
 
-	bool VulkanPipelineManager::CreatePipeline(PipelineType type, const PipelineConfig& config) {
+	bool VulkanPipelineManager::CreatePipeline(PipelineType type, const VulkanPipelineConfig& config) {
 		size_t index = static_cast<size_t>(type);
 		if (index >= m_Pipelines.size()) {
 			LOG_ERROR("Invalid pipeline type");
@@ -58,7 +58,7 @@ namespace Nightbloom
 		return success;
 	}
 
-	bool VulkanPipelineManager::CreateGraphicsPipeline(const PipelineConfig& config, Pipeline& pipeline) {
+	bool VulkanPipelineManager::CreateGraphicsPipeline(const VulkanPipelineConfig& config, Pipeline& pipeline) {
 		// Load shaders
 		auto& assetManager = AssetManager::Get();
 		auto vertShaderCode = assetManager.LoadShaderBinary(config.vertexShaderPath);
@@ -263,7 +263,7 @@ namespace Nightbloom
 		return result == VK_SUCCESS;
 	}
 
-	bool VulkanPipelineManager::CreateComputePipeline(const PipelineConfig& config, Pipeline& outPipeline)
+	bool VulkanPipelineManager::CreateComputePipeline(const VulkanPipelineConfig& config, Pipeline& outPipeline)
 	{
 		return false;
 	}

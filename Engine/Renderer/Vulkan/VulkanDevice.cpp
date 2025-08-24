@@ -120,7 +120,13 @@ namespace Nightbloom
 		return nullptr;
 	}
 
-	Pipeline* VulkanDevice::CreatePipeline(const PipelineDesc& desc)
+	RenderPass* VulkanDevice::CreateRenderPass(const RenderPassDesc& desc)
+	{
+		UNUSED(desc);
+		return nullptr;
+	}
+
+	Framebuffer* VulkanDevice::CreateFramebuffer(const FramebufferDesc& desc)
 	{
 		UNUSED(desc);
 		return nullptr;
@@ -146,9 +152,14 @@ namespace Nightbloom
 		UNUSED(shader);
 	}
 
-	void VulkanDevice::DestroyPipeline(Pipeline* pipeline)
+	void VulkanDevice::DestroyRenderPass(RenderPass* renderPass)
 	{
-		UNUSED(pipeline);
+		UNUSED(renderPass);
+	}
+
+	void VulkanDevice::DestroyFramebuffer(Framebuffer* framebuffer)
+	{
+		UNUSED(framebuffer);
 	}
 
 	void VulkanDevice::DestroyCommandBuffer(CommandBuffer* commandBuffer)
