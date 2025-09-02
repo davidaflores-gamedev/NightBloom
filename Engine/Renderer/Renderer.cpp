@@ -6,20 +6,21 @@
 //------------------------------------------------------------------------------
 
 #include "Renderer.hpp"
-#include "RenderDevice.hpp"
+#include "Renderer/RenderDevice.hpp"
+#include "Renderer/Vertex.hpp"
+#include "Renderer/AssetManager.hpp"  
+#include "Renderer/PushConstants.hpp"
+
 #include "Vulkan/VulkanDevice.hpp"
 #include "Vulkan/VulkanSwapchain.hpp"
 #include "Vulkan/VulkanCommandPool.hpp" 
 #include "Vulkan/VulkanBuffer.hpp"
 #include "Vulkan/VulkanMemoryManager.hpp"
 #include "Vulkan/VulkanPipelineAdapter.hpp"
-#include "PushConstants.hpp"
 #include "Core/Logger/Logger.hpp"
 #include "Core/Assert.hpp"
 #include "Core/FileUtils.hpp"
-#include "Engine/Renderer/Vertex.hpp"
-#include "Engine/Renderer/AssetManager.hpp"   
-#include "Engine/Core/PerformanceMetrics.hpp"  
+#include "Core/PerformanceMetrics.hpp"  
 #include <filesystem>  
 
 #include <imgui.h>
@@ -66,6 +67,11 @@ namespace Nightbloom
 		// Render pass for clearing
 		VkRenderPass renderPass = VK_NULL_HANDLE; // Not used yet, but reserved for future use
 		std::vector<VkFramebuffer> framebuffers; // Framebuffers for render pass
+
+		// Draw command system
+		DrawList m_FrameDrawList;
+		glm::mat4 m_ViewMatrix = glm::mat4(1.0f);
+		glm::mat4 m_ProjectionMatrix = glm::mat4(1.0f);
 
 		void* windowHandle = nullptr;
 		uint32_t width = 0;
@@ -178,61 +184,67 @@ namespace Nightbloom
 
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-		m_Data->pipelineAdapter->BindPipeline(commandBuffer, m_Data->currentPipeline);
+		PipelineType currentPipeline = m_Data->currentPipeline;
 
-		// Handle push constants for mesh pipeline
-		if (m_Data->currentPipeline == PipelineType::Mesh)
+		for (const auto& cmd : m_Data->m_FrameDrawList.GetCommands())
 		{
-			// Set up matrices
-			PushConstantData pushConstants{};
+			// Bind pipeline if it has changed
+			if (cmd.pipeline != currentPipeline)
+			{
+				// Bind the pipeline if it has changed
+				currentPipeline = cmd.pipeline;
+				m_Data->pipelineAdapter->BindPipeline(commandBuffer, cmd.pipeline);
+			}
 
-			// Model matric - for not just identity
-			static float rotation = 0.0f;
-			rotation += m_Data->rotationSpeed * .001f;
-			pushConstants.model = glm::rotate(glm::mat4(1.0f), rotation, glm::vec3(0.f, 1.f, 0.f));
+			// Set push Constants if needed
+			if (cmd.hasPushConstants)
+			{
+				// Combine command's push constants with global view/proj
+				PushConstantData pushConstants = cmd.pushConstants;
+				if (pushConstants.view == glm::mat4(1.0f))  // If not set
+					pushConstants.view = m_Data->m_ViewMatrix;
+				if (pushConstants.proj == glm::mat4(1.0f))  // If not set
+					pushConstants.proj = m_Data->m_ProjectionMatrix;
 
-			// View matrix - camera looking at origin froma  distance
-			pushConstants.view = glm::lookAt(
-				glm::vec3(3.0f, 1.0f, 3.0f),  // Move camera around
-				glm::vec3(0.0f, 0.0f, 0.0f),
-				glm::vec3(0.0f, 1.0f, 0.0f)
-			);
+				m_Data->pipelineAdapter->GetVulkanManager()->PushConstants(
+					commandBuffer,
+					currentPipeline,
+					VK_SHADER_STAGE_VERTEX_BIT,
+					&pushConstants,
+					sizeof(PushConstantData)
+				);
+			}
 
-			// Projection matrix - perspective projection
-			VkExtent2D swapChainExtent = m_Data->swapchain->GetExtent();
-			float aspectRatio = swapChainExtent.width / (float)swapChainExtent.height;
-			pushConstants.proj = glm::perspective(
-				glm::radians(45.0f),  // Field of view
-				aspectRatio,
-				0.1f,   // Near plane
-				100.0f  // Far plane
-			);
+			// Bind vertex buffer
+			if (cmd.vertexBuffer)
+			{
+				VkBuffer vertexBuffers[] = { ((VulkanBuffer*)(cmd.vertexBuffer))->GetBuffer() };
+				VkDeviceSize offsets[] = { 0 };
+				vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+			}
 
-			// Vulkan has inverted y and half z
-			pushConstants.proj[1][1] *= -1;
+			// Custom pre-draw callback
+			if (cmd.preDrawCallback)
+				cmd.preDrawCallback();
 
-			// push constants to gpu
-			m_Data->pipelineAdapter->GetVulkanManager()->PushConstants(
-				commandBuffer,
-				m_Data->currentPipeline,
-				VK_SHADER_STAGE_VERTEX_BIT, // Vertex shader stage
-				&pushConstants,            // Pointer to data
-				sizeof(PushConstantData)   // Size of push constants
-			);
-		}
+			// Draw
+			if (cmd.indexBuffer && cmd.indexCount > 0)
+			{
+				vkCmdBindIndexBuffer(commandBuffer,
+					((VulkanBuffer*)(cmd.indexBuffer))->GetBuffer(),
+					0, VK_INDEX_TYPE_UINT32);
+				vkCmdDrawIndexed(commandBuffer, cmd.indexCount, cmd.instanceCount,
+					0, 0, cmd.firstInstance);
+			}
+			else if (cmd.vertexCount > 0)
+			{
+				vkCmdDraw(commandBuffer, cmd.vertexCount, cmd.instanceCount,
+					0, cmd.firstInstance);
+			}
 
-		VkBuffer vertexBuffers[] = { m_Data->vertexBuffer->GetBuffer() };
-		VkDeviceSize offsets[] = { 0 };
-		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-
-		// Use indexed drawing for the cube
-		if (m_Data->indexBuffer && m_Data->indexCount > 0) {
-			vkCmdBindIndexBuffer(commandBuffer, m_Data->indexBuffer->GetBuffer(), 0, VK_INDEX_TYPE_UINT32);
-			vkCmdDrawIndexed(commandBuffer, m_Data->indexCount, 1, 0, 0, 0);
-		}
-		else {
-			// Fallback for triangle
-			vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+			// Custom post-draw callback
+			if (cmd.postDrawCallback)
+				cmd.postDrawCallback();
 		}
 
 		// RENDER IMGUI HERE - INSIDE THE RENDER PASS!
@@ -502,6 +514,29 @@ namespace Nightbloom
 
 		LOG_INFO("Created cube with {} vertices and {} indices", vertices.size(), indices.size());
 		return true;
+	}
+
+	Buffer* Renderer::GetTestVertexBuffer() const
+	{
+		if (!m_Data->vertexBuffer)
+			return nullptr;
+
+		// VulkanBuffer inherits from Buffer, so this cast is safe
+		// We're returning the base class pointer
+		return ((Buffer*)(m_Data->vertexBuffer).get());
+	}
+
+	Buffer* Renderer::GetTestIndexBuffer() const
+	{
+		if (!m_Data->indexBuffer)
+			return nullptr;
+
+		return ((Buffer*)(m_Data->indexBuffer).get());
+	}
+
+	uint32_t Renderer::GetTestIndexCount() const
+	{
+		return m_Data->indexCount;
 	}
 
 	void Renderer::CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
@@ -1084,6 +1119,9 @@ namespace Nightbloom
 		// Reset fence only if we're submitting work
 		vkResetFences(device, 1, &m_Data->inFlightFences[m_Data->currentFrame]);
 
+		// Reset command buffer for this frame
+		m_Data->m_FrameDrawList.Clear();
+
 		// Start GPU timing
 		PerformanceMetrics::Get().BeginGPUWork();
 
@@ -1241,6 +1279,37 @@ namespace Nightbloom
 		//LOG_TRACE("Clearing screen with color: ({}, {}, {}, {})", r, g, b, a);
 	}
 
+	void Renderer::SubmitDrawList(const DrawList& drawList)
+	{
+		m_Data->m_FrameDrawList = drawList;
+	}
+
+	void Renderer::DrawMesh(Buffer* vertexBuffer, Buffer* indexBuffer, uint32_t indexCount,
+		PipelineType pipeline, const glm::mat4& transform)
+	{
+		DrawCommand cmd;
+		cmd.pipeline = pipeline;
+		cmd.vertexBuffer = vertexBuffer;
+		cmd.indexBuffer = indexBuffer;
+		cmd.indexCount = indexCount;
+		cmd.hasPushConstants = true;
+		cmd.pushConstants.model = transform;
+		cmd.pushConstants.view = m_Data->m_ViewMatrix;
+		cmd.pushConstants.proj = m_Data->m_ProjectionMatrix;
+
+		m_Data->m_FrameDrawList.AddCommand(cmd);
+	}
+
+	void Renderer::SetViewMatrix(const glm::mat4& view)
+	{
+		m_Data->m_ViewMatrix = view;
+	}
+
+	void Renderer::SetProjectionMatrix(const glm::mat4& proj)
+	{
+		m_Data->m_ProjectionMatrix = proj;
+	}
+
 	void Renderer::EndSingleTimeCommands(VkCommandBuffer commandBuffer)
 	{
 		VulkanDevice* vulkanDevice = static_cast<VulkanDevice*>(m_Data->device.get());
@@ -1257,17 +1326,6 @@ namespace Nightbloom
 
 		vkFreeCommandBuffers(vulkanDevice->GetDevice(),
 			m_Data->commandPool->GetPool(), 1, &commandBuffer);
-	}
-
-	void Renderer::DrawTriangle()
-	{
-		if (!m_Data->initialized)
-		{
-			LOG_ERROR("Renderer not initialized, cannot draw triangle");
-			return;
-		}
-
-		LOG_INFO("Draw triangle");
 	}
 
 	bool Renderer::IsInitialized() const

@@ -6,8 +6,9 @@
 //------------------------------------------------------------------------------
 
 #pragma once
-#include "Engine/Renderer//Vulkan/VulkanCommon.hpp"  // This should include all necessary Vulkan headers
+#include "Engine/Renderer/Vulkan/VulkanCommon.hpp"  // This should include all necessary Vulkan headers
 #include "Engine/Renderer/PipelineInterface.hpp"  // Interface for pipeline management
+#include "Engine/Renderer/DrawCommandSystem.hpp"
 #include <memory>
 #include <string>
 
@@ -45,6 +46,13 @@ namespace Nightbloom
 
 		void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
 
+		// Temporary getters for test geometry
+		// These return generic Buffer* pointers (not VulkanBuffer*)
+	public:
+		Buffer* GetTestVertexBuffer() const;
+		Buffer* GetTestIndexBuffer() const;
+		uint32_t GetTestIndexCount() const;
+
 	private:
 		bool CreateGraphicsPipeline();
 
@@ -67,7 +75,16 @@ namespace Nightbloom
 		void Clear(float r = 1.0f, float g = 0.0f, float b = 1.0f, float a = 1.0f);
 
 		// These will be implemented in steps
-		void DrawTriangle();
+		//void DrawTriangle();
+
+		void SubmitDrawList(const DrawList& drawList);
+		void DrawMesh(Buffer* vertexBuffer, Buffer* indexBuffer, uint32_t indexCount,
+			PipelineType pipeline, const glm::mat4& transform);
+
+		// Camera management (for push constants)
+		void SetViewMatrix(const glm::mat4& view);
+		void SetProjectionMatrix(const glm::mat4& proj);
+
 		bool IsInitialized() const;
 
 		RenderDevice* GetDevice() const;

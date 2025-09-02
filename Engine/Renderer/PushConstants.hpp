@@ -12,13 +12,13 @@
 namespace Nightbloom
 {
 	// Vulkan spec guarantees 128 bytes minimum for push constants
-	// Use them for per-frame and per-object data
-	struct PushConstantData 
-	{
-	glm::mat4 model;      // 64 bytes - per object transform
-	glm::mat4 view;       // 64 bytes - camera view matrix  
-	glm::mat4 proj;       // 64 bytes - projection matrix
-	};
+	//// Use them for per-frame and per-object data
+	//struct PushConstantData 
+	//{
+	//glm::mat4 model;      // 64 bytes - per object transform
+	//glm::mat4 view;       // 64 bytes - camera view matrix  
+	//glm::mat4 proj;       // 64 bytes - projection matrix
+	//};
 	// Total: 192 bytes (still within most GPU limits of 256 bytes)
 
 	// Smaller version if we hit limits - uses uniform buffer for view/proj
