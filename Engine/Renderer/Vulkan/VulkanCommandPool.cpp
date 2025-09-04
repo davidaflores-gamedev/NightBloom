@@ -115,6 +115,54 @@ namespace Nightbloom
 		vkFreeCommandBuffers(m_Device->GetDevice(), m_CommandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
 	}
 
+	VkCommandBuffer VulkanCommandPool::BeginSingleTimeCommand()
+	{
+		VkCommandBuffer commandBuffer = AllocateCommandBuffer();
+
+		VkCommandBufferBeginInfo beginInfo{};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+		if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to begin single time command buffer");
+			FreeCommandBuffer(commandBuffer);
+			return VK_NULL_HANDLE;
+		}
+
+		return commandBuffer;
+	}
+
+	void VulkanCommandPool::EndSingleTimeCommand(VkCommandBuffer commandBuffer, VkQueue queue)
+	{
+		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to end single time command buffer");
+			FreeCommandBuffer(commandBuffer);
+			return;
+		}
+
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffer;
+
+		// Get the graphics queue from the device
+		// You'll need to add a GetGraphicsQueue() method to VulkanDevice if you don't have one
+		VkQueue graphicsQueue = m_Device->GetGraphicsQueue();
+
+		// Submit and wait for completion
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to submit single time command buffer");
+		}
+
+		vkQueueWaitIdle(graphicsQueue);
+
+		// Free the command buffer
+		FreeCommandBuffer(commandBuffer);
+	}
+
 	void VulkanCommandPool::Reset()
 	{
 		vkResetCommandPool(m_Device->GetDevice(), m_CommandPool, 0);

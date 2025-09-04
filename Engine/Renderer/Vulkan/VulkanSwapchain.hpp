@@ -30,6 +30,7 @@ namespace Nightbloom
 
 		// Getters
 		VkSwapchainKHR GetSwapchain() const { return m_Swapchain; }
+		VkDevice GetDevice() const;
 		VkFormat GetImageFormat() const { return m_SwapchainImageFormat; }
 		VkExtent2D GetExtent() const { return m_SwapchainExtent; }
 		uint32_t GetImageCount() const { return static_cast<uint32_t>(m_SwapchainImages.size()); }

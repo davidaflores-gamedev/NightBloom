@@ -27,6 +27,9 @@ namespace Nightbloom
 		void FreeCommandBuffer(VkCommandBuffer commandBuffer);
 		void FreeCommandBuffers(const std::vector<VkCommandBuffer>& commandBuffers);
 
+		VkCommandBuffer BeginSingleTimeCommand();
+		void EndSingleTimeCommand(VkCommandBuffer commandBuffer, VkQueue queue);
+
 		// Reset command pool
 		void Reset();
 

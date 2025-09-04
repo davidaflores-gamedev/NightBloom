@@ -375,6 +375,11 @@ namespace Nightbloom
 		return true;
 	}
 
+	VkDevice VulkanSwapchain::GetDevice() const
+	{
+		return static_cast<VkDevice>(m_Device->GetDevice());
+	}
+
 	VulkanSwapchain::SwapChainSupportDetails VulkanSwapchain::QuerySwapChainSupport(VkPhysicalDevice device)
 	{
 		SwapChainSupportDetails details;
