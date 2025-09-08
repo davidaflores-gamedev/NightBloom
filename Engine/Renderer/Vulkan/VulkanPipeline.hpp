@@ -13,6 +13,7 @@
 #include <memory>
 #include <array>
 #include "Engine/Renderer/PipelineInterface.hpp"  // For PipelineType enum
+#include "Engine/Renderer/Vulkan/VulkanShader.hpp"
 
 namespace Nightbloom
 {
@@ -20,6 +21,9 @@ namespace Nightbloom
 	// This is internal to the Vulkan backend
 	struct VulkanPipelineConfig
 	{
+		VulkanShader* vertexShader = nullptr;   // NEW: Option to use shader object
+		VulkanShader* fragmentShader = nullptr; // NEW: Option to use shader object
+
 		std::string vertexShaderPath;
 		std::string fragmentShaderPath;
 		std::string geometryShaderPath; // Optional

@@ -59,9 +59,14 @@ namespace Nightbloom
 		Buffer* GetTestIndexBuffer() const;
 		uint32_t GetTestIndexCount() const;
 
+		void TestShaderClass();
+
+		bool LoadShaders();
+
 		// System access
 		RenderDevice* GetDevice() const { return m_Device.get(); }
 		IPipelineManager* GetPipelineManager() const;
+		ResourceManager* GetResourceManager() const { return m_Resources.get(); }
 
 		// Pipeline operations (temporary - for testing)
 		void TogglePipeline();

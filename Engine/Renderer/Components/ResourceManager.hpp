@@ -13,8 +13,9 @@
 #include <cstdint>
 
 // Full definitions
-#include "Renderer/Vulkan/VulkanCommandPool.hpp"
-#include "Renderer/Vulkan/VulkanBuffer.hpp"
+#include "Engine/Renderer/Vulkan/VulkanCommandPool.hpp"
+#include "Engine/Renderer/Vulkan/VulkanBuffer.hpp"
+#include "Engine/Renderer/Vulkan/VulkanShader.hpp"
 
 namespace Nightbloom
 {
@@ -37,6 +38,13 @@ namespace Nightbloom
 		VulkanBuffer * CreateBuffer(const std::string & name, size_t size, VkBufferUsageFlags usage, bool hostVisible = false);
 		VulkanBuffer* GetBuffer(const std::string& name);
 		void DestroyBuffer(const std::string& name);
+
+		// Shader management
+		VulkanShader* LoadShader(const std::string& name, ShaderStage stage,
+			const std::string& filename);
+		VulkanShader* GetShader(const std::string& name);
+		void DestroyShader(const std::string& name);
+		void DestroyAllShaders();
 
 		// Test Geometry (temporary - will be replaced with proper mesh loading)
 		bool CreateTestCube();
@@ -68,6 +76,7 @@ namespace Nightbloom
 
 		// Resource storage
 		std::unordered_map<std::string, std::unique_ptr<VulkanBuffer>> m_Buffers;
+		std::unordered_map<std::string, std::unique_ptr<VulkanShader>> m_Shaders;
 		// Future: std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_Textures;
 		// Future: std::vector<VkSampler> m_Samplers;
 

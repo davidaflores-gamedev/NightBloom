@@ -21,6 +21,8 @@
 #include "Engine/Core/PerformanceMetrics.hpp"
 #include <filesystem>
 
+#include "Engine/Renderer/Vulkan/VulkanShader.hpp"
+
 namespace Nightbloom
 {
 	Renderer::Renderer()
@@ -311,6 +313,63 @@ namespace Nightbloom
 		return m_Resources->GetTestIndexCount();
 	}
 
+	void Renderer::TestShaderClass()
+	{
+		// Load a shader file
+		auto shaderCode = AssetManager::Get().LoadShaderBinary("triangle.vert");
+
+		VulkanDevice* vkDevice = static_cast<VulkanDevice*>(m_Device.get());
+
+		// Create a VulkanShader
+		VulkanShader testShader(vkDevice, ShaderStage::Vertex);
+
+		if (testShader.CreateFromSpirV(shaderCode))
+		{
+			LOG_INFO("Test shader created successfully!");
+
+			// Get the stage info
+			auto stageInfo = testShader.GetStageInfo();
+			LOG_INFO("Stage info created, entry point: {}", testShader.GetEntryPoint());
+		}
+		else
+		{
+			LOG_ERROR("Failed to create test shader");
+		}
+		// testShader will clean up automatically when it goes out of scope
+	}
+
+	bool Renderer::LoadShaders()
+	{
+		LOG_INFO("=== Loading Shaders ===");
+
+		// Load triangle shaders
+		if (!m_Resources->LoadShader("triangle_vert", ShaderStage::Vertex, "triangle.vert"))
+		{
+			LOG_ERROR("Failed to load triangle vertex shader");
+			return false;
+		}
+
+		if (!m_Resources->LoadShader("triangle_frag", ShaderStage::Fragment, "triangle.frag"))
+		{
+			LOG_ERROR("Failed to load triangle fragment shader");
+			return false;
+		}
+
+		// Load mesh shaders
+		if (!m_Resources->LoadShader("mesh_vert", ShaderStage::Vertex, "Mesh.vert"))
+		{
+			LOG_WARN("Failed to load mesh vertex shader - continuing without mesh pipeline");
+		}
+
+		if (!m_Resources->LoadShader("mesh_frag", ShaderStage::Fragment, "Mesh.frag"))
+		{
+			LOG_WARN("Failed to load mesh fragment shader - continuing without mesh pipeline");
+		}
+
+		LOG_INFO("Shaders loaded successfully");
+		return true;
+	}
+
 	IPipelineManager* Renderer::GetPipelineManager() const
 	{
 		return m_PipelineAdapter.get();
@@ -481,50 +540,67 @@ namespace Nightbloom
 			return false;
 		}
 
-		// Create triangle pipeline
-		PipelineConfig triangleConfig;
-		triangleConfig.vertexShaderPath = "triangle.vert";
-		triangleConfig.fragmentShaderPath = "triangle.frag";
-		triangleConfig.useVertexInput = true;
-		triangleConfig.topology = PrimitiveTopology::TriangleList;
-		triangleConfig.polygonMode = PolygonMode::Fill;
-		triangleConfig.cullMode = CullMode::Back;
-		triangleConfig.frontFace = FrontFace::CounterClockwise;
-		triangleConfig.depthTestEnable = false;
-		triangleConfig.depthWriteEnable = false;
-		triangleConfig.blendEnable = false;
-		triangleConfig.pushConstantSize = 0;
-
-		if (!m_PipelineAdapter->CreatePipeline(PipelineType::Triangle, triangleConfig))
+		// LOAD SHADERS FIRST!
+		if (!LoadShaders())
 		{
-			LOG_ERROR("Failed to create triangle pipeline");
+			LOG_ERROR("Failed to load shaders");
 			return false;
 		}
-		LOG_INFO("Triangle pipeline created successfully");
 
-		// Create mesh pipeline
-		PipelineConfig meshConfig;
-		meshConfig.vertexShaderPath = "Mesh.vert";
-		meshConfig.fragmentShaderPath = "Mesh.frag";
-		meshConfig.useVertexInput = true;
-		meshConfig.topology = PrimitiveTopology::TriangleList;
-		meshConfig.polygonMode = PolygonMode::Fill;
-		meshConfig.cullMode = CullMode::Back;
-		meshConfig.frontFace = FrontFace::CounterClockwise;
-		meshConfig.depthTestEnable = true;
-		meshConfig.depthWriteEnable = true;
-		meshConfig.depthCompareOp = CompareOp::Less;
-		meshConfig.blendEnable = false;
-		meshConfig.pushConstantSize = sizeof(PushConstantData);
-		meshConfig.pushConstantStages = ShaderStage::VertexFragment;
+		// Get the underlying Vulkan pipeline manager
+		VulkanPipelineManager* vkPipelineManager = m_PipelineAdapter->GetVulkanManager();
 
-		if (!m_PipelineAdapter->CreatePipeline(PipelineType::Mesh, meshConfig))
+		// Create triangle pipeline using shader objects
 		{
-			LOG_WARN("Failed to create mesh pipeline - continuing with triangle only");
+			VulkanPipelineConfig config;
+			config.vertexShader = m_Resources->GetShader("triangle_vert");
+			config.fragmentShader = m_Resources->GetShader("triangle_frag");
+			config.useVertexInput = true;
+			config.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+			config.polygonMode = VK_POLYGON_MODE_FILL;
+			config.cullMode = VK_CULL_MODE_BACK_BIT;
+			config.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+			config.depthTestEnable = false;
+			config.depthWriteEnable = false;
+
+			if (!vkPipelineManager->CreatePipeline(PipelineType::Triangle, config))
+			{
+				LOG_ERROR("Failed to create triangle pipeline");
+				return false;
+			}
+			LOG_INFO("Triangle pipeline created successfully");
 		}
-		else
+
+		// Create mesh pipeline using shader objects (if shaders loaded)
 		{
-			LOG_INFO("Mesh pipeline created successfully");
+			VulkanShader* vertShader = m_Resources->GetShader("mesh_vert");
+			VulkanShader* fragShader = m_Resources->GetShader("mesh_frag");
+
+			if (vertShader && fragShader)
+			{
+				VulkanPipelineConfig config;
+				config.vertexShader = vertShader;
+				config.fragmentShader = fragShader;
+				config.useVertexInput = true;
+				config.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+				config.polygonMode = VK_POLYGON_MODE_FILL;
+				config.cullMode = VK_CULL_MODE_BACK_BIT;
+				config.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+				config.depthTestEnable = true;
+				config.depthWriteEnable = true;
+				config.depthCompareOp = VK_COMPARE_OP_LESS;
+				config.pushConstantSize = sizeof(PushConstantData);
+				config.pushConstantStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+				if (vkPipelineManager->CreatePipeline(PipelineType::Mesh, config))
+				{
+					LOG_INFO("Mesh pipeline created successfully");
+				}
+				else
+				{
+					LOG_WARN("Failed to create mesh pipeline");
+				}
+			}
 		}
 
 		LOG_INFO("=== Pipeline Manager Initialized Successfully ===");

@@ -59,35 +59,91 @@ namespace Nightbloom
 	}
 
 	bool VulkanPipelineManager::CreateGraphicsPipeline(const VulkanPipelineConfig& config, Pipeline& pipeline) {
-		// Load shaders
-		auto& assetManager = AssetManager::Get();
-		auto vertShaderCode = assetManager.LoadShaderBinary(config.vertexShaderPath);
-		auto fragShaderCode = assetManager.LoadShaderBinary(config.fragmentShaderPath);
+		
+		// Shader stages vector
+		std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
 
-		if (vertShaderCode.empty() || fragShaderCode.empty()) {
-			LOG_ERROR("Failed to load shaders");
+		// Modules we might need to clean up (if we create them ourselves)
+		VkShaderModule vertShaderModule = VK_NULL_HANDLE;
+		VkShaderModule fragShaderModule = VK_NULL_HANDLE;
+		bool ownsVertModule = false;
+		bool ownsFragModule = false;
+
+		// VERTEX SHADER
+		if (config.vertexShader != nullptr)
+		{
+			// Use the provided shader object
+			shaderStages.push_back(config.vertexShader->GetStageInfo());
+			LOG_TRACE("Using vertex shader object");
+		}
+		else if (!config.vertexShaderPath.empty())
+		{
+			// Load from path (old way)
+			auto& assetManager = AssetManager::Get();
+			auto vertShaderCode = assetManager.LoadShaderBinary(config.vertexShaderPath);
+
+			if (vertShaderCode.empty())
+			{
+				LOG_ERROR("Failed to load vertex shader: {}", config.vertexShaderPath);
+				return false;
+			}
+
+			vertShaderModule = CreateShaderModule(vertShaderCode);
+			ownsVertModule = true;
+
+			VkPipelineShaderStageCreateInfo vertStageInfo{};
+			vertStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+			vertStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+			vertStageInfo.module = vertShaderModule;
+			vertStageInfo.pName = "main";
+			shaderStages.push_back(vertStageInfo);
+
+			LOG_TRACE("Loaded vertex shader from path: {}", config.vertexShaderPath);
+		}
+		else
+		{
+			LOG_ERROR("No vertex shader provided");
 			return false;
 		}
 
-		VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);
-		VkShaderModule fragShaderModule = CreateShaderModule(fragShaderCode);
+		// FRAGMENT SHADER
+		if (config.fragmentShader != nullptr)
+		{
+			// Use the provided shader object
+			shaderStages.push_back(config.fragmentShader->GetStageInfo());
+			LOG_TRACE("Using fragment shader object");
+		}
+		else if (!config.fragmentShaderPath.empty())
+		{
+			// Load from path (old way)
+			auto& assetManager = AssetManager::Get();
+			auto fragShaderCode = assetManager.LoadShaderBinary(config.fragmentShaderPath);
 
-		// Shader stages
-		std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+			if (fragShaderCode.empty())
+			{
+				LOG_ERROR("Failed to load fragment shader: {}", config.fragmentShaderPath);
+				if (ownsVertModule) vkDestroyShaderModule(m_Device, vertShaderModule, nullptr);
+				return false;
+			}
 
-		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-		vertShaderStageInfo.module = vertShaderModule;
-		vertShaderStageInfo.pName = "main";
-		shaderStages.push_back(vertShaderStageInfo);
+			fragShaderModule = CreateShaderModule(fragShaderCode);
+			ownsFragModule = true;
 
-		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-		fragShaderStageInfo.module = fragShaderModule;
-		fragShaderStageInfo.pName = "main";
-		shaderStages.push_back(fragShaderStageInfo);
+			VkPipelineShaderStageCreateInfo fragStageInfo{};
+			fragStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+			fragStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+			fragStageInfo.module = fragShaderModule;
+			fragStageInfo.pName = "main";
+			shaderStages.push_back(fragStageInfo);
+
+			LOG_TRACE("Loaded fragment shader from path: {}", config.fragmentShaderPath);
+		}
+		else
+		{
+			LOG_ERROR("No fragment shader provided");
+			if (ownsVertModule) vkDestroyShaderModule(m_Device, vertShaderModule, nullptr);
+			return false;
+		}
 
 		// Vertex input
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
@@ -256,9 +312,9 @@ namespace Nightbloom
 		VkResult result = vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1,
 			&pipelineInfo, nullptr, &pipeline.pipeline);
 
-		// Cleanup shader modules
-		vkDestroyShaderModule(m_Device, vertShaderModule, nullptr);
-		vkDestroyShaderModule(m_Device, fragShaderModule, nullptr);
+		// At the end, clean up only the modules we created
+		if (ownsVertModule) vkDestroyShaderModule(m_Device, vertShaderModule, nullptr);
+		if (ownsFragModule) vkDestroyShaderModule(m_Device, fragShaderModule, nullptr);
 
 		return result == VK_SUCCESS;
 	}

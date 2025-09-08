@@ -9,6 +9,7 @@
 #include "Engine/Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Engine/Renderer/Vulkan/VulkanMemoryManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanCommandPool.hpp"
+#include "Engine/Renderer/AssetManager.hpp" 
 #include "Engine/Renderer/Vertex.hpp"
 #include "Engine/Core/Logger/Logger.hpp"
 #include <vector>
@@ -38,6 +39,9 @@ namespace Nightbloom
 
 	void ResourceManager::Cleanup()
 	{
+
+		DestroyAllShaders();
+
 		// Destroy all buffers
 		for (auto& [name, buffer] : m_Buffers)
 		{
@@ -118,6 +122,66 @@ namespace Nightbloom
 		{
 			LOG_WARN("Attempted to destroy non-existent buffer: {}", name);
 		}
+	}
+
+	VulkanShader* ResourceManager::LoadShader(const std::string& name, ShaderStage stage,
+		const std::string& filename)
+	{
+		// Check if already loaded
+		auto it = m_Shaders.find(name);
+		if (it != m_Shaders.end())
+		{
+			LOG_WARN("Shader '{}' already loaded, returning existing", name);
+			return it->second.get();
+		}
+
+		// Load shader binary through AssetManager
+		auto shaderCode = AssetManager::Get().LoadShaderBinary(filename);
+		if (shaderCode.empty())
+		{
+			LOG_ERROR("Failed to load shader file: {}", filename);
+			return nullptr;
+		}
+
+		// Create VulkanShader
+		auto shader = std::make_unique<VulkanShader>(m_Device, stage);
+		if (!shader->CreateFromSpirV(shaderCode, "main"))
+		{
+			LOG_ERROR("Failed to create shader from SPIR-V: {}", filename);
+			return nullptr;
+		}
+
+		VulkanShader* ptr = shader.get();
+		m_Shaders[name] = std::move(shader);
+
+		LOG_INFO("Loaded shader '{}' from {}", name, filename);
+		return ptr;
+	}
+
+	VulkanShader* ResourceManager::GetShader(const std::string& name)
+	{
+		auto it = m_Shaders.find(name);
+		if (it != m_Shaders.end())
+		{
+			return it->second.get();
+		}
+		return nullptr;
+	}
+
+	void ResourceManager::DestroyShader(const std::string& name)
+	{
+		auto it = m_Shaders.find(name);
+		if (it != m_Shaders.end())
+		{
+			LOG_INFO("Destroying shader: {}", name);
+			m_Shaders.erase(it);
+		}
+	}
+
+	void ResourceManager::DestroyAllShaders()
+	{
+		LOG_INFO("Destroying all {} shaders", m_Shaders.size());
+		m_Shaders.clear();
 	}
 
 	bool ResourceManager::CreateTestCube()

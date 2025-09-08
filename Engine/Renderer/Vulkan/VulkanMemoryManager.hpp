@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "Renderer/Vulkan/VulkanCommon.hpp"
+#include "Engine/Renderer/Vulkan/VulkanCommon.hpp"
 
 // VMA Configuration
 
