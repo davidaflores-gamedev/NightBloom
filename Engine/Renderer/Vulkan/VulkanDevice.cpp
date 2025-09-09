@@ -334,10 +334,16 @@ namespace Nightbloom
 			queueCreateInfos.push_back(queueCreateInfo);
 		}
 
+		// Query supported features (once)
+		VkPhysicalDeviceFeatures supported{};
+		vkGetPhysicalDeviceFeatures(m_PhysicalDevice, &supported);
+
 		// Specify device features we want to use
 		VkPhysicalDeviceFeatures deviceFeatures{};
-		// For now, we dont need any special features
-		// Later we might want: geometryShader, tessellationShader, samplerAnisotropy, etc.
+		if (supported.samplerAnisotropy) {
+			deviceFeatures.samplerAnisotropy = VK_TRUE;   // ? enable it
+		}
+		// Later we might want: geometryShader, tessellationShader, etc.
 
 		// Create the logical device
 		VkDeviceCreateInfo createInfo{};
@@ -364,6 +370,8 @@ namespace Nightbloom
 			//LOG_ERROR("Failed to create logical device: {}", result);
 			return false;
 		}
+
+		m_EnabledFeatures = deviceFeatures;
 
 		// Get queue handles
 		vkGetDeviceQueue(m_Device, m_QueueFamilies.graphicsFamily.value(), 0, &m_GraphicsQueue);
@@ -506,6 +514,11 @@ namespace Nightbloom
 		return requiredExtensions.empty();
  	}
 
+	bool VulkanDevice::IsSamplerAnisotrpyEnabled() const
+	{
+		return m_EnabledFeatures.samplerAnisotropy == VK_TRUE;
+	}
+
 	void VulkanDevice::PopulateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) const
 	{
 		createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
@@ -561,18 +574,17 @@ namespace Nightbloom
 	{
 		// Query supported features
 		if (feature == "geometry_shader") {
-			VkPhysicalDeviceFeatures features;
-			vkGetPhysicalDeviceFeatures(m_PhysicalDevice, &features);
-			return features.geometryShader;
+			return m_EnabledFeatures.geometryShader == VK_TRUE;
 		}
 		else if (feature == "tessellation") {
-			VkPhysicalDeviceFeatures features;
-			vkGetPhysicalDeviceFeatures(m_PhysicalDevice, &features);
-			return features.tessellationShader;
+			return m_EnabledFeatures.tessellationShader == VK_TRUE;
 		}
 		else if (feature == "compute") {
 			// Vulkan always supports compute if it has a graphics queue
 			return true;
+		}
+		else if (feature == "sampler_anisotropy") {
+			return m_EnabledFeatures.samplerAnisotropy == VK_TRUE;
 		}
 
 		return false;

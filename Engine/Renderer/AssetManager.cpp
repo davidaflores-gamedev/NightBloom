@@ -178,7 +178,35 @@ namespace Nightbloom
 			return "";
 		}
 
-		return m_TexturesPath + "/" + textureName;
+		// Check if it's already a full path
+		if (std::filesystem::exists(textureName))
+		{
+			return textureName;
+		}
+
+		// Try in textures directory
+		std::string path = m_TexturesPath + "/" + textureName;
+		if (std::filesystem::exists(path))
+		{
+			return path;
+		}
+
+		// Try with common extensions if no extension provided
+		if (textureName.find('.') == std::string::npos)
+		{
+			std::vector<std::string> extensions = { ".png", ".jpg", ".jpeg", ".tga", ".bmp" };
+			for (const auto& ext : extensions)
+			{
+				std::string testPath = m_TexturesPath + "/" + textureName + ext;
+				if (std::filesystem::exists(testPath))
+				{
+					return testPath;
+				}
+			}
+		}
+
+		LOG_WARN("Texture not found: {}", textureName);
+		return m_TexturesPath + "/" + textureName; // Return expected path anyway
 	}
 
 	std::string AssetManager::GetModelPath(const std::string& modelName) const

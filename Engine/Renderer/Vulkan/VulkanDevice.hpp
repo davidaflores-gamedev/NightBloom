@@ -63,6 +63,7 @@ namespace Nightbloom
 		VkQueue GetPresentQueue() const { return m_PresentQueue; }
 		uint32_t GetGraphicsQueueFamily() const { return m_QueueFamilies.graphicsFamily.value_or(0); }
 		uint32_t GetPresentQueueFamily() const { return m_QueueFamilies.presentFamily.value_or(0); }
+
 		// Queue family indices, needed by swapchain and other components
 		struct QueueFamilyIndices
 		{
@@ -76,6 +77,9 @@ namespace Nightbloom
 		};
 
 		QueueFamilyIndices GetQueueFamilyIndices() const { return m_QueueFamilies; }
+
+		// EnabledFeatures
+		bool IsSamplerAnisotrpyEnabled() const;
 
 	private:
 		// Step 1: Create Vulkan instance
@@ -96,7 +100,6 @@ namespace Nightbloom
 		bool IsDeviceSuitable(VkPhysicalDevice device) const;
 		QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device) const;
 		bool CheckDeviceExtensionSupport(VkPhysicalDevice device) const;
-
 
 		// Debug messenger callback
 		static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
@@ -140,6 +143,8 @@ namespace Nightbloom
 #else
 		const bool m_EnableValidationLayers = true; // Enable validation layers in debug builds
 #endif
+
+		VkPhysicalDeviceFeatures m_EnabledFeatures{};
 
 		void* m_WindowHandle = nullptr; // Handle to the window for presentation
 		uint32_t m_Width = 0;

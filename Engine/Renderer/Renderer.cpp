@@ -504,6 +504,13 @@ namespace Nightbloom
 			return false;
 		}
 
+		// Create test Textures
+		if (!m_Resources->CreateDefaultTextures())
+		{
+			LOG_WARN("Failed to create default textures");
+		}
+
+
 		// Initialize command recorder
 		m_Commands = std::make_unique<CommandRecorder>();
 		if (!m_Commands->Initialize(vkDevice, FrameSyncManager::MAX_FRAMES_IN_FLIGHT))

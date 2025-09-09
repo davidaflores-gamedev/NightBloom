@@ -16,6 +16,7 @@
 #include "Engine/Renderer/Vulkan/VulkanCommandPool.hpp"
 #include "Engine/Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Engine/Renderer/Vulkan/VulkanShader.hpp"
+#include "Engine/Renderer/Vulkan/VulkanTexture.hpp"
 
 namespace Nightbloom
 {
@@ -46,20 +47,23 @@ namespace Nightbloom
 		void DestroyShader(const std::string& name);
 		void DestroyAllShaders();
 
+		VulkanTexture* LoadTexture(const std::string& name, const std::string& filepath);
+		VulkanTexture* CreateTexture(const std::string& name, const TextureDesc& desc);
+		VulkanTexture* CreateTextureFromMemory(const std::string& name, const void* data, size_t size, const TextureDesc& desc);
+		VulkanTexture* GetTexture(const std::string& name);
+		void DestroyTexture(const std::string& name);
+		void DestroyAllTextures();
+
 		// Test Geometry (temporary - will be replaced with proper mesh loading)
 		bool CreateTestCube();
 		Buffer* GetTestVertexBuffer() const;
 		Buffer* GetTestIndexBuffer() const;
 		uint32_t GetTestIndexCount() const { return m_TestIndexCount; }
 
+		bool CreateDefaultTextures();
+
 		// Upload utilities
 		bool UploadBufferData(VulkanBuffer* buffer, const void* data, size_t size);
-
-		// Future: Texture management
-		// VulkanTexture* CreateTexture(const std::string& name, const TextureDesc& desc);
-		// VulkanTexture* LoadTexture(const std::string& filepath);
-		// VulkanTexture* GetTexture(const std::string& name);
-		// void DestroyTexture(const std::string& name);
 
 		// Future: Sampler management
 		// VkSampler CreateSampler(const SamplerDesc& desc);
@@ -68,6 +72,8 @@ namespace Nightbloom
 		// Resource statistics
 		size_t GetTotalBufferMemory() const;
 		size_t GetBufferCount() const { return m_Buffers.size(); }
+		size_t GetTotalTextureMemory() const;
+		size_t GetTextureCount() const { return m_Textures.size(); }
 
 	private:
 		VulkanDevice* m_Device = nullptr;
@@ -77,7 +83,7 @@ namespace Nightbloom
 		// Resource storage
 		std::unordered_map<std::string, std::unique_ptr<VulkanBuffer>> m_Buffers;
 		std::unordered_map<std::string, std::unique_ptr<VulkanShader>> m_Shaders;
-		// Future: std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_Textures;
+		std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_Textures;
 		// Future: std::vector<VkSampler> m_Samplers;
 
 		// Test resources (temporary)

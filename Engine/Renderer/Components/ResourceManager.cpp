@@ -10,6 +10,7 @@
 #include "Engine/Renderer/Vulkan/VulkanMemoryManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanCommandPool.hpp"
 #include "Engine/Renderer/AssetManager.hpp" 
+#include "Engine/Renderer/TextureLoader.hpp"
 #include "Engine/Renderer/Vertex.hpp"
 #include "Engine/Core/Logger/Logger.hpp"
 #include <vector>
@@ -39,7 +40,8 @@ namespace Nightbloom
 
 	void ResourceManager::Cleanup()
 	{
-
+		// DestroyAllResources
+		DestroyAllTextures();
 		DestroyAllShaders();
 
 		// Destroy all buffers
@@ -184,6 +186,137 @@ namespace Nightbloom
 		m_Shaders.clear();
 	}
 
+	VulkanTexture* ResourceManager::LoadTexture(const std::string& name, const std::string& filepath)
+	{
+		// Check if texture already exists
+		if (m_Textures.find(name) != m_Textures.end())
+		{
+			LOG_WARN("Texture '{}' already exists, returning existing texture", name);
+			return m_Textures[name].get();
+		}
+
+		// Get full path through AssetManager
+		std::string fullPath = AssetManager::Get().GetTexturePath(filepath);
+
+		// Load image data
+		ImageData imageData = TextureLoader::LoadImageRGBA(fullPath);
+		if (imageData.pixels.empty())
+		{
+			LOG_ERROR("Failed to load texture file: {}", fullPath);
+			return nullptr;
+		}
+
+		// Create texture description
+		TextureDesc desc;
+		desc.width = imageData.width;
+		desc.height = imageData.height;
+		desc.format = imageData.channels == 4 ? TextureFormat::RGBA8 : TextureFormat::RGB8;
+		desc.mipLevels = 1; // TODO: Calculate mip levels
+		desc.usage = TextureUsage::Sampled | TextureUsage::Transfer;
+
+		// Create VulkanTexture
+		auto texture = std::make_unique<VulkanTexture>(m_Device, m_MemoryManager);
+		if (!texture->Initialize(desc))
+		{
+			LOG_ERROR("Failed to create texture '{}'", name);
+			return nullptr;
+		}
+
+		// Upload image data
+		if (!texture->UploadData(imageData.pixels.data(), imageData.pixels.size(), m_TransferCommandPool.get()))
+		{
+			LOG_ERROR("Failed to upload texture data for '{}'", name);
+			return nullptr;
+		}
+
+		// Store and return
+		VulkanTexture* ptr = texture.get();
+		m_Textures[name] = std::move(texture);
+
+		LOG_INFO("Loaded texture '{}' from {} ({}x{}, {} channels)",
+			name, filepath, imageData.width, imageData.height, imageData.channels);
+
+		return ptr;
+	}
+
+	VulkanTexture* ResourceManager::CreateTexture(const std::string& name, const TextureDesc& desc)
+	{
+		// Check if texture already exists
+		if (m_Textures.find(name) != m_Textures.end())
+		{
+			LOG_WARN("Texture '{}' already exists, returning existing texture", name);
+			return m_Textures[name].get();
+		}
+
+		// Create VulkanTexture
+		auto texture = std::make_unique<VulkanTexture>(m_Device, m_MemoryManager);
+		if (!texture->Initialize(desc))
+		{
+			LOG_ERROR("Failed to create texture '{}'", name);
+			return nullptr;
+		}
+
+		// Store and return
+		VulkanTexture* ptr = texture.get();
+		m_Textures[name] = std::move(texture);
+
+		LOG_INFO("Created texture '{}' ({}x{}, format: {})",
+			name, desc.width, desc.height, static_cast<int>(desc.format));
+
+		return ptr;
+	}
+
+	VulkanTexture* ResourceManager::CreateTextureFromMemory(const std::string& name, const void* data,
+		size_t size, const TextureDesc& desc)
+	{
+		// Create the texture
+		VulkanTexture* texture = CreateTexture(name, desc);
+		if (!texture)
+		{
+			return nullptr;
+		}
+
+		// Upload the data
+		if (!texture->UploadData(data, size, m_TransferCommandPool.get()))
+		{
+			LOG_ERROR("Failed to upload data to texture '{}'", name);
+			DestroyTexture(name);
+			return nullptr;
+		}
+
+		return texture;
+	}
+
+	VulkanTexture* ResourceManager::GetTexture(const std::string& name)
+	{
+		auto it = m_Textures.find(name);
+		if (it != m_Textures.end())
+		{
+			return it->second.get();
+		}
+		return nullptr;
+	}
+
+	void ResourceManager::DestroyTexture(const std::string& name)
+	{
+		auto it = m_Textures.find(name);
+		if (it != m_Textures.end())
+		{
+			LOG_INFO("Destroying texture: {}", name);
+			m_Textures.erase(it);
+		}
+		else
+		{
+			LOG_WARN("Attempted to destroy non-existent texture: {}", name);
+		}
+	}
+
+	void ResourceManager::DestroyAllTextures()
+	{
+		LOG_INFO("Destroying all {} textures", m_Textures.size());
+		m_Textures.clear();
+	}
+
 	bool ResourceManager::CreateTestCube()
 	{
 		// Define cube vertices (8 unique vertices)
@@ -293,6 +426,83 @@ namespace Nightbloom
 		return nullptr;
 	}
 
+	bool ResourceManager::CreateDefaultTextures()
+	{
+		LOG_INFO("Creating default textures");
+
+		// Create white texture (2x2)
+		{
+			ImageData whiteData = TextureLoader::CreateSolidColor(2, 2, 255, 255, 255, 255);
+			TextureDesc desc;
+			desc.width = 2;
+			desc.height = 2;
+			desc.format = TextureFormat::RGBA8;
+			desc.usage = TextureUsage::Sampled | TextureUsage::Transfer;
+
+			if (!CreateTextureFromMemory("default_white", whiteData.pixels.data(),
+				whiteData.pixels.size(), desc))
+			{
+				LOG_ERROR("Failed to create default white texture");
+				return false;
+			}
+		}
+
+		// Create black texture (2x2)
+		{
+			ImageData blackData = TextureLoader::CreateSolidColor(2, 2, 0, 0, 0, 255);
+			TextureDesc desc;
+			desc.width = 2;
+			desc.height = 2;
+			desc.format = TextureFormat::RGBA8;
+			desc.usage = TextureUsage::Sampled | TextureUsage::Transfer;
+
+			if (!CreateTextureFromMemory("default_black", blackData.pixels.data(),
+				blackData.pixels.size(), desc))
+			{
+				LOG_ERROR("Failed to create default black texture");
+				return false;
+			}
+		}
+
+		// Create default normal map (flat normal pointing up)
+		{
+			// Normal map: R=128 (x=0), G=128 (y=0), B=255 (z=1), A=255
+			ImageData normalData = TextureLoader::CreateSolidColor(2, 2, 128, 128, 255, 255);
+			TextureDesc desc;
+			desc.width = 2;
+			desc.height = 2;
+			desc.format = TextureFormat::RGBA8;
+			desc.usage = TextureUsage::Sampled | TextureUsage::Transfer;
+
+			if (!CreateTextureFromMemory("default_normal", normalData.pixels.data(),
+				normalData.pixels.size(), desc))
+			{
+				LOG_ERROR("Failed to create default normal texture");
+				return false;
+			}
+		}
+
+		// Create UV debug checkerboard (64x64, 8x8 checks)
+		{
+			ImageData checkerData = TextureLoader::CreateCheckerboard(64, 64, 8);
+			TextureDesc desc;
+			desc.width = 64;
+			desc.height = 64;
+			desc.format = TextureFormat::RGBA8;
+			desc.usage = TextureUsage::Sampled | TextureUsage::Transfer;
+
+			if (!CreateTextureFromMemory("uv_checker", checkerData.pixels.data(),
+				checkerData.pixels.size(), desc))
+			{
+				LOG_ERROR("Failed to create UV checker texture");
+				return false;
+			}
+		}
+
+		LOG_INFO("Created {} default textures", m_Textures.size());
+		return true;
+	}
+
 	bool ResourceManager::UploadBufferData(VulkanBuffer* buffer, const void* data, size_t size)
 	{
 		if (!buffer || !data || size == 0)
@@ -314,40 +524,16 @@ namespace Nightbloom
 		}
 		return total;
 	}
-	//
-	//VkCommandBuffer ResourceManager::BeginSingleTimeCommands()
-	//{
-	//	VkCommandBufferAllocateInfo allocInfo{};
-	//	allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-	//	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	//	allocInfo.commandPool = m_TransferCommandPool->GetPool();
-	//	allocInfo.commandBufferCount = 1;
-	//
-	//	VkCommandBuffer commandBuffer;
-	//	vkAllocateCommandBuffers(m_Device->GetDevice(), &allocInfo, &commandBuffer);
-	//
-	//	VkCommandBufferBeginInfo beginInfo{};
-	//	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-	//	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	//
-	//	vkBeginCommandBuffer(commandBuffer, &beginInfo);
-	//	return commandBuffer;
-	//}
-	//
-	//void ResourceManager::EndSingleTimeCommands(VkCommandBuffer commandBuffer)
-	//{
-	//	vkEndCommandBuffer(commandBuffer);
-	//
-	//	VkSubmitInfo submitInfo{};
-	//	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-	//	submitInfo.commandBufferCount = 1;
-	//	submitInfo.pCommandBuffers = &commandBuffer;
-	//
-	//	vkQueueSubmit(m_Device->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-	//	vkQueueWaitIdle(m_Device->GetGraphicsQueue());
-	//
-	//	vkFreeCommandBuffers(m_Device->GetDevice(), m_TransferCommandPool->GetPool(),
-	//		1, &commandBuffer);
-	//}
-	//
+	
+	size_t ResourceManager::GetTotalTextureMemory() const
+	{
+		size_t total = 0;
+		for (const auto& [name, texture] : m_Textures)
+		{
+			// Estimate based on dimensions and format
+			uint32_t bytesPerPixel = 4; // Assume RGBA8 for now
+			total += texture->GetWidth() * texture->GetHeight() * bytesPerPixel;
+		}
+		return total;
+	}
 } // namespace Nightbloom
