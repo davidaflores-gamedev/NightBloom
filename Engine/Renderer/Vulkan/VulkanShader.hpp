@@ -7,39 +7,40 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
-#include <string>
-#include <vector>
-#include "Engine/Renderer/PipelineInterface.hpp"  // For ShaderStage enum
+#include "Engine/Renderer/RenderDevice.hpp"
 
 namespace Nightbloom
 {
 	// Forward declaration
 	class VulkanDevice;
 
-	class VulkanShader
+	class VulkanShader : Shader
 	{
 	public:
 		// Constructor takes device and stage
 		VulkanShader(VulkanDevice* device, ShaderStage stage);
 
 		// Destructor cleans up
-		~VulkanShader();
+		~VulkanShader() override;
 
 		// Create from SPIR-V bytecode
-		bool CreateFromSpirV(const std::vector<char>& spirvCode, const std::string& entryPoint = "main");
 
 		// Getters
-		VkShaderModule GetModule() const { return m_ShaderModule; }
-		ShaderStage GetStage() const { return m_Stage; }
-		const std::string& GetEntryPoint() const { return m_EntryPoint; }
+		ShaderStage GetStage() const override { return m_Stage; }
+		const std::string& GetEntryPoint() const override { return m_EntryPoint; }
+		const std::string& GetSourcePath() const override { return m_SourcePath; }
 
-		// Get the shader stage info for pipeline creation
+
+		bool CreateFromSpirV(const std::vector<char>& spirvCode, const std::string& entryPoint = "main");
+		VkShaderModule GetModule() const { return m_ShaderModule; }
 		VkPipelineShaderStageCreateInfo GetStageInfo() const;
+		void SetSourcePath(const std::string& path) { m_SourcePath = path; }
 
 	private:
 		VulkanDevice* m_Device = nullptr;
 		VkShaderModule m_ShaderModule = VK_NULL_HANDLE;
 		ShaderStage m_Stage;
 		std::string m_EntryPoint = "main";
+		std::string m_SourcePath;
 	};
 }

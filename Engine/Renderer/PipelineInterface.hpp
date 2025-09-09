@@ -112,9 +112,15 @@ namespace Nightbloom
 		Count
 	};
 
+	class Shader;
+
 	// Generic pipeline configuration
 	struct PipelineConfig
 	{
+		// Option 1: Shader objects (preferred when available)
+		Shader* vertexShader = nullptr;   // NEW
+		Shader* fragmentShader = nullptr; // NEW
+
 		// Shader paths
 		std::string vertexShaderPath;
 		std::string fragmentShaderPath;
