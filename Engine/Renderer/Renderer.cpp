@@ -547,23 +547,20 @@ namespace Nightbloom
 			return false;
 		}
 
-		// Get the underlying Vulkan pipeline manager
-		VulkanPipelineManager* vkPipelineManager = m_PipelineAdapter->GetVulkanManager();
-
 		// Create triangle pipeline using shader objects
 		{
-			VulkanPipelineConfig config;
+			PipelineConfig config;
 			config.vertexShader = m_Resources->GetShader("triangle_vert");
 			config.fragmentShader = m_Resources->GetShader("triangle_frag");
 			config.useVertexInput = true;
-			config.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-			config.polygonMode = VK_POLYGON_MODE_FILL;
-			config.cullMode = VK_CULL_MODE_BACK_BIT;
-			config.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+			config.topology = PrimitiveTopology::TriangleList;
+			config.polygonMode = PolygonMode::Fill;
+			config.cullMode = CullMode::Back;
+			config.frontFace = FrontFace::CounterClockwise;
 			config.depthTestEnable = false;
 			config.depthWriteEnable = false;
 
-			if (!vkPipelineManager->CreatePipeline(PipelineType::Triangle, config))
+			if (!m_PipelineAdapter->CreatePipeline(PipelineType::Triangle, config))
 			{
 				LOG_ERROR("Failed to create triangle pipeline");
 				return false;
@@ -578,21 +575,21 @@ namespace Nightbloom
 
 			if (vertShader && fragShader)
 			{
-				VulkanPipelineConfig config;
+				PipelineConfig config;
 				config.vertexShader = vertShader;
 				config.fragmentShader = fragShader;
 				config.useVertexInput = true;
-				config.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-				config.polygonMode = VK_POLYGON_MODE_FILL;
-				config.cullMode = VK_CULL_MODE_BACK_BIT;
-				config.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+				config.topology = PrimitiveTopology::TriangleList;
+				config.polygonMode = PolygonMode::Fill;
+				config.cullMode = CullMode::Back;
+				config.frontFace = FrontFace::CounterClockwise;
 				config.depthTestEnable = true;
 				config.depthWriteEnable = true;
-				config.depthCompareOp = VK_COMPARE_OP_LESS;
+				config.depthCompareOp = CompareOp::Less;
 				config.pushConstantSize = sizeof(PushConstantData);
-				config.pushConstantStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+				config.pushConstantStages = ShaderStage::VertexFragment;
 
-				if (vkPipelineManager->CreatePipeline(PipelineType::Mesh, config))
+				if (m_PipelineAdapter->CreatePipeline(PipelineType::Mesh, config))
 				{
 					LOG_INFO("Mesh pipeline created successfully");
 				}

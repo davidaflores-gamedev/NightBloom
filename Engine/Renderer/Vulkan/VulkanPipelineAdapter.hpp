@@ -154,6 +154,17 @@ namespace Nightbloom
 		{
 			// Convert generic config to vulkan config
 			VulkanPipelineConfig vkConfig;
+
+			// If shader objects provided, use them
+			if (config.vertexShader)
+			{
+				vkConfig.vertexShader = dynamic_cast<VulkanShader*>(config.vertexShader);
+			}
+			if (config.fragmentShader)
+			{
+				vkConfig.fragmentShader = dynamic_cast<VulkanShader*>(config.fragmentShader);
+			}
+
 			vkConfig.vertexShaderPath = config.vertexShaderPath;
 			vkConfig.fragmentShaderPath = config.fragmentShaderPath;
 			vkConfig.geometryShaderPath = config.geometryShaderPath;

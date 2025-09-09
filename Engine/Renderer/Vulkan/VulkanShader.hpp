@@ -14,7 +14,7 @@ namespace Nightbloom
 	// Forward declaration
 	class VulkanDevice;
 
-	class VulkanShader : Shader
+	class VulkanShader : public Shader
 	{
 	public:
 		// Constructor takes device and stage
