@@ -9,10 +9,13 @@
 
 #include "Engine/Renderer/PipelineInterface.hpp"
 #include "Engine/Renderer/Vulkan/VulkanPipeline.hpp"
+#include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include <vulkan/vulkan.h>
 
 namespace Nightbloom
 {
+	class VulkanDescriptorManager;
+
 	// Convert generic enums to Vulkan enums
 	class VulkanEnumConverter
 	{
@@ -144,9 +147,11 @@ namespace Nightbloom
 		VulkanPipelineAdapter() = default;
 		~VulkanPipelineAdapter() override = default;
 
-		bool Initialize(VkDevice device, VkRenderPass renderPass, VkExtent2D extent)
+		bool Initialize(VkDevice device, VkRenderPass renderPass, VkExtent2D extent, VulkanDescriptorManager* descriptorManager)
 		{
 			m_VulkanManager = std::make_unique<VulkanPipelineManager>();
+			m_DescriptorManager = descriptorManager;
+
 			return m_VulkanManager->Initialize(device, renderPass, extent);
 		}
 
@@ -184,6 +189,19 @@ namespace Nightbloom
 			vkConfig.dstColorBlendFactor = VulkanEnumConverter::ToVkBlendFactor(config.dstColorBlendFactor);
 			vkConfig.pushConstantSize = config.pushConstantSize;
 			vkConfig.pushConstantStages = VulkanEnumConverter::ToVkShaderStages(config.pushConstantStages);
+
+			// NEW: Handle descriptor set layouts based on config flags
+			if (config.useTextures && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout textureLayout = m_DescriptorManager->GetTextureSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(textureLayout);
+			}
+
+// 			if (config.useUniformBuffer && m_DescriptorManager)
+// 			{
+// 				VkDescriptorSetLayout uniformLayout = m_DescriptorManager->GetUniformSetLayout();
+// 				vkConfig.descriptorSetLayouts.push_back(uniformLayout);
+// 			}
 
 			// TODO: Handle descriptor set layouts based on descriptorSetCount
 			// For now, leave empty
@@ -253,6 +271,8 @@ namespace Nightbloom
 		VulkanPipelineManager* GetVulkanManager() { return m_VulkanManager.get(); }
 
 	private:
+		VulkanDescriptorManager* m_DescriptorManager = nullptr;
+
 		std::unique_ptr<VulkanPipelineManager> m_VulkanManager;
 		std::unordered_map<PipelineType, std::unique_ptr<VulkanPipeline>> m_Pipelines;
 		PipelineType m_ActivePipeline = PipelineType::Triangle;

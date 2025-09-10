@@ -322,34 +322,54 @@ namespace Nightbloom
 		// Define cube vertices (8 unique vertices)
 
 			std::vector<VertexPCU> vertices = {
-			// Front face (red tones)
-			{{-0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-			{{ 0.5f, -0.5f,  0.5f}, {1.0f, 0.5f, 0.0f}, {1.0f, 0.0f}},
-			{{ 0.5f,  0.5f,  0.5f}, {1.0f, 0.0f, 0.5f}, {1.0f, 1.0f}},
-			{{-0.5f,  0.5f,  0.5f}, {1.0f, 0.5f, 0.5f}, {0.0f, 1.0f}},
+				// FRONT (z = +0.5), normal ~ (0,0,1)
+			{{-0.5f,-0.5f, 0.5f},{1,0,0},{0,0}},
+			{{ 0.5f,-0.5f, 0.5f},{1,0.5f,0},{1,0}},
+			{{ 0.5f, 0.5f, 0.5f},{1,0,0.5f},{1,1}},
+			{{-0.5f, 0.5f, 0.5f},{1,0.5f,0.5f},{0,1}},
 
-			// Back face (blue tones)
-			{{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
-			{{ 0.5f, -0.5f, -0.5f}, {0.0f, 0.5f, 1.0f}, {1.0f, 0.0f}},
-			{{ 0.5f,  0.5f, -0.5f}, {0.5f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-			{{-0.5f,  0.5f, -0.5f}, {0.5f, 0.5f, 1.0f}, {0.0f, 1.0f}}
+			// BACK (z = -0.5), normal ~ (0,0,-1)
+			// Flip winding or UV to avoid mirror; this mapping keeps checker upright.
+			{{ 0.5f,-0.5f,-0.5f},{0,0,1},{0,0}},
+			{{-0.5f,-0.5f,-0.5f},{0,0.5f,1},{1,0}},
+			{{-0.5f, 0.5f,-0.5f},{0.5f,0,1},{1,1}},
+			{{ 0.5f, 0.5f,-0.5f},{0.5f,0.5f,1},{0,1}},
+
+			// LEFT (x = -0.5), normal ~ (-1,0,0)   map z->u, y->v
+			{{-0.5f,-0.5f,-0.5f},{0,1,0},{0,0}},
+			{{-0.5f,-0.5f, 0.5f},{0,1,0.5f},{1,0}},
+			{{-0.5f, 0.5f, 0.5f},{0.5f,1,0.5f},{1,1}},
+			{{-0.5f, 0.5f,-0.5f},{0.5f,1,0},{0,1}},
+
+			// RIGHT (x = +0.5), normal ~ (1,0,0)   map z->u, y->v
+			{{ 0.5f,-0.5f, 0.5f},{0,1,0},{0,0}},
+			{{ 0.5f,-0.5f,-0.5f},{0,1,0.5f},{1,0}},
+			{{ 0.5f, 0.5f,-0.5f},{0.5f,1,0.5f},{1,1}},
+			{{ 0.5f, 0.5f, 0.5f},{0.5f,1,0},{0,1}},
+
+			// TOP (y = +0.5), normal ~ (0,1,0)    map x->u, z->v
+			{{-0.5f, 0.5f, 0.5f},{1,1,1},{0,0}},
+			{{ 0.5f, 0.5f, 0.5f},{1,1,1},{1,0}},
+			{{ 0.5f, 0.5f,-0.5f},{1,1,1},{1,1}},
+			{{-0.5f, 0.5f,-0.5f},{1,1,1},{0,1}},
+
+			// BOTTOM (y = -0.5), normal ~ (0,-1,0) map x->u, z->v
+			{{-0.5f,-0.5f,-0.5f},{1,1,1},{0,0}},
+			{{ 0.5f,-0.5f,-0.5f},{1,1,1},{1,0}},
+			{{ 0.5f,-0.5f, 0.5f},{1,1,1},{1,1}},
+			{{-0.5f,-0.5f, 0.5f},{1,1,1},{0,1}},
 		};
 
 		// Define cube indices (12 triangles, 36 indices)
-		std::vector<uint32_t> indices = {
-			// Front face
-			0, 1, 2,  2, 3, 0,
-			// Back face
-			4, 6, 5,  6, 4, 7,
-			// Left face
-			4, 0, 3,  3, 7, 4,
-			// Right face
-			1, 5, 6,  6, 2, 1,
-			// Top face
-			3, 2, 6,  6, 7, 3,
-			// Bottom face
-			4, 5, 1,  1, 0, 4
-		};
+			std::vector<uint32_t> indices;
+
+			indices.reserve(6 * 6); // 6 faces * 2 tris * 3 idx
+			for (uint32_t f = 0; f < 6; ++f) {
+				uint32_t base = f * 4;
+				// CCW winding for front-face
+				indices.push_back(base + 0); indices.push_back(base + 1); indices.push_back(base + 2);
+				indices.push_back(base + 2); indices.push_back(base + 3); indices.push_back(base + 0);
+			}
 
 		// Create vertex buffer
 		VkDeviceSize vertexBufferSize = sizeof(vertices[0]) * vertices.size();

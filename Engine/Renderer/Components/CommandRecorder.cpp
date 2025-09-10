@@ -9,14 +9,17 @@
 #include "Renderer/Vulkan/VulkanCommandPool.hpp"
 #include "Renderer/Vulkan/VulkanPipelineAdapter.hpp"
 #include "Renderer/Vulkan/VulkanBuffer.hpp"
+#include "Renderer/Vulkan/VulkanTexture.hpp"
+#include "Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Renderer/DrawCommandSystem.hpp"
 #include "Core/Logger/Logger.hpp"
 
 namespace Nightbloom
 {
-	bool CommandRecorder::Initialize(VulkanDevice* device, uint32_t commandBufferCount)
+	bool CommandRecorder::Initialize(VulkanDevice* device, VulkanDescriptorManager* descriptorManager, uint32_t commandBufferCount)
 	{
 		m_Device = device;
+		m_DescriptorManager = descriptorManager;
 
 		// Create command pool
 		m_CommandPool = std::make_unique<VulkanCommandPool>(device);
@@ -196,6 +199,28 @@ namespace Nightbloom
 			m_CurrentPipelineLayout = layout;
 		}
 
+		if (!cmd.textures.empty() && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
+		{
+			// Get the descriptor set for this frame
+			VkDescriptorSet textureSet = m_DescriptorManager->GetTextureDescriptorSet(bufferIndex);
+
+			// Update with the first texture from the command
+			VulkanTexture* vkTexture = static_cast<VulkanTexture*>(cmd.textures[0]);
+			m_DescriptorManager->UpdateTextureSet(textureSet, vkTexture);
+
+			// Bind the descriptor set
+			vkCmdBindDescriptorSets(
+				commandBuffer,
+				VK_PIPELINE_BIND_POINT_GRAPHICS,
+				m_CurrentPipelineLayout,
+				0,  // first set
+				1,  // set count
+				&textureSet,
+				0,  // dynamic offset count
+				nullptr
+			);
+		}
+
 		// Set push constants if needed
 		if (cmd.hasPushConstants && m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
@@ -265,5 +290,19 @@ namespace Nightbloom
 		const void* data, uint32_t size, VkShaderStageFlags stages)
 	{
 		vkCmdPushConstants(m_CommandBuffers[bufferIndex], layout, stages, 0, size, data);
+	}
+
+	void CommandRecorder::BindTextureDescriptorSet(uint32_t frameIndex, VkDescriptorSet set, VkPipelineLayout layout)
+	{
+		vkCmdBindDescriptorSets(
+			m_CommandBuffers[frameIndex],
+			VK_PIPELINE_BIND_POINT_GRAPHICS,
+			layout,
+			0,  // first set
+			1,  // set count
+			&set,
+			0,  // dynamic offset count
+			nullptr
+		);
 	}
 }

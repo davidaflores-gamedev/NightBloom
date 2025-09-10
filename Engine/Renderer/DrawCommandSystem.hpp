@@ -102,7 +102,20 @@ namespace Nightbloom
 			cmd.hasPushConstants = true;
 			cmd.pushConstants = m_PushConstants;
 
+			cmd.textures = m_Textures;
+
 			return { cmd };
+		}
+
+		// Add texture management
+		void AddTexture(Texture* texture)
+		{
+			m_Textures.push_back(texture);
+		}
+
+		void ClearTextures()
+		{
+			m_Textures.clear();
 		}
 
 		void SetTransform(const glm::mat4& transform) { m_PushConstants.model = transform; }
@@ -115,6 +128,7 @@ namespace Nightbloom
 		uint32_t m_IndexCount;
 		PipelineType m_Pipeline;
 		PushConstantData m_PushConstants;
+		std::vector<Texture*> m_Textures;
 	};
 
 	// Debug shape drawable (for editor gizmos, etc.)
@@ -172,6 +186,7 @@ namespace Nightbloom
 			cmd.indexCount = indexCount;
 			cmd.hasPushConstants = true;
 			cmd.pushConstants.model = transform;
+
 			// View and projection should be set elsewhere
 			m_Commands.push_back(cmd);
 		}

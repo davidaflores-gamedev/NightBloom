@@ -153,10 +153,10 @@ namespace Nightbloom
 		uint32_t pushConstantSize = 0;
 		ShaderStage pushConstantStages = ShaderStage::Vertex;
 	
-		// Descriptor set layouts (abstracted - backend will handle)
-		// For now, just track how many we need
-		uint32_t descriptorSetCount = 0;
-	
+		// Replace descriptorSetCount with more specific flags
+		bool useTextures = false;        // Pipeline uses texture sampling
+		bool useUniformBuffer = false;   // Pipeline uses uniform buffers
+
 		// Optional: custom render pass name (backend will resolve)
 		std::string renderPassName;  // Empty = use default
 	};

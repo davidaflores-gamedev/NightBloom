@@ -11,17 +11,20 @@
 #include "Engine/Renderer/Vulkan/VulkanSwapchain.hpp"
 #include "Engine/Renderer/Vulkan/VulkanMemoryManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanPipelineAdapter.hpp"
+#include "Engine/Renderer/Vulkan/VulkanShader.hpp"
+
+//Components
 #include "Engine/Renderer/Components/FrameSyncManager.hpp"
 #include "Engine/Renderer/Components/RenderPassManager.hpp"
 #include "Engine/Renderer/Components/CommandRecorder.hpp"
 #include "Engine/Renderer/Components/ResourceManager.hpp"
+#include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Engine/Renderer/Components/UIManager.hpp"
 #include "Engine/Renderer/AssetManager.hpp"
 #include "Engine/Core/Logger/Logger.hpp"
 #include "Engine/Core/PerformanceMetrics.hpp"
 #include <filesystem>
 
-#include "Engine/Renderer/Vulkan/VulkanShader.hpp"
 
 namespace Nightbloom
 {
@@ -51,15 +54,6 @@ namespace Nightbloom
 		// Initialize performance tracking
 		PerformanceMetrics::Get().Reset();
 		PerformanceMetrics::Get().BeginFrame();
-
-		// Initialize AssetManager
-		LOG_INFO("=== Initializing Asset Manager ===");
-		std::filesystem::path execPath = std::filesystem::current_path();
-		if (!AssetManager::Get().Initialize(execPath.string()))
-		{
-			LOG_ERROR("Failed to initialize AssetManager");
-			return false;
-		}
 
 		// Initialize core systems
 		if (!InitializeCore())
@@ -131,6 +125,12 @@ namespace Nightbloom
 		{
 			m_Commands->Cleanup();
 			m_Commands.reset();
+		}
+
+		if (m_DescriptorManager)
+		{
+			m_DescriptorManager->Cleanup();
+			m_DescriptorManager.reset();
 		}
 
 		if (m_Resources)
@@ -370,11 +370,6 @@ namespace Nightbloom
 		return true;
 	}
 
-	IPipelineManager* Renderer::GetPipelineManager() const
-	{
-		return m_PipelineAdapter.get();
-	}
-
 	void Renderer::TogglePipeline()
 	{
 		if (!m_PipelineAdapter)
@@ -430,6 +425,15 @@ namespace Nightbloom
 
 	bool Renderer::InitializeCore()
 	{
+		// Initialize AssetManager
+		LOG_INFO("=== Initializing Asset Manager ===");
+		std::filesystem::path execPath = std::filesystem::current_path();
+		if (!AssetManager::Get().Initialize(execPath.string()))
+		{
+			LOG_ERROR("Failed to initialize AssetManager");
+			return false;
+		}
+
 		// Create Vulkan device
 		LOG_INFO("=== Creating VulkanDevice ===");
 		m_Device = std::make_unique<VulkanDevice>();
@@ -497,6 +501,14 @@ namespace Nightbloom
 			return false;
 		}
 
+		// Initialize descriptor manager AFTER device, BEFORE pipelines
+		m_DescriptorManager = std::make_unique<VulkanDescriptorManager>(vkDevice);
+		if (!m_DescriptorManager->Initialize())
+		{
+			LOG_ERROR("Failed to initialize descriptor manager");
+			return false;
+		}
+
 		// Create test geometry
 		if (!m_Resources->CreateTestCube())
 		{
@@ -513,7 +525,7 @@ namespace Nightbloom
 
 		// Initialize command recorder
 		m_Commands = std::make_unique<CommandRecorder>();
-		if (!m_Commands->Initialize(vkDevice, FrameSyncManager::MAX_FRAMES_IN_FLIGHT))
+		if (!m_Commands->Initialize(vkDevice, m_DescriptorManager.get(), FrameSyncManager::MAX_FRAMES_IN_FLIGHT))
 		{
 			LOG_ERROR("Failed to initialize command recorder");
 			return false;
@@ -541,7 +553,8 @@ namespace Nightbloom
 
 		if (!m_PipelineAdapter->Initialize(vkDevice->GetDevice(),
 			m_RenderPasses->GetMainRenderPass(),
-			m_Swapchain->GetExtent()))
+			m_Swapchain->GetExtent(),
+			m_DescriptorManager.get()))
 		{
 			LOG_ERROR("Failed to initialize pipeline adapter");
 			return false;
@@ -595,6 +608,7 @@ namespace Nightbloom
 				config.depthCompareOp = CompareOp::Less;
 				config.pushConstantSize = sizeof(PushConstantData);
 				config.pushConstantStages = ShaderStage::VertexFragment;
+				config.useTextures = true;
 
 				if (m_PipelineAdapter->CreatePipeline(PipelineType::Mesh, config))
 				{

@@ -30,6 +30,7 @@ namespace Nightbloom
 	class RenderPassManager;
 	class CommandRecorder;
 	class ResourceManager;
+	class VulkanDescriptorManager;
 	class UIManager;
 
 	class Renderer
@@ -66,8 +67,9 @@ namespace Nightbloom
 
 		// System access
 		RenderDevice* GetDevice() const { return m_Device.get(); }
-		IPipelineManager* GetPipelineManager() const;
+		IPipelineManager* GetPipelineManager() const { return (IPipelineManager*)(m_PipelineAdapter.get()); };
 		ResourceManager* GetResourceManager() const { return m_Resources.get(); }
+		VulkanDescriptorManager* GetDescriptorManager() { return m_DescriptorManager.get(); }
 
 		// Pipeline operations (temporary - for testing)
 		void TogglePipeline();
@@ -88,6 +90,7 @@ namespace Nightbloom
 		std::unique_ptr<RenderPassManager> m_RenderPasses;
 		std::unique_ptr<CommandRecorder> m_Commands;
 		std::unique_ptr<ResourceManager> m_Resources;
+		std::unique_ptr<VulkanDescriptorManager> m_DescriptorManager;
 		std::unique_ptr<UIManager> m_UI;
 
 		// Frame state

@@ -18,6 +18,7 @@ namespace Nightbloom
 	// Forward Declarations
 	class VulkanDevice;
 	class VulkanPipelineAdapter;
+	class VulkanDescriptorManager;
 	class DrawList;
 	struct DrawCommand;
 
@@ -28,7 +29,7 @@ namespace Nightbloom
 		~CommandRecorder() = default;
 
 		// Lifecycle
-		bool Initialize(VulkanDevice* device, uint32_t commandBufferCount);
+		bool Initialize(VulkanDevice* device, VulkanDescriptorManager* descriptorManager, uint32_t commandBufferCount);
 		void Cleanup();
 
 		// Command Buffer Management
@@ -62,6 +63,7 @@ namespace Nightbloom
 
 	private:
 		VulkanDevice* m_Device = nullptr;
+		VulkanDescriptorManager* m_DescriptorManager = nullptr;
 		std::unique_ptr<VulkanCommandPool> m_CommandPool;
 		std::vector<VkCommandBuffer> m_CommandBuffers;
 
@@ -74,6 +76,8 @@ namespace Nightbloom
 		void BindPipelineIfChanged(uint32_t bufferIndex, VkPipeline pipeline);
 		void SetPushConstants(uint32_t bufferIndex, VkPipelineLayout layout,
 			const void* data, uint32_t size, VkShaderStageFlags stages);
+
+		void BindTextureDescriptorSet(uint32_t frameIndex, VkDescriptorSet set, VkPipelineLayout layout);
 
 		// Prevent copying
 		CommandRecorder(const CommandRecorder&) = delete;
