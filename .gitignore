@@ -1,12 +1,46 @@
-# Build folders
-Build/
+# ==== Build trees (CMake/VS) ====
 build/
+Build/
+**/build/
+**/Build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+Testing/
 out/
 
-# Visual Studio
+# ==== Visual Studio / MSVC ====
 .vs/
+*.sln
+*.vcxproj*
+*.vcproj*
+*.vcxitems*
+*.ipch
+*.opendb
+*.VC.db*
+*.tlog
+*.lastbuildstate
 *.user
 
-# OS
-.DS_Store
+# ==== Binaries & libs ====
+bin/
+lib/
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.lib
+*.obj
+*.o
+*.a
+*.log
+engine.log
+imgui.ini
+
+# ==== Shader artifacts ====
+**/*.spv
+
+# ==== Misc ====
+*.DS_Store
 Thumbs.db
