@@ -28,9 +28,15 @@ namespace Nightbloom
 	struct PushConstantData
 	{
 		glm::mat4 model = glm::mat4(1.0f);
-		glm::mat4 view = glm::mat4(1.0f);
-		glm::mat4 proj = glm::mat4(1.0f);
-		glm::vec4 customData = glm::vec4(0.0f);  // For shader-specific data
+		glm::vec4 customData = glm::vec4(0.0f);  // For shader-specific data, no longer time
+	};
+
+	struct FrameUniformData
+	{
+		glm::mat4 view;
+		glm::mat4 proj;
+		glm::vec4 time;  // x = time, yzw = reserved for new data later
+		glm::vec4 cameraPos;  // For specular calculations later
 	};
 
 	// A single draw command
@@ -118,9 +124,15 @@ namespace Nightbloom
 			m_Textures.clear();
 		}
 
+		void Update(float deltaTime) override
+		{
+			m_PushConstants.customData.x += deltaTime; // Example: animate custom data
+			// Update logic if needed
+		}
+
 		void SetTransform(const glm::mat4& transform) { m_PushConstants.model = transform; }
-		void SetViewMatrix(const glm::mat4& view) { m_PushConstants.view = view; }
-		void SetProjectionMatrix(const glm::mat4& proj) { m_PushConstants.proj = proj; }
+		//void SetViewMatrix(const glm::mat4& view) { m_PushConstants.view = view; }
+		//void SetProjectionMatrix(const glm::mat4& proj) { m_PushConstants.proj = proj; }
 
 	private:
 		Buffer* m_VertexBuffer;

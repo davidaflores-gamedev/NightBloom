@@ -199,7 +199,30 @@ namespace Nightbloom
 			m_CurrentPipelineLayout = layout;
 		}
 
-		if (!cmd.textures.empty() && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
+		bool pipelineUsesUniforms = (cmd.pipeline == PipelineType::Mesh ||
+			cmd.pipeline == PipelineType::NodeGenerated ||
+			cmd.pipeline == PipelineType::Triangle);
+
+		if (pipelineUsesUniforms && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
+		{
+			VkDescriptorSet uniformSet = m_DescriptorManager->GetUniformDescriptorSet(bufferIndex);
+			vkCmdBindDescriptorSets(
+				commandBuffer,
+				VK_PIPELINE_BIND_POINT_GRAPHICS,
+				m_CurrentPipelineLayout,
+				0,  // set 0 for uniforms
+				1,
+				&uniformSet,
+				0,
+				nullptr
+			);
+		}
+
+		bool pipelineUsesTextures = (cmd.pipeline == PipelineType::Mesh ||
+			cmd.pipeline == PipelineType::NodeGenerated);
+
+		if (!cmd.textures.empty() && m_DescriptorManager &&
+			m_CurrentPipelineLayout != VK_NULL_HANDLE && pipelineUsesTextures)
 		{
 			// Get the descriptor set for this frame
 			VkDescriptorSet textureSet = m_DescriptorManager->GetTextureDescriptorSet(bufferIndex);
@@ -213,7 +236,7 @@ namespace Nightbloom
 				commandBuffer,
 				VK_PIPELINE_BIND_POINT_GRAPHICS,
 				m_CurrentPipelineLayout,
-				0,  // first set
+				1,  // first set
 				1,  // set count
 				&textureSet,
 				0,  // dynamic offset count
@@ -224,19 +247,12 @@ namespace Nightbloom
 		// Set push constants if needed
 		if (cmd.hasPushConstants && m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
-			// Combine command's push constants with global view/proj if not set
-			PushConstantData pushConstants = cmd.pushConstants;
-			if (pushConstants.view == glm::mat4(1.0f))
-				pushConstants.view = viewMatrix;
-			if (pushConstants.proj == glm::mat4(1.0f))
-				pushConstants.proj = projectionMatrix;
-
 			// Push to both vertex and fragment stages
 			pipelineManager->GetVulkanManager()->PushConstants(
 				commandBuffer,
 				cmd.pipeline,
 				VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-				&pushConstants,
+				&cmd.pushConstants,  // Just use directly - no modification needed
 				sizeof(PushConstantData)
 			);
 		}

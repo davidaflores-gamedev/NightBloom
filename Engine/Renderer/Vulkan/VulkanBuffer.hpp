@@ -75,4 +75,35 @@ namespace Nightbloom
 		bool m_IsHostVisible = false;
 		BufferType m_BufferType = BufferType::Vertex;
 	};
+
+	class UniformBuffer {
+	public:
+		bool Create(VulkanDevice* device, VulkanMemoryManager* mgr, size_t dataSize) {
+			m_Size = dataSize;
+			m_Buffer = std::make_unique<VulkanBuffer>(device, mgr);
+
+			// Create host-visible uniform buffer
+			if (!m_Buffer->CreateHostVisible(dataSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) {
+				return false;
+			}
+
+			// Get the mapped pointer (your VulkanBuffer already maps it)
+			m_MappedData = m_Buffer->GetMappedData();
+			return m_MappedData != nullptr;
+		}
+
+		void Update(const void* data) {
+			if (m_MappedData) {
+				memcpy(m_MappedData, data, m_Size);
+			}
+		}
+
+		VkBuffer GetBuffer() const { return m_Buffer->GetBuffer(); }
+		size_t GetSize() const { return m_Size; }
+
+	private:
+		std::unique_ptr<VulkanBuffer> m_Buffer;
+		void* m_MappedData = nullptr;
+		size_t m_Size = 0;
+	};
 }

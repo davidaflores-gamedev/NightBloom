@@ -190,18 +190,18 @@ namespace Nightbloom
 			vkConfig.pushConstantSize = config.pushConstantSize;
 			vkConfig.pushConstantStages = VulkanEnumConverter::ToVkShaderStages(config.pushConstantStages);
 
+			if (config.useUniformBuffer && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout uniformLayout = m_DescriptorManager->GetUniformSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(uniformLayout);
+			}
+
 			// NEW: Handle descriptor set layouts based on config flags
 			if (config.useTextures && m_DescriptorManager)
 			{
 				VkDescriptorSetLayout textureLayout = m_DescriptorManager->GetTextureSetLayout();
 				vkConfig.descriptorSetLayouts.push_back(textureLayout);
 			}
-
-// 			if (config.useUniformBuffer && m_DescriptorManager)
-// 			{
-// 				VkDescriptorSetLayout uniformLayout = m_DescriptorManager->GetUniformSetLayout();
-// 				vkConfig.descriptorSetLayouts.push_back(uniformLayout);
-// 			}
 
 			// TODO: Handle descriptor set layouts based on descriptorSetCount
 			// For now, leave empty

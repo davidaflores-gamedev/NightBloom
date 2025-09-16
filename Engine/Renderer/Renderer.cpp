@@ -151,6 +151,12 @@ namespace Nightbloom
 			m_FrameSync.reset();
 		}
 
+		for (auto& uniformBuffer : m_FrameUniforms)
+		{
+			uniformBuffer.reset();  // This will destroy the UniformBuffer
+		}
+		LOG_INFO("Destroyed frame uniform buffers");
+
 		// Cleanup core systems
 		m_PipelineAdapter.reset();
 		m_Swapchain.reset();
@@ -205,6 +211,20 @@ namespace Nightbloom
 			HandleSwapchainResize();
 			return;
 		}
+
+		// Track time for shaders
+		static auto startTime = std::chrono::high_resolution_clock::now();
+		auto currentTime = std::chrono::high_resolution_clock::now();
+		m_TotalTime = std::chrono::duration<float>(currentTime - startTime).count();
+
+		// Update per-frame uniform buffer
+		uint32_t frameIndex = m_FrameSync->GetCurrentFrame();
+		m_CurrentFrameData.view = m_ViewMatrix;
+		m_CurrentFrameData.proj = m_ProjectionMatrix;
+		m_CurrentFrameData.time.x = m_TotalTime;  // You'll need to track time
+		m_CurrentFrameData.cameraPos = glm::vec4(0.0f);  // Set camera position when you have it
+
+		m_FrameUniforms[frameIndex]->Update(&m_CurrentFrameData);
 
 		// Clear draw list for new frame
 		m_FrameDrawList.Clear();
@@ -509,6 +529,24 @@ namespace Nightbloom
 			return false;
 		}
 
+		// Create uniform buffers for each frame in flight
+		LOG_INFO("Creating frame uniform buffers");
+		for (uint32_t i = 0; i < 2; ++i)  // 2 = MAX_FRAMES_IN_FLIGHT
+		{
+			m_FrameUniforms[i] = std::make_unique<UniformBuffer>();
+			if (!m_FrameUniforms[i]->Create(vkDevice, m_MemoryManager.get(), sizeof(FrameUniformData)))
+			{
+				LOG_ERROR("Failed to create frame uniform buffer {}", i);
+				return false;
+			}
+
+			// Update descriptor set with this buffer
+			m_DescriptorManager->UpdateUniformSet(i,
+				m_FrameUniforms[i]->GetBuffer(),
+				sizeof(FrameUniformData));
+		}
+		LOG_INFO("Frame uniform buffers created");
+
 		// Create test geometry
 		if (!m_Resources->CreateTestCube())
 		{
@@ -579,6 +617,9 @@ namespace Nightbloom
 			config.frontFace = FrontFace::CounterClockwise;
 			config.depthTestEnable = false;
 			config.depthWriteEnable = false;
+			config.pushConstantSize = sizeof(PushConstantData);
+			config.pushConstantStages = ShaderStage::VertexFragment;
+			config.useUniformBuffer = true;
 
 			if (!m_PipelineAdapter->CreatePipeline(PipelineType::Triangle, config))
 			{
@@ -608,6 +649,7 @@ namespace Nightbloom
 				config.depthCompareOp = CompareOp::Less;
 				config.pushConstantSize = sizeof(PushConstantData);
 				config.pushConstantStages = ShaderStage::VertexFragment;
+				config.useUniformBuffer = true;
 				config.useTextures = true;
 
 				if (m_PipelineAdapter->CreatePipeline(PipelineType::Mesh, config))

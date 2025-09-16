@@ -26,16 +26,19 @@ namespace Nightbloom
 
 		// Layout creation
 		VkDescriptorSetLayout CreateTextureSetLayout();
-		VkDescriptorSetLayout CreateUniformSetLayout(size_t bufferSize);
+		VkDescriptorSetLayout CreateUniformSetLayout();
 
 		// Per-frame descriptor sets
 		VkDescriptorSet AllocateTextureSet(uint32_t frameIndex);
 		void UpdateTextureSet(VkDescriptorSet set, VulkanTexture* texture, uint32_t binding = 0);
-
 		VkDescriptorSetLayout GetTextureSetLayout() const { return m_TextureSetLayout; }
-
-		// Get current frame's descriptor set
 		VkDescriptorSet GetTextureDescriptorSet(uint32_t frameIndex) { return m_TextureDescriptorSets[frameIndex]; }
+
+		VkDescriptorSet AllocateUniformSet(uint32_t frameIndex);
+		void UpdateUniformSet(uint32_t frameIndex, VkBuffer buffer, size_t size);
+		VkDescriptorSetLayout GetUniformSetLayout() const { return m_UniformSetLayout; }
+		VkDescriptorSet GetUniformDescriptorSet(uint32_t frameIndex) { return m_UniformDescriptorSets[frameIndex]; }
+
 
 	private:
 		VulkanDevice* m_Device = nullptr;

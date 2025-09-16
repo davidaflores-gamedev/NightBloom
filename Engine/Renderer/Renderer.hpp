@@ -9,6 +9,7 @@
 #include "Engine/Renderer/Vulkan/VulkanCommon.hpp"  // This should include all necessary Vulkan headers
 #include "Engine/Renderer/PipelineInterface.hpp"  // Interface for pipeline management
 #include "Engine/Renderer/DrawCommandSystem.hpp"
+#include <array>
 #include <memory>
 #include <glm/glm.hpp>
 #include <cstdint>
@@ -21,6 +22,7 @@ namespace Nightbloom
 	class VulkanMemoryManager;
 	class VulkanPipelineAdapter;
 	class Buffer;
+	class UniformBuffer; // right now only vulkan equivalent exists
 	//class Shader;
 	class DrawList;
 	class IPipelineManager;
@@ -99,6 +101,10 @@ namespace Nightbloom
 		glm::mat4 m_ProjectionMatrix = glm::mat4(1.0f);
 		uint32_t m_CurrentImageIndex = 0;
 		glm::vec4 m_ClearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+
+		std::array<std::unique_ptr<UniformBuffer>, 2> m_FrameUniforms;  // 2 = MAX_FRAMES_IN_FLIGHT
+		FrameUniformData m_CurrentFrameData;
+		float m_TotalTime = 0.0f;  // Track time for shaders
 
 		// Testing state (temporary)
 		PipelineType m_CurrentPipeline = PipelineType::Mesh;

@@ -60,6 +60,25 @@ namespace Nightbloom
 			}
 		}
 
+		// Create uniform set layout
+		m_UniformSetLayout = CreateUniformSetLayout();
+		if (m_UniformSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create uniform descriptor set layout");
+			return false;
+		}
+
+		// Allocate uniform descriptor sets for each frame
+		for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+		{
+			m_UniformDescriptorSets[i] = AllocateUniformSet(i);
+			if (m_UniformDescriptorSets[i] == VK_NULL_HANDLE)
+			{
+				LOG_ERROR("Failed to allocate uniform descriptor set for frame {}", i);
+				return false;
+			}
+		}
+
 		LOG_INFO("VulkanDescriptorManager initialized successfully");
 		return true;
 	}
@@ -111,6 +130,28 @@ namespace Nightbloom
 		return layout;
 	}
 
+	VkDescriptorSetLayout VulkanDescriptorManager::CreateUniformSetLayout()
+	{
+		VkDescriptorSetLayoutBinding uboBinding{};
+		uboBinding.binding = 0;
+		uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		uboBinding.descriptorCount = 1;
+		uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &uboBinding;
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			return VK_NULL_HANDLE;
+		}
+
+		return layout;
+	}
+
 	VkDescriptorSet VulkanDescriptorManager::AllocateTextureSet(uint32_t frameIndex)
 	{
 		VkDescriptorSetAllocateInfo allocInfo{};
@@ -146,6 +187,41 @@ namespace Nightbloom
 		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		descriptorWrite.descriptorCount = 1;
 		descriptorWrite.pImageInfo = &imageInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
+	}
+	VkDescriptorSet VulkanDescriptorManager::AllocateUniformSet(uint32_t frameIndex)
+	{
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_UniformSetLayout;
+
+		VkDescriptorSet descriptorSet;
+
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &descriptorSet) != VK_SUCCESS) {
+			LOG_ERROR("Failed to allocate descriptor set");
+			return VK_NULL_HANDLE;
+		}
+
+		return descriptorSet;
+	}
+	void VulkanDescriptorManager::UpdateUniformSet(uint32_t frameIndex, VkBuffer buffer, size_t size)
+	{
+		VkDescriptorBufferInfo bufferInfo{};
+		bufferInfo.buffer = buffer;
+		bufferInfo.offset = 0;
+		bufferInfo.range = size;
+
+		VkWriteDescriptorSet descriptorWrite{};
+		descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descriptorWrite.dstSet = m_UniformDescriptorSets[frameIndex];
+		descriptorWrite.dstBinding = 0;
+		descriptorWrite.dstArrayElement = 0;
+		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		descriptorWrite.descriptorCount = 1;
+		descriptorWrite.pBufferInfo = &bufferInfo;
 
 		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
 	}

@@ -9,8 +9,12 @@
 
 // Platform-specific Vulkan includes.
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
-#define NOMINMAX  // Prevent Windows.h from defining min/max macros
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #define VK_USE_PLATFORM_WIN32_KHR
 #elif defined(__linux__)
