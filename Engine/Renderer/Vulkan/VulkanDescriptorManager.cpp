@@ -177,6 +177,26 @@ namespace Nightbloom
 		return descriptorSet;
 	}
 
+	VkDescriptorSet VulkanDescriptorManager::AllocateTextureDescriptorSet()
+	{
+		// Allocate a new descriptor set for a texture to own
+		// This is called once per texture at creation time, NOT during rendering
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_TextureSetLayout;
+
+		VkDescriptorSet descriptorSet;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &descriptorSet) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate per-texture descriptor set");
+			return VK_NULL_HANDLE;
+		}
+
+		return descriptorSet;
+	}
+
 	void VulkanDescriptorManager::UpdateTextureSet(VkDescriptorSet set, VulkanTexture* texture, uint32_t binding)
 	{
 		if (!texture || set == VK_NULL_HANDLE) return;

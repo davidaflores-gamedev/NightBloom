@@ -34,6 +34,9 @@ namespace Nightbloom
 		VkDescriptorSetLayout GetTextureSetLayout() const { return m_TextureSetLayout; }
 		VkDescriptorSet GetTextureDescriptorSet(uint32_t frameIndex) { return m_TextureDescriptorSets[frameIndex]; }
 
+		//Per texture descriptor set
+		VkDescriptorSet AllocateTextureDescriptorSet();
+
 		VkDescriptorSet AllocateUniformSet(uint32_t frameIndex);
 		void UpdateUniformSet(uint32_t frameIndex, VkBuffer buffer, size_t size);
 		VkDescriptorSetLayout GetUniformSetLayout() const { return m_UniformSetLayout; }

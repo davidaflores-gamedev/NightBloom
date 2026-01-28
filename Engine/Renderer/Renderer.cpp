@@ -540,6 +540,9 @@ namespace Nightbloom
 			return false;
 		}
 
+		// TODO: consider changing this to be part of the initialize function for resourcemanager
+		m_Resources->SetDescriptorManager(m_DescriptorManager.get());
+
 		// Create uniform buffers for each frame in flight
 		LOG_INFO("Creating frame uniform buffers");
 		for (uint32_t i = 0; i < 2; ++i)  // 2 = MAX_FRAMES_IN_FLIGHT

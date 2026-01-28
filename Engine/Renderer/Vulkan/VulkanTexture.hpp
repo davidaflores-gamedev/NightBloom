@@ -13,6 +13,7 @@ namespace Nightbloom
 	class VulkanDevice;
 	class VulkanMemoryManager;
 	class VulkanCommandPool;
+	class VulkanDescriptorManager;
 
 	class VulkanTexture : public Texture
 	{
@@ -23,6 +24,8 @@ namespace Nightbloom
 		bool Initialize(const TextureDesc& desc);
 
 		bool UploadData(const void* data, size_t, VulkanCommandPool* cmdPool);
+
+		bool CreateDescriptorSet(VulkanDescriptorManager* descriptorManager);
 
 		// Texture interface implementation
 		uint32_t GetWidth() const override { return m_Width; }
@@ -37,6 +40,8 @@ namespace Nightbloom
 		VkImageView GetImageView() const { return m_ImageView; }
 		VkSampler GetSampler() const { return m_Sampler; }
 		VkImageLayout GetCurrentLayout() const { return m_CurrentLayout; }
+		VkDescriptorSet GetDescriptorSet() const { return m_DescriptorSet; }
+		bool HasDescriptorSet() const { return m_DescriptorSet != VK_NULL_HANDLE; }
 
 		void TransitionLayout(VkCommandBuffer cmd, VkImageLayout newLayout);
 
@@ -59,6 +64,7 @@ namespace Nightbloom
 		VkImageView m_ImageView = VK_NULL_HANDLE;
 		VkSampler m_Sampler = VK_NULL_HANDLE;
 		VkImageLayout m_CurrentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
 
 		// Properties
 		uint32_t m_Width = 0;

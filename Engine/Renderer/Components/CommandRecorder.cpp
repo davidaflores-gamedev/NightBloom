@@ -232,24 +232,28 @@ namespace Nightbloom
 		if (!cmd.textures.empty() && m_DescriptorManager &&
 			m_CurrentPipelineLayout != VK_NULL_HANDLE && pipelineUsesTextures)
 		{
-			// Get the descriptor set for this frame
-			VkDescriptorSet textureSet = m_DescriptorManager->GetTextureDescriptorSet(bufferIndex);
-
-			// Update with the first texture from the command
+			// NEW: Use the texture's own descriptor set instead of updating a shared one
 			VulkanTexture* vkTexture = static_cast<VulkanTexture*>(cmd.textures[0]);
-			m_DescriptorManager->UpdateTextureSet(textureSet, vkTexture);
 
-			// Bind the descriptor set
-			vkCmdBindDescriptorSets(
-				commandBuffer,
-				VK_PIPELINE_BIND_POINT_GRAPHICS,
-				m_CurrentPipelineLayout,
-				1,  // first set
-				1,  // set count
-				&textureSet,
-				0,  // dynamic offset count
-				nullptr
-			);
+			if (vkTexture && vkTexture->HasDescriptorSet())
+			{
+				// Bind the texture's pre-allocated descriptor set - NO UPDATE during rendering!
+				VkDescriptorSet textureSet = vkTexture->GetDescriptorSet();
+				vkCmdBindDescriptorSets(
+					commandBuffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					m_CurrentPipelineLayout,
+					1,  // set 1 for textures
+					1,  // set count
+					&textureSet,
+					0,  // dynamic offset count
+					nullptr
+				);
+			}
+			else
+			{
+				LOG_WARN("Texture has no descriptor set - texture may not have been properly initialized");
+			}
 		}
 
 		// Set push constants if needed

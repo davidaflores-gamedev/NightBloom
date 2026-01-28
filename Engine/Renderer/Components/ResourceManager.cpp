@@ -9,6 +9,7 @@
 #include "Engine/Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Engine/Renderer/Vulkan/VulkanMemoryManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanCommandPool.hpp"
+#include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Engine/Renderer/AssetManager.hpp" 
 #include "Engine/Renderer/TextureLoader.hpp"
 #include "Engine/Renderer/Vertex.hpp"
@@ -61,6 +62,7 @@ namespace Nightbloom
 
 		m_Device = nullptr;
 		m_MemoryManager = nullptr;
+		m_DescriptorManager = nullptr;
 
 		LOG_INFO("Resource manager cleaned up");
 	}
@@ -264,6 +266,14 @@ namespace Nightbloom
 			return nullptr;
 		}
 
+		if (m_DescriptorManager)
+		{
+			if (!texture->CreateDescriptorSet(m_DescriptorManager))
+			{
+				LOG_WARN("Failed to create descriptor set for texture '{}' - rendering may fail", name);
+			}
+		}
+
 		// Store and return
 		VulkanTexture* ptr = texture.get();
 		m_Textures[name] = std::move(texture);
@@ -317,6 +327,14 @@ namespace Nightbloom
 			LOG_ERROR("Failed to upload data to texture '{}'", name);
 			DestroyTexture(name);
 			return nullptr;
+		}
+
+		if (m_DescriptorManager)
+		{
+			if (!texture->CreateDescriptorSet(m_DescriptorManager))
+			{
+				LOG_WARN("Failed to create descriptor set for texture '{}' - rendering may fail", name);
+			}
 		}
 
 		return texture;

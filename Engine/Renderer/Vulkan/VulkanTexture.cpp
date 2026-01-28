@@ -7,6 +7,7 @@
 #include "Engine/Renderer/Vulkan/VulkanTexture.hpp"
 #include "Engine/Renderer/Vulkan/VulkanDevice.hpp"
 #include "Engine/Renderer/Vulkan/VulkanMemoryManager.hpp"
+#include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanCommandPool.hpp"
 #include "Engine/Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Engine/Core/Logger/Logger.hpp"
@@ -182,6 +183,39 @@ namespace Nightbloom
 		TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 		cmd.End();
+
+		return true;
+	}
+
+	bool VulkanTexture::CreateDescriptorSet(VulkanDescriptorManager* descriptorManager)
+	{
+		if (!descriptorManager)
+		{
+			LOG_ERROR("Cannot create descriptor set: descriptor manager is null");
+			return false;
+		}
+
+		if (!m_ImageView || !m_Sampler)
+		{
+			LOG_ERROR("Cannot create descriptor set: texture not fully initialized");
+			return false;
+		}
+
+		if (m_DescriptorSet != VK_NULL_HANDLE)
+		{
+			LOG_WARN("Descriptor set already exists for this texture");
+			return true;  // Already created, that's fine
+		}
+
+		// Allocate a dedicated descriptor set for this texture
+		m_DescriptorSet = descriptorManager->AllocateTextureDescriptorSet();
+		if (m_DescriptorSet == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to allocate descriptor set for texture");
+			return false;
+		}
+
+		descriptorManager->UpdateTextureSet(m_DescriptorSet, this);
 
 		return true;
 	}

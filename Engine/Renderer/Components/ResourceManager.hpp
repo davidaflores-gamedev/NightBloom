@@ -23,6 +23,7 @@ namespace Nightbloom
 	// Forward Declarations
 	class VulkanDevice;
 	class VulkanMemoryManager;
+	class VulkanDescriptorManager;
 	class Buffer;
 
 	class ResourceManager
@@ -34,6 +35,8 @@ namespace Nightbloom
 		// Lifecycle
 		bool Initialize(VulkanDevice* device, VulkanMemoryManager* memoryManager);
 		void Cleanup();
+
+		void SetDescriptorManager(VulkanDescriptorManager* descriptorManager) { m_DescriptorManager = descriptorManager; }
 
 		// Buffer management
 		VulkanBuffer* CreateVertexBuffer(const std::string& name, size_t size, bool hostVisible = false);
@@ -75,6 +78,7 @@ namespace Nightbloom
 	private:
 		VulkanDevice* m_Device = nullptr;
 		VulkanMemoryManager* m_MemoryManager = nullptr;
+		VulkanDescriptorManager* m_DescriptorManager = nullptr;
 		std::unique_ptr<VulkanCommandPool> m_TransferCommandPool;  // For staging uploads
 
 		// Resource storage
