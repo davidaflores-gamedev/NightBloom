@@ -163,6 +163,36 @@ namespace Nightbloom
 		}
 	}
 
+	std::unique_ptr<VulkanBuffer> ResourceManager::CreateVertexBufferUnique(const std::string& name, size_t size, bool hostVisible)
+	{
+		BufferDesc desc;
+		desc.usage = BufferUsage::Vertex;
+		desc.memoryAccess = hostVisible ? MemoryAccess::CpuToGpu : MemoryAccess::GpuOnly;
+		desc.size = size;
+		desc.debugName = name;
+
+		auto buffer = std::make_unique<VulkanBuffer>(m_Device, m_MemoryManager);
+		if (!buffer->Initialize(desc))
+			return nullptr;
+
+		return buffer;
+	}
+
+	std::unique_ptr<VulkanBuffer> ResourceManager::CreateIndexBufferUnique(const std::string& name, size_t size, bool hostVisible)
+	{
+		BufferDesc desc;
+		desc.usage = BufferUsage::Index;
+		desc.memoryAccess = hostVisible ? MemoryAccess::CpuToGpu : MemoryAccess::GpuOnly;
+		desc.size = size;
+		desc.debugName = name;
+
+		auto buffer = std::make_unique<VulkanBuffer>(m_Device, m_MemoryManager);
+		if (!buffer->Initialize(desc))
+			return nullptr;
+
+		return buffer;
+	}
+
 	VulkanShader* ResourceManager::LoadShader(const std::string& name, ShaderStage stage,
 		const std::string& filename)
 	{
@@ -232,8 +262,18 @@ namespace Nightbloom
 			return m_Textures[name].get();
 		}
 
-		// Get full path through AssetManager
-		std::string fullPath = AssetManager::Get().GetTexturePath(filepath);
+		std::string fullPath;
+
+		// Check if filepath is already absolute
+		std::filesystem::path p(filepath);
+		if (p.is_absolute())
+		{
+			fullPath = filepath;  // Use as-is
+		}
+		else
+		{
+			fullPath = AssetManager::Get().GetTexturePath(filepath);  // Prepend base path
+		}
 
 		// Load image data
 		ImageData imageData = TextureLoader::LoadImageRGBA(fullPath);

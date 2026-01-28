@@ -168,12 +168,22 @@ namespace Nightbloom
 					}
 				}
 
+				if (primitive->material)
+				{
+					// Calculate index by pointer arithmetic
+					meshData.materialIndex = static_cast<int32_t>(primitive->material - data->materials);
+				}
+				else
+				{
+					meshData.materialIndex = -1;  // No material assigned
+				}
+
 				// Update statistics
 				modelData->totalVertices += meshData.vertices.size();
 				modelData->totalIndices += meshData.indices.size();
 
-				LOG_INFO("  Mesh '{}': {} vertices, {} indices",
-					meshData.name, meshData.vertices.size(), meshData.indices.size());
+				LOG_INFO("  Mesh '{}': {} vertices, {} indices, materialIndex {}",
+					meshData.name, meshData.vertices.size(), meshData.indices.size(), meshData.materialIndex);
 
 				modelData->meshes.push_back(std::move(meshData));
 			}

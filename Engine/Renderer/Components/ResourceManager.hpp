@@ -47,6 +47,13 @@ namespace Nightbloom
 		VulkanBuffer* GetBuffer(const std::string& name);
 		void DestroyBuffer(const std::string& name);
 
+		// Unique buffer creation (returns ownership for Mesh to hold)
+		std::unique_ptr<VulkanBuffer> CreateVertexBufferUnique(const std::string& name, size_t size, bool hostVisible = false);
+		std::unique_ptr<VulkanBuffer> CreateIndexBufferUnique(const std::string& name, size_t size, bool hostVisible = false);
+
+		// Expose transfer command pool for uploads
+		VulkanCommandPool* GetTransferCommandPool() const { return m_TransferCommandPool.get(); }
+
 		// Shader management
 		VulkanShader* LoadShader(const std::string& name, ShaderStage stage,
 			const std::string& filename);

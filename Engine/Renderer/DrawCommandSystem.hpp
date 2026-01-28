@@ -14,11 +14,19 @@
 #include <variant>
 #include <algorithm>
 
+#include "Engine/Renderer/Model.hpp"
+#include "Engine/Renderer/Material.hpp"
+#include "Engine/Renderer/Mesh.hpp"
+
 namespace Nightbloom
 {
 	// Forward declarations
 	class Buffer;
 	class Texture;
+
+	//class Material;
+	//class Model;
+	//class Mesh;
 
 	// ============================================================================
 	// Draw Command Types
@@ -141,6 +149,57 @@ namespace Nightbloom
 		PipelineType m_Pipeline;
 		PushConstantData m_PushConstants;
 		std::vector<Texture*> m_Textures;
+	};
+
+	// Model drawable - renders all meshes in a model
+	class ModelDrawable : public IDrawable
+	{
+	public:
+	    ModelDrawable(Model* model) : m_Model(model) {}
+	
+	    std::vector<DrawCommand> GetDrawCommands() const override
+	    {
+	        std::vector<DrawCommand> commands;
+	        
+	        if (!m_Model) return commands;
+	
+	        for (const auto& mesh : m_Model->GetMeshes())
+	        {
+	            if (!mesh->IsValid()) continue;
+	
+				if (mesh->GetName() == "Glass") continue;
+
+	            DrawCommand cmd;
+	            cmd.pipeline = PipelineType::Mesh;  // Default, can be overridden by material
+	            cmd.vertexBuffer = mesh->GetVertexBuffer();
+	            cmd.indexBuffer = mesh->GetIndexBuffer();
+	            cmd.indexCount = mesh->GetIndexCount();
+	            cmd.hasPushConstants = true;
+	            cmd.pushConstants.model = m_Model->GetTransform();
+	
+	            // Get texture from material
+	            Material* mat = mesh->GetMaterial();
+	            if (mat)
+	            {
+	                cmd.pipeline = mat->GetPipeline();
+	                
+	                if (mat->HasAlbedoTexture())
+	                {
+	                    cmd.textures.push_back(mat->GetAlbedoTexture());
+	                }
+	            }
+	
+	            commands.push_back(cmd);
+	        }
+	
+	        return commands;
+	    }
+	
+	    void SetModel(Model* model) { m_Model = model; }
+	    Model* GetModel() const { return m_Model; }
+	
+	private:
+	    Model* m_Model = nullptr;
 	};
 
 	// Debug shape drawable (for editor gizmos, etc.)
@@ -268,4 +327,6 @@ namespace Nightbloom
 	private:
 		std::vector<std::unique_ptr<IDrawable>> m_Drawables;
 	};
+
+
 }
