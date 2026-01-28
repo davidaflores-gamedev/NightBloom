@@ -217,7 +217,14 @@ namespace Nightbloom
 			return "";
 		}
 
-		return m_ModelsPath + "/" + modelName;
+		std::string fullPath = m_ModelsPath + "/" + modelName;
+
+		if (!std::filesystem::exists(fullPath))
+		{
+			LOG_WARN("Model not found: {}", fullPath);
+		}
+
+		return fullPath;
 	}
 
 	std::string AssetManager::GetAssetPath(const std::string& relativePath) const

@@ -121,7 +121,7 @@ namespace Nightbloom
 
 	void CommandRecorder::BeginRenderPass(uint32_t bufferIndex, VkRenderPass renderPass,
 		VkFramebuffer framebuffer, VkExtent2D extent,
-		VkClearValue* clearValue)
+		const VkClearValue* clearValues, uint32_t clearValueCount)
 	{
 		if (bufferIndex >= m_CommandBuffers.size())
 		{
@@ -140,8 +140,16 @@ namespace Nightbloom
 
 		// Use provided clear value or default black
 		VkClearValue defaultClear = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
-		renderPassInfo.clearValueCount = 1;
-		renderPassInfo.pClearValues = clearValue ? clearValue : &defaultClear;
+		if (clearValues && clearValueCount > 0)
+		{
+			renderPassInfo.clearValueCount = clearValueCount;
+			renderPassInfo.pClearValues = clearValues;
+		}
+		else
+		{
+			renderPassInfo.clearValueCount = 1;
+			renderPassInfo.pClearValues = &defaultClear;
+		}
 
 		vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 	}

@@ -1,8 +1,17 @@
+//------------------------------------------------------------------------------
+// VulkanBuffer.hpp
+//
+// Unified buffer implementation for all buffer types
+// Replaces VulkanBuffer, UniformBuffer, and StagingBuffer classes
+//------------------------------------------------------------------------------
+
 #pragma once
 
 #include "Engine/Renderer/RenderDevice.hpp"  // For Buffer base class
 #include "VulkanCommon.hpp"
 #include "VulkanMemoryManager.hpp"
+#include <atomic>
+#include <string>
 
 namespace Nightbloom
 {
@@ -15,95 +24,59 @@ namespace Nightbloom
 		VulkanBuffer(VulkanDevice* device, VulkanMemoryManager* memoryManager);
 		~VulkanBuffer();
 
-		// Create buffer with VMA
-		bool Create(VkDeviceSize size, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage = VMA_MEMORY_USAGE_AUTO);
+		bool Initialize(const BufferDesc& desc);
 
-		// Create with specific requirements
-		bool CreateHostVisible(VkDeviceSize size, VkBufferUsageFlags usage);
-		bool CreateDeviceLocal(VkDeviceSize size, VkBufferUsageFlags usage);
+		bool UploadData(const void* data, size_t size, size_t offset = 0,
+			VulkanCommandPool* cmdPool = nullptr);
 
-		// Copy data to the buffer (for host visible buffers)
-		bool CopyData(const void* data, VkDeviceSize size, VkDeviceSize offset = 0);
-
-		// Copy from another buffer using staging
-		bool CopyFrom(VulkanBuffer& srcBuffer, VkDeviceSize size, VulkanCommandPool* commandPool);
-
-		// Copy from host memory using staging
-		bool UploadData(const void* data, VkDeviceSize size, VulkanCommandPool* commandPool);
-
-		// Cleanup resources
-		void Destroy();
-
-		// Getters
-		VkBuffer GetBuffer() const { return m_Allocation ? m_Allocation->buffer : VK_NULL_HANDLE; }
-		//VkDeviceSize GetSize() const { return m_Size; }
-		void* GetMappedData() const { return m_MappedData; }
-		bool IsMapped() const { return m_MappedData != nullptr; }
-		
-
-		// Add these overrides to satisfy the Buffer interface:
 		size_t GetSize() const override { return m_Size; }
-		BufferType GetType() const override { return m_BufferType; }
+		BufferUsage GetUsage() const override { return m_Usage; }
+		MemoryAccess GetMemoryAccess() const override { return m_MemoryAccess; }
+
+		void* Map(size_t offset = 0, size_t size = 0) override;
+		void Unmap() override;
+		void Flush(size_t offset = 0, size_t size = 0) override;
+
+		bool Update(const void* data, size_t size, size_t offset = 0) override;
+
+		void* GetPersistentMappedPtr() const override { return m_PersistentMapped; }
 		bool IsHostVisible() const override { return m_IsHostVisible; }
+		bool IsMapped() const override { return m_MappedData != nullptr || m_PersistentMapped != nullptr; }
+		const std::string& GetDebugName() const override { return m_DebugName; }
 
-
-		void* Map() override
-		{
-			// If you don't have this yet, just return nullptr for now
-			//LOG_WARN("Buffer mapping not implemented yet");
-			return nullptr;
-		}
-
-		void Unmap() override
-		{
-			// Empty for now
-		}
-
-		void Update(const void* data, size_t size, size_t offset) override
-		{
-			// Use your existing UploadData method or implement later
-			//LOG_WARN("Buffer update not implemented yet");
-		}
-
+		// Vulkan Specific
+		VkBuffer GetBuffer() const { return m_Allocation ? m_Allocation->buffer : VK_NULL_HANDLE; }
+		VulkanMemoryManager::BufferAllocation* GetAllocation() const { return m_Allocation; }
 
 	private:
+		//----------------------------------------------------------------------
+		// Helper Methods
+		//----------------------------------------------------------------------
+
+		// Convert our enums to Vulkan flags
+		VkBufferUsageFlags GetVulkanUsageFlags(BufferUsage usage);
+		VmaMemoryUsage GetVmaMemoryUsage(MemoryAccess access);
+
+		// Internal buffer creation
+		bool CreateBuffer(VkDeviceSize size, VkBufferUsageFlags vkUsage,
+			VmaMemoryUsage vmaUsage, bool persistentMap);
+
+
 		VulkanDevice* m_Device = nullptr;
 		VulkanMemoryManager* m_MemoryManager = nullptr;
+
 		VulkanMemoryManager::BufferAllocation* m_Allocation = nullptr;
+
 		VkDeviceSize m_Size = 0;
-		void* m_MappedData = nullptr;  // For persistently mapped buffers
+		BufferUsage m_Usage = BufferUsage::Vertex;
+		MemoryAccess m_MemoryAccess = MemoryAccess::GpuOnly;
 		bool m_IsHostVisible = false;
-		BufferType m_BufferType = BufferType::Vertex;
-	};
+		std::string m_DebugName;
 
-	class UniformBuffer {
-	public:
-		bool Create(VulkanDevice* device, VulkanMemoryManager* mgr, size_t dataSize) {
-			m_Size = dataSize;
-			m_Buffer = std::make_unique<VulkanBuffer>(device, mgr);
-
-			// Create host-visible uniform buffer
-			if (!m_Buffer->CreateHostVisible(dataSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) {
-				return false;
-			}
-
-			// Get the mapped pointer (your VulkanBuffer already maps it)
-			m_MappedData = m_Buffer->GetMappedData();
-			return m_MappedData != nullptr;
-		}
-
-		void Update(const void* data) {
-			if (m_MappedData) {
-				memcpy(m_MappedData, data, m_Size);
-			}
-		}
-
-		VkBuffer GetBuffer() const { return m_Buffer->GetBuffer(); }
-		size_t GetSize() const { return m_Size; }
-
-	private:
-		std::unique_ptr<VulkanBuffer> m_Buffer;
-		void* m_MappedData = nullptr;
-		size_t m_Size = 0;
+		void* m_MappedData = nullptr;           // Current mapped pointer
+		void* m_PersistentMapped = nullptr;     // Persistent mapping (for uniforms)
+		std::atomic<int> m_MapRefCount{ 0 };      // Reference count for nested maps
+		size_t m_MappedOffset = 0;              // Currently mapped offset
+		size_t m_MappedSize = 0;                // Currently mapped size
 	};
 }

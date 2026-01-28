@@ -88,6 +88,13 @@ namespace Nightbloom
 		VkDevice device = m_Device ? m_Device->GetDevice() : VK_NULL_HANDLE;
 		if (device == VK_NULL_HANDLE) return;
 
+		vkDeviceWaitIdle(m_Device->GetDevice());
+
+		if (m_DescriptorPool != VK_NULL_HANDLE)
+		{
+			vkResetDescriptorPool(m_Device->GetDevice(), m_DescriptorPool, 0);
+		}
+
 		if (m_TextureSetLayout != VK_NULL_HANDLE)
 		{
 			vkDestroyDescriptorSetLayout(device, m_TextureSetLayout, nullptr);
@@ -190,6 +197,7 @@ namespace Nightbloom
 
 		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
 	}
+
 	VkDescriptorSet VulkanDescriptorManager::AllocateUniformSet(uint32_t frameIndex)
 	{
 		VkDescriptorSetAllocateInfo allocInfo{};

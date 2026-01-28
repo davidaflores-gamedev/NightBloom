@@ -36,7 +36,11 @@ namespace Nightbloom
 		void Cleanup();
 
 		// Buffer management
-		VulkanBuffer * CreateBuffer(const std::string & name, size_t size, VkBufferUsageFlags usage, bool hostVisible = false);
+		VulkanBuffer* CreateVertexBuffer(const std::string& name, size_t size, bool hostVisible = false);
+		VulkanBuffer* CreateIndexBuffer(const std::string& name, size_t size, bool hostVisible = false);
+		VulkanBuffer* CreateUniformBuffer(const std::string& name, size_t size);
+		VulkanBuffer* CreateStorageBuffer(const std::string& name, size_t size, bool hostVisible = false);
+
 		VulkanBuffer* GetBuffer(const std::string& name);
 		void DestroyBuffer(const std::string& name);
 
@@ -62,13 +66,6 @@ namespace Nightbloom
 
 		bool CreateDefaultTextures();
 
-		// Upload utilities
-		bool UploadBufferData(VulkanBuffer* buffer, const void* data, size_t size);
-
-		// Future: Sampler management
-		// VkSampler CreateSampler(const SamplerDesc& desc);
-		// void DestroySampler(VkSampler sampler);
-
 		// Resource statistics
 		size_t GetTotalBufferMemory() const;
 		size_t GetBufferCount() const { return m_Buffers.size(); }
@@ -88,10 +85,6 @@ namespace Nightbloom
 
 		// Test resources (temporary)
 		uint32_t m_TestIndexCount = 0;
-
-		// Helper methods
-		//VkCommandBuffer BeginSingleTimeCommands();
-		//void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
 
 		// Prevent copying
 		ResourceManager(const ResourceManager&) = delete;

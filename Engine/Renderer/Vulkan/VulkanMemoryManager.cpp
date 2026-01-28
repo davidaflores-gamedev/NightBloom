@@ -8,6 +8,7 @@
 
 #include "VulkanMemoryManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanDevice.hpp"
+#include "Engine/Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Core/Logger/Logger.hpp"
 #include <algorithm>
 
@@ -52,6 +53,9 @@ namespace Nightbloom
 			return false;
 		}
 
+		m_StagingPool = std::make_unique<StagingBufferPool>(m_Device, this);
+		LOG_INFO("Created staging buffer pool");
+
 		LOG_INFO("VMA initialized successfully");
 		LogMemoryStats();
 
@@ -81,11 +85,22 @@ namespace Nightbloom
 			m_ImageAllocations.clear();
 		}
 
+
 		// Destroy the allocator
 		vmaDestroyAllocator(m_Allocator);
 		m_Allocator = VK_NULL_HANDLE;
 
 		LOG_INFO("VMA shutdown complete");
+	}
+
+	void VulkanMemoryManager::DestroyStagingPool()
+	{
+		//Destroy StagingPool
+		if (m_StagingPool)
+		{
+			m_StagingPool->Cleanup();
+			m_StagingPool.reset();
+		}
 	}
 
 	VulkanMemoryManager::BufferAllocation* VulkanMemoryManager::CreateBuffer(const BufferCreateInfo& createInfo)
@@ -296,50 +311,5 @@ namespace Nightbloom
 			stats.totalDeviceMemory / (1024.0 * 1024.0));
 		LOG_INFO("  Tracked Buffers: {}", m_BufferAllocations.size());
 		LOG_INFO("  Tracked Images: {}", m_ImageAllocations.size());
-	}
-
-	//------------------------------------------------------------------------------
-	// StagingBuffer Implementation
-	//------------------------------------------------------------------------------
-
-	StagingBuffer::StagingBuffer(VulkanMemoryManager* memoryManager, VkDeviceSize size)
-		: m_MemoryManager(memoryManager)
-		, m_Size(size)
-	{
-		VulkanMemoryManager::BufferCreateInfo createInfo = {};
-		createInfo.size = size;
-		createInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-		createInfo.memoryUsage = VMA_MEMORY_USAGE_AUTO;
-		createInfo.mappable = true;
-
-		m_Allocation = m_MemoryManager->CreateBuffer(createInfo);
-		if (m_Allocation)
-		{
-			m_MappedData = m_Allocation->mappedData;
-		}
-	}
-
-	StagingBuffer::~StagingBuffer()
-	{
-		if (m_Allocation)
-		{
-			m_MemoryManager->DestroyBuffer(m_Allocation);
-		}
-	}
-
-	bool StagingBuffer::CopyData(const void* data, VkDeviceSize size, VkDeviceSize offset)
-	{
-		if (!m_MappedData || !data || (offset + size) > m_Size)
-		{
-			LOG_ERROR("Invalid staging buffer copy parameters");
-			return false;
-		}
-
-		memcpy(static_cast<uint8_t*>(m_MappedData) + offset, data, static_cast<size_t>(size));
-
-		// Flush to ensure visibility
-		m_MemoryManager->FlushMemory(m_Allocation->allocation, offset, size);
-
-		return true;
 	}
 }

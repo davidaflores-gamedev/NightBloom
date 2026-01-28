@@ -40,7 +40,7 @@ namespace Nightbloom
 		// Render pass operations
 		void BeginRenderPass(uint32_t bufferIndex, VkRenderPass renderPass,
 			VkFramebuffer framebuffer, VkExtent2D extent,
-			VkClearValue* clearValue = nullptr);
+			const VkClearValue* clearValue, uint32_t clearValueCount);
 		void EndRenderPass(uint32_t bufferIndex);
 
 		// Draw operations

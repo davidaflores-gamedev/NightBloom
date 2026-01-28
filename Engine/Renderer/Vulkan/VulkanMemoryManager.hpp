@@ -8,6 +8,7 @@
 #pragma once
 
 #include "Engine/Renderer/Vulkan/VulkanCommon.hpp"
+#include "Engine/Renderer/Vulkan/VulkanStagingBufferPool.hpp"
 
 // VMA Configuration
 
@@ -35,6 +36,7 @@ namespace Nightbloom
 		// Initialize VMA
 		bool Initialize();
 		void Shutdown();
+		void DestroyStagingPool();
 
 		// Buffer Allocation
 		struct BufferCreateInfo
@@ -104,6 +106,8 @@ namespace Nightbloom
 		// Get the allocator for advanced usage
 		VmaAllocator GetAllocator() const { return m_Allocator; }
 
+		StagingBufferPool* GetStagingPool() { return m_StagingPool.get(); }
+
 	private:
 		VulkanDevice* m_Device = nullptr;
 		VmaAllocator m_Allocator = VK_NULL_HANDLE;
@@ -111,28 +115,6 @@ namespace Nightbloom
 		// Track allocations for cleanup and debugging
 		std::vector<std::unique_ptr<BufferAllocation>> m_BufferAllocations;
 		std::vector<std::unique_ptr<ImageAllocation>> m_ImageAllocations;
-	};
-
-	//------------------------------------------------------------------------------
-	// Helper class for staging buffer operations
-	//------------------------------------------------------------------------------
-	class StagingBuffer
-	{
-	public:
-		StagingBuffer(VulkanMemoryManager* memoryManager, VkDeviceSize size);
-		~StagingBuffer();
-
-		// Copy data to staging buffer
-		bool CopyData(const void* data, VkDeviceSize size, VkDeviceSize offset = 0);
-
-		// Get buffer for transfer commands
-		VkBuffer GetBuffer() const { return m_Allocation->buffer; }
-		VkDeviceSize GetSize() const { return m_Size; }
-
-	private:
-		VulkanMemoryManager* m_MemoryManager;
-		VulkanMemoryManager::BufferAllocation* m_Allocation;
-		VkDeviceSize m_Size;
-		void* m_MappedData = nullptr;
+		std::unique_ptr<StagingBufferPool> m_StagingPool;
 	};
 }

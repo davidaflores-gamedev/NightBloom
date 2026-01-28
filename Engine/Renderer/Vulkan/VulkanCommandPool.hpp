@@ -27,8 +27,8 @@ namespace Nightbloom
 		void FreeCommandBuffer(VkCommandBuffer commandBuffer);
 		void FreeCommandBuffers(const std::vector<VkCommandBuffer>& commandBuffers);
 
-		VkCommandBuffer BeginSingleTimeCommand();
-		void EndSingleTimeCommand(VkCommandBuffer commandBuffer, VkQueue queue);
+		//VkCommandBuffer BeginSingleTimeCommand();
+		//void EndSingleTimeCommand(VkCommandBuffer commandBuffer, VkQueue queue);
 
 		// Reset command pool
 		void Reset();
@@ -46,10 +46,11 @@ namespace Nightbloom
 	{
 	public: 
 		VulkanSingleTimeCommand(VulkanDevice* device, VulkanCommandPool* commandPool);
-		~VulkanSingleTimeCommand();
+		~VulkanSingleTimeCommand(); // Auto-submits if not done
 
 		VkCommandBuffer Begin();
-		void End();
+		void End(); // manual submit
+		VkCommandBuffer Get() const { return m_CommandBuffer; }
 
 	private:
 		VulkanDevice* m_Device = nullptr;

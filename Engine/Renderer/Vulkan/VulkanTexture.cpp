@@ -8,6 +8,7 @@
 #include "Engine/Renderer/Vulkan/VulkanDevice.hpp"
 #include "Engine/Renderer/Vulkan/VulkanMemoryManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanCommandPool.hpp"
+#include "Engine/Renderer/Vulkan/VulkanBuffer.hpp"
 #include "Engine/Core/Logger/Logger.hpp"
 #include <cstring>
 
@@ -71,50 +72,93 @@ namespace Nightbloom
 			return false;
 		}
 
-		// Create staging buffer using VMA
-		VulkanMemoryManager::BufferCreateInfo bufferInfo = {};
-		bufferInfo.size = size;
-		bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-		bufferInfo.memoryUsage = VMA_MEMORY_USAGE_AUTO;
-		bufferInfo.mappable = true;
+		// If you can sanity-check byte size vs image extent, do it here (optional):
+		// const size_t expected = size_t(m_Width) * m_Height * m_Depth * BytesPerPixel(m_Format) * m_ArrayLayers;
+		// if (size < expected) { LOG_WARN("UploadData: provided size < expected image size"); }
 
-		auto* stagingBuffer = m_MemoryManager->CreateBuffer(bufferInfo);
-		if (!stagingBuffer)
+		// Try to use the shared staging pool first
+		if (m_MemoryManager)
+		{
+			StagingBufferPool* pool = m_MemoryManager->GetStagingPool();
+			if (pool)
+			{
+				const bool success = pool->WithStagingBuffer(size,
+					[&](VulkanBuffer* stagingBuffer) -> bool
+					{
+						// Upload CPU data into the pooled staging buffer
+						if (!stagingBuffer->Update(data, size, /*dstOffset*/ 0))
+						{
+							LOG_ERROR("Failed to update pooled staging buffer");
+							return false;
+						}
+
+						// Record copy into the texture
+						VulkanSingleTimeCommand cmd(m_Device, cmdPool);
+						VkCommandBuffer commandBuffer = cmd.Begin();
+
+						// Transition to transfer dst
+						TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+						VkBufferImageCopy region{};
+						region.bufferOffset = 0;
+						region.bufferRowLength = 0;      // tightly packed
+						region.bufferImageHeight = 0;    // tightly packed
+						region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+						region.imageSubresource.mipLevel = 0;
+						region.imageSubresource.baseArrayLayer = 0;
+						region.imageSubresource.layerCount = m_ArrayLayers;
+						region.imageOffset = { 0, 0, 0 };
+						region.imageExtent = { m_Width, m_Height, m_Depth };
+
+						vkCmdCopyBufferToImage(
+							commandBuffer,
+							stagingBuffer->GetBuffer(),
+							m_ImageAllocation->image,
+							VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+							1,
+							&region
+						);
+
+						// Transition to shader-read
+						TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+						cmd.End();
+						return true;
+					});
+
+				return success;
+			}
+			else
+			{
+				LOG_WARN("No staging pool available, falling back to temporary staging buffer");
+			}
+		}
+
+		// ---- Fallback path: create a one-off staging buffer with VMA (your existing code) ----
+		VulkanBuffer stagingBuffer(m_Device, m_MemoryManager);
+		BufferDesc stagingDesc;
+		stagingDesc.usage = BufferUsage::Staging;
+		stagingDesc.memoryAccess = MemoryAccess::CpuToGpu;
+		stagingDesc.size = size;
+		stagingDesc.debugName = "TextureStaging";
+
+		if (!stagingBuffer.Initialize(stagingDesc))
 		{
 			LOG_ERROR("Failed to create staging buffer for texture upload");
 			return false;
 		}
 
-		// Copy data to staging buffer
-		if (stagingBuffer->mappedData)
+		if (!stagingBuffer.Update(data, size, 0))
 		{
-			memcpy(stagingBuffer->mappedData, data, size);
-			m_MemoryManager->FlushMemory(stagingBuffer->allocation, 0, size);
-		}
-		else
-		{
-			void* mappedData = m_MemoryManager->MapMemory(stagingBuffer->allocation);
-			if (mappedData)
-			{
-				memcpy(mappedData, data, size);
-				m_MemoryManager->FlushMemory(stagingBuffer->allocation, 0, size);
-				m_MemoryManager->UnmapMemory(stagingBuffer->allocation);
-			}
-			else
-			{
-				LOG_ERROR("Failed to map staging buffer");
-				m_MemoryManager->DestroyBuffer(stagingBuffer);
-				return false;
-			}
+			LOG_ERROR("Failed to update staging buffer");
+			return false;
 		}
 
-		// Transition image layout and copy buffer to image
-		VkCommandBuffer commandBuffer = BeginSingleTimeCommands(cmdPool);
+		VulkanSingleTimeCommand cmd(m_Device, cmdPool);
+		VkCommandBuffer commandBuffer = cmd.Begin();
 
-		// Transition to transfer destination
 		TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-		// Copy buffer to image
 		VkBufferImageCopy region{};
 		region.bufferOffset = 0;
 		region.bufferRowLength = 0;
@@ -128,20 +172,16 @@ namespace Nightbloom
 
 		vkCmdCopyBufferToImage(
 			commandBuffer,
-			stagingBuffer->buffer,
+			stagingBuffer.GetBuffer(),
 			m_ImageAllocation->image,
 			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 			1,
 			&region
 		);
 
-		// Transition to shader read
 		TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-		EndSingleTimeCommands(commandBuffer, cmdPool);
-
-		// Clean up staging buffer
-		m_MemoryManager->DestroyBuffer(stagingBuffer);
+		cmd.End();
 
 		return true;
 	}
@@ -349,39 +389,5 @@ namespace Nightbloom
 			LOG_WARN("Unknown texture format, defaulting to RGBA8");
 			return VK_FORMAT_R8G8B8A8_UNORM;
 		}
-	}
-
-	VkCommandBuffer VulkanTexture::BeginSingleTimeCommands(VulkanCommandPool* cmdPool)
-	{
-		VkCommandBufferAllocateInfo allocInfo{};
-		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		allocInfo.commandPool = cmdPool->GetPool();
-		allocInfo.commandBufferCount = 1;
-
-		VkCommandBuffer commandBuffer;
-		vkAllocateCommandBuffers(m_Device->GetDevice(), &allocInfo, &commandBuffer);
-
-		VkCommandBufferBeginInfo beginInfo{};
-		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-		vkBeginCommandBuffer(commandBuffer, &beginInfo);
-		return commandBuffer;
-	}
-
-	void VulkanTexture::EndSingleTimeCommands(VkCommandBuffer commandBuffer, VulkanCommandPool* cmdPool)
-	{
-		vkEndCommandBuffer(commandBuffer);
-
-		VkSubmitInfo submitInfo{};
-		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &commandBuffer;
-
-		vkQueueSubmit(m_Device->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-		vkQueueWaitIdle(m_Device->GetGraphicsQueue());
-
-		vkFreeCommandBuffers(m_Device->GetDevice(), cmdPool->GetPool(), 1, &commandBuffer);
 	}
 }

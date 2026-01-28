@@ -65,40 +65,75 @@ namespace Nightbloom
 		LOG_INFO("Resource manager cleaned up");
 	}
 
-	VulkanBuffer* ResourceManager::CreateBuffer(const std::string& name, size_t size, VkBufferUsageFlags usage, bool hostVisible)
+	VulkanBuffer* ResourceManager::CreateVertexBuffer(const std::string& name, size_t size, bool hostVisible)
 	{
-		// Check if buffer already exists
-		if (m_Buffers.find(name) != m_Buffers.end())
-		{
-			LOG_WARN("Buffer '{}' already exists, returning existing buffer", name);
-			return m_Buffers[name].get();
-		}
+		BufferDesc desc;
+		desc.usage = BufferUsage::Vertex;
+		desc.memoryAccess = hostVisible ? MemoryAccess::CpuToGpu : MemoryAccess::GpuOnly;
+		desc.size = size;
+		desc.debugName = name;
 
-		// Create new buffer
 		auto buffer = std::make_unique<VulkanBuffer>(m_Device, m_MemoryManager);
-
-		bool success = false;
-
-		if (hostVisible)
-		{
-			success = buffer->CreateHostVisible(size, usage);
-		}
-		else
-		{
-			success = buffer->CreateDeviceLocal(size, usage);
-		}
-
-		if (!success)
-		{
-			LOG_ERROR("Failed to create buffer '{}'", name);
+		if (!buffer->Initialize(desc))
 			return nullptr;
-		}
 
 		// Store and return
 		VulkanBuffer* ptr = buffer.get();
 		m_Buffers[name] = std::move(buffer);
+		return ptr;
+	}
 
-		LOG_INFO("Created buffer '{}' (size: {} bytes)", name, size);
+	VulkanBuffer* ResourceManager::CreateIndexBuffer(const std::string& name, size_t size, bool hostVisible)
+	{
+		BufferDesc desc;
+		desc.usage = BufferUsage::Index;
+		desc.memoryAccess = hostVisible ? MemoryAccess::CpuToGpu : MemoryAccess::GpuOnly;
+		desc.size = size;
+		desc.debugName = name;
+
+		auto buffer = std::make_unique<VulkanBuffer>(m_Device, m_MemoryManager);
+		if (!buffer->Initialize(desc))
+			return nullptr;
+
+		// Store and return
+		VulkanBuffer* ptr = buffer.get();
+		m_Buffers[name] = std::move(buffer);
+		return ptr;
+	}
+
+	VulkanBuffer* ResourceManager::CreateUniformBuffer(const std::string& name, size_t size)
+	{
+		BufferDesc desc;
+		desc.usage = BufferUsage::Uniform;
+		desc.memoryAccess = MemoryAccess::CpuToGpu;
+		desc.size = size;
+		desc.persistentMap = true;  // KEY: Keep mapped for performance
+		desc.debugName = name;
+
+		auto buffer = std::make_unique<VulkanBuffer>(m_Device, m_MemoryManager);
+		if (!buffer->Initialize(desc))
+			return nullptr;
+
+		VulkanBuffer* ptr = buffer.get();
+		m_Buffers[name] = std::move(buffer);
+		return ptr;
+	}
+
+	VulkanBuffer* ResourceManager::CreateStorageBuffer(const std::string& name, size_t size, bool hostVisible)
+	{
+		BufferDesc desc;
+		desc.usage = BufferUsage::Storage;
+		desc.memoryAccess = hostVisible ? MemoryAccess::CpuToGpu : MemoryAccess::GpuOnly;
+		desc.size = size;
+		desc.debugName = name;
+
+		auto buffer = std::make_unique<VulkanBuffer>(m_Device, m_MemoryManager);
+		if (!buffer->Initialize(desc))
+			return nullptr;
+
+		// Store and return
+		VulkanBuffer* ptr = buffer.get();
+		m_Buffers[name] = std::move(buffer);
 		return ptr;
 	}
 
@@ -373,10 +408,9 @@ namespace Nightbloom
 
 		// Create vertex buffer
 		VkDeviceSize vertexBufferSize = sizeof(vertices[0]) * vertices.size();
-		VulkanBuffer* vertexBuffer = CreateBuffer(
+		VulkanBuffer* vertexBuffer = CreateVertexBuffer(
 			"TestCubeVertices",
 			vertexBufferSize,
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			false  // Device local for performance
 		);
 
@@ -387,7 +421,7 @@ namespace Nightbloom
 		}
 
 		// Upload vertex data
-		if (!UploadBufferData(vertexBuffer, vertices.data(), vertexBufferSize))
+		if (!vertexBuffer->UploadData(vertices.data(), vertexBufferSize, 0, m_TransferCommandPool.get()))
 		{
 			LOG_ERROR("Failed to upload vertex data");
 			DestroyBuffer("TestCubeVertices");
@@ -396,10 +430,9 @@ namespace Nightbloom
 
 		// Create index buffer
 		VkDeviceSize indexBufferSize = sizeof(indices[0]) * indices.size();
-		VulkanBuffer* indexBuffer = CreateBuffer(
+		VulkanBuffer* indexBuffer = CreateIndexBuffer(
 			"TestCubeIndices",
 			indexBufferSize,
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			false  // Device local for performance
 		);
 
@@ -411,7 +444,7 @@ namespace Nightbloom
 		}
 
 		// Upload index data
-		if (!UploadBufferData(indexBuffer, indices.data(), indexBufferSize))
+		if (!indexBuffer->UploadData(indices.data(), indexBufferSize, 0, m_TransferCommandPool.get()))
 		{
 			LOG_ERROR("Failed to upload index data");
 			DestroyBuffer("TestCubeVertices");
@@ -521,18 +554,6 @@ namespace Nightbloom
 
 		LOG_INFO("Created {} default textures", m_Textures.size());
 		return true;
-	}
-
-	bool ResourceManager::UploadBufferData(VulkanBuffer* buffer, const void* data, size_t size)
-	{
-		if (!buffer || !data || size == 0)
-		{
-			LOG_ERROR("Invalid parameters for buffer upload");
-			return false;
-		}
-
-		// Use the buffer's built-in upload functionality
-		return buffer->UploadData(data, size, m_TransferCommandPool.get());
 	}
 	
 	size_t ResourceManager::GetTotalBufferMemory() const

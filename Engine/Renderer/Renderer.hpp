@@ -102,7 +102,7 @@ namespace Nightbloom
 		uint32_t m_CurrentImageIndex = 0;
 		glm::vec4 m_ClearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
-		std::array<std::unique_ptr<UniformBuffer>, 2> m_FrameUniforms;  // 2 = MAX_FRAMES_IN_FLIGHT
+		std::array<VulkanBuffer*, 2> m_FrameUniforms;  // 2 = MAX_FRAMES_IN_FLIGHT
 		FrameUniformData m_CurrentFrameData;
 		float m_TotalTime = 0.0f;  // Track time for shaders
 

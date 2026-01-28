@@ -48,10 +48,6 @@ namespace Nightbloom
 
 		VkFormat ConvertToVkFormat(TextureFormat format);
 
-		// Helper for single-time commands
-		VkCommandBuffer BeginSingleTimeCommands(VulkanCommandPool* cmdPool);
-		void EndSingleTimeCommands(VkCommandBuffer commandBuffer, VulkanCommandPool* cmdPool);
-
 	private:
 		VulkanDevice* m_Device = nullptr;
 		VulkanMemoryManager* m_MemoryManager = nullptr;

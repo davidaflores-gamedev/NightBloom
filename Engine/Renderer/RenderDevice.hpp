@@ -26,13 +26,23 @@ namespace Nightbloom
 	class Framebuffer;
 	class IPipelineManager;
 
-	enum class BufferType
+	enum class BufferUsage
 	{
-		Vertex,
-		Index,
-		Uniform,
-		Storage,
-		Staging  // For transfer operations
+		Vertex,         // Vertex data
+		Index,          // Index data
+		Uniform,        // Uniform/constant buffer
+		Storage,        // Storage buffer (compute)
+		Staging,        // CPU->GPU transfer
+		Indirect        // Indirect draw commands
+	};
+
+	// New: Explicit memory access patterns
+	enum class MemoryAccess
+	{
+		GpuOnly,        // Device local, no CPU access
+		CpuToGpu,       // Host visible, CPU writes, GPU reads
+		GpuToCpu,       // Host visible, GPU writes, CPU reads
+		CpuCached       // Host visible and cached
 	};
 
 	enum class TextureFormat
@@ -92,11 +102,13 @@ namespace Nightbloom
 
 	struct BufferDesc
 	{
-		BufferType type = BufferType::Vertex;
+		BufferUsage usage = BufferUsage::Vertex;
+		MemoryAccess memoryAccess = MemoryAccess::GpuOnly;
 		size_t size = 0;
-		void* initialData = nullptr;
-		bool dynamic = false; // Can be updated frequently
-		bool hostVisible = false;  // CPU accessible
+		const void* initialData = nullptr;
+		size_t initialDataSize = 0;
+		bool persistentMap = false;  // Keep mapped (for uniforms)
+		std::string debugName;
 	};
 
 	struct TextureDesc
@@ -207,16 +219,21 @@ namespace Nightbloom
 		virtual ~Buffer() = default;
 
 		virtual size_t GetSize() const = 0;
-		virtual BufferType GetType() const = 0;
+		virtual BufferUsage GetUsage() const = 0;
+		virtual MemoryAccess GetMemoryAccess() const = 0;
 
 		// CPU access (only for host-visible buffers)
-		virtual void* Map() = 0; // Map buffer for CPU access
+		virtual void* Map(size_t offset = 0, size_t size = 0) = 0; // Map buffer for CPU access
 		virtual void Unmap() = 0; // Unmap buffer after access
-		virtual void Update(const void* data, size_t size, size_t offset = 0) = 0; // Update buffer contents
+		virtual void Flush(size_t offset = 0, size_t size = 0) = 0;
+		virtual bool Update(const void* data, size_t size, size_t offset = 0) = 0; // Update buffer contents
+
+		virtual void* GetPersistentMappedPtr() const = 0;
 
 		// For debugging
-		virtual bool IsMapped() const = 0;
 		virtual bool IsHostVisible() const = 0;
+		virtual bool IsMapped() const = 0;
+		virtual const std::string& GetDebugName() const = 0;
 	};
 
 	class Texture

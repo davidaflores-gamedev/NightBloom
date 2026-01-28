@@ -151,12 +151,6 @@ namespace Nightbloom
 			m_FrameSync.reset();
 		}
 
-		for (auto& uniformBuffer : m_FrameUniforms)
-		{
-			uniformBuffer.reset();  // This will destroy the UniformBuffer
-		}
-		LOG_INFO("Destroyed frame uniform buffers");
-
 		// Cleanup core systems
 		m_PipelineAdapter.reset();
 		m_Swapchain.reset();
@@ -164,6 +158,8 @@ namespace Nightbloom
 		// Log final memory stats
 		if (m_MemoryManager)
 		{
+			m_MemoryManager->DestroyStagingPool();
+
 			LOG_INFO("=== Final Memory Statistics ===");
 			m_MemoryManager->LogMemoryStats();
 
@@ -224,7 +220,12 @@ namespace Nightbloom
 		m_CurrentFrameData.time.x = m_TotalTime;  // You'll need to track time
 		m_CurrentFrameData.cameraPos = glm::vec4(0.0f);  // Set camera position when you have it
 
-		m_FrameUniforms[frameIndex]->Update(&m_CurrentFrameData);
+		void* mapped = m_FrameUniforms[frameIndex]->GetPersistentMappedPtr();
+		if (mapped)
+		{
+			memcpy(mapped, &m_CurrentFrameData, sizeof(FrameUniformData));
+			m_FrameUniforms[frameIndex]->Flush();
+		}
 
 		// Clear draw list for new frame
 		m_FrameDrawList.Clear();
@@ -265,6 +266,16 @@ namespace Nightbloom
 		{
 			LOG_WARN("Failed to present - swapchain may need recreation");
 			HandleSwapchainResize();
+		}
+
+		static int gcCounter = 0;
+		if (++gcCounter >= 300)
+		{
+			if (auto* pool = m_MemoryManager->GetStagingPool())
+			{
+				pool->GarbageCollect();
+			}
+			gcCounter = 0;
 		}
 
 		// Update memory stats periodically (every 60 frames)
@@ -507,7 +518,7 @@ namespace Nightbloom
 
 		// Initialize render passes
 		m_RenderPasses = std::make_unique<RenderPassManager>();
-		if (!m_RenderPasses->Initialize(vkDevice->GetDevice(), m_Swapchain.get()))
+		if (!m_RenderPasses->Initialize(vkDevice->GetDevice(), m_Swapchain.get(), m_MemoryManager.get()))
 		{
 			LOG_ERROR("Failed to initialize render passes");
 			return false;
@@ -533,10 +544,15 @@ namespace Nightbloom
 		LOG_INFO("Creating frame uniform buffers");
 		for (uint32_t i = 0; i < 2; ++i)  // 2 = MAX_FRAMES_IN_FLIGHT
 		{
-			m_FrameUniforms[i] = std::make_unique<UniformBuffer>();
-			if (!m_FrameUniforms[i]->Create(vkDevice, m_MemoryManager.get(), sizeof(FrameUniformData)))
+			std::string bufferName = "FrameUniform_" + std::to_string(i);
+			m_FrameUniforms[i] = m_Resources->CreateUniformBuffer(
+				bufferName,
+				sizeof(FrameUniformData)
+			);
+
+			if (!m_FrameUniforms[i])
 			{
-				LOG_ERROR("Failed to create frame uniform buffer {}", i);
+				LOG_ERROR("Failed to create uniform buffer for frame {}", i);
 				return false;
 			}
 
@@ -546,6 +562,8 @@ namespace Nightbloom
 				sizeof(FrameUniformData));
 		}
 		LOG_INFO("Frame uniform buffers created");
+
+
 
 		// Create test geometry
 		if (!m_Resources->CreateTestCube())
@@ -673,15 +691,19 @@ namespace Nightbloom
 		m_Commands->ResetCommandBuffer(frameIndex);
 		m_Commands->BeginCommandBuffer(frameIndex);
 
-		// Begin render pass with clear color
-		VkClearValue clearValue;
-		clearValue.color = { {m_ClearColor.r, m_ClearColor.g, m_ClearColor.b, m_ClearColor.a} };
+		// Build clear values array
+		// Index 0: Color attachment - clear to background color
+		// Index 1: Depth attachment - clear to 1.0 (far plane)
+		std::array<VkClearValue, 2> clearValues{};
+		clearValues[0].color = { {m_ClearColor.r, m_ClearColor.g, m_ClearColor.b, m_ClearColor.a} };
+		clearValues[1].depthStencil = { 1.0f, 0 };  // depth = 1.0, stencil = 0
 
 		m_Commands->BeginRenderPass(frameIndex,
 			m_RenderPasses->GetMainRenderPass(),
 			m_RenderPasses->GetFramebuffer(imageIndex),
 			m_Swapchain->GetExtent(),
-			&clearValue);
+			clearValues.data(), 
+			static_cast<uint32_t>(clearValues.size()));
 
 		// Execute draw list
 		if (!m_FrameDrawList.GetCommands().empty())
