@@ -667,7 +667,7 @@ namespace Nightbloom
 				config.frontFace = FrontFace::CounterClockwise;
 				config.depthTestEnable = true;
 				config.depthWriteEnable = true;
-				config.depthCompareOp = CompareOp::Less;
+				config.depthCompareOp = CompareOp::GreaterOrEqual;  // Reverse-Z: greater values are closer
 				config.pushConstantSize = sizeof(PushConstantData);
 				config.pushConstantStages = ShaderStage::VertexFragment;
 				config.useUniformBuffer = true;
@@ -684,6 +684,36 @@ namespace Nightbloom
 			}
 		}
 
+		{
+			PipelineConfig transparentConfig;
+			transparentConfig.vertexShaderPath = "Mesh.vert";
+			transparentConfig.fragmentShaderPath = "Mesh.frag";  // Same shader for now
+			transparentConfig.useVertexInput = true;
+			transparentConfig.topology = PrimitiveTopology::TriangleList;
+			transparentConfig.polygonMode = PolygonMode::Fill;
+			transparentConfig.cullMode = CullMode::Back;  // Show both sides of glass
+			transparentConfig.frontFace = FrontFace::CounterClockwise;
+
+			// KEY DIFFERENCES for transparency:
+			transparentConfig.depthTestEnable = true;   // Still test against depth
+			transparentConfig.depthWriteEnable = false; // DON'T write to depth buffer
+			transparentConfig.depthCompareOp = CompareOp::GreaterOrEqual;  // Reverse-Z
+
+			transparentConfig.blendEnable = true;  // ENABLE BLENDING
+			transparentConfig.srcColorBlendFactor = BlendFactor::SrcAlpha;
+			transparentConfig.dstColorBlendFactor = BlendFactor::OneMinusSrcAlpha;
+
+			transparentConfig.useUniformBuffer = true;
+			transparentConfig.useTextures = true;
+			transparentConfig.pushConstantSize = sizeof(PushConstantData);
+			transparentConfig.pushConstantStages = ShaderStage::VertexFragment;
+
+			if (!m_PipelineAdapter->CreatePipeline(PipelineType::Transparent, transparentConfig))
+			{
+				LOG_ERROR("Failed to create Transparent pipeline");
+			}
+		}
+
 		LOG_INFO("=== Pipeline Manager Initialized Successfully ===");
 		return true;
 	}
@@ -696,16 +726,16 @@ namespace Nightbloom
 
 		// Build clear values array
 		// Index 0: Color attachment - clear to background color
-		// Index 1: Depth attachment - clear to 1.0 (far plane)
+		// Index 1: Depth attachment - clear to 0.0 for reverse-Z (near=1.0, far=0.0)
 		std::array<VkClearValue, 2> clearValues{};
 		clearValues[0].color = { {m_ClearColor.r, m_ClearColor.g, m_ClearColor.b, m_ClearColor.a} };
-		clearValues[1].depthStencil = { 1.0f, 0 };  // depth = 1.0, stencil = 0
+		clearValues[1].depthStencil = { 0.0f, 0 };  // depth = 0.0 (far plane in reverse-Z), stencil = 0
 
 		m_Commands->BeginRenderPass(frameIndex,
 			m_RenderPasses->GetMainRenderPass(),
 			m_RenderPasses->GetFramebuffer(imageIndex),
 			m_Swapchain->GetExtent(),
-			clearValues.data(), 
+			clearValues.data(),
 			static_cast<uint32_t>(clearValues.size()));
 
 		// Execute draw list

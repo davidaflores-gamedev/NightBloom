@@ -17,6 +17,7 @@
 #include "Engine/Renderer/Model.hpp"
 #include "Engine/Renderer/Material.hpp"
 #include "Engine/Renderer/Mesh.hpp"
+#include "Engine/Core/Logger/Logger.hpp"
 
 namespace Nightbloom
 {
@@ -155,44 +156,79 @@ namespace Nightbloom
 	class ModelDrawable : public IDrawable
 	{
 	public:
-	    ModelDrawable(Model* model) : m_Model(model) {}
+	    ModelDrawable(Model* model, Texture* defaultTexture) : m_Model(model), m_DefaultTexture(defaultTexture) {}
 	
 	    std::vector<DrawCommand> GetDrawCommands() const override
 	    {
-	        std::vector<DrawCommand> commands;
-	        
-	        if (!m_Model) return commands;
+	        std::vector<DrawCommand> opaqueCommands;
+			std::vector<DrawCommand> transparentCommands;
+
+	        if (!m_Model) return opaqueCommands;
 	
 	        for (const auto& mesh : m_Model->GetMeshes())
 	        {
 	            if (!mesh->IsValid()) continue;
-	
-				if (mesh->GetName() == "Glass") continue;
 
 	            DrawCommand cmd;
-	            cmd.pipeline = PipelineType::Mesh;  // Default, can be overridden by material
 	            cmd.vertexBuffer = mesh->GetVertexBuffer();
 	            cmd.indexBuffer = mesh->GetIndexBuffer();
 	            cmd.indexCount = mesh->GetIndexCount();
 	            cmd.hasPushConstants = true;
 	            cmd.pushConstants.model = m_Model->GetTransform();
 	
-	            // Get texture from material
 	            Material* mat = mesh->GetMaterial();
-	            if (mat)
-	            {
-	                cmd.pipeline = mat->GetPipeline();
-	                
-	                if (mat->HasAlbedoTexture())
-	                {
-	                    cmd.textures.push_back(mat->GetAlbedoTexture());
-	                }
-	            }
-	
-	            commands.push_back(cmd);
+
+				bool isTransparent = (mesh->GetName() == "Glass");
+				// or check if material is alphamode blend?
+
+				Texture* textureToUse = nullptr;
+				if (mat && mat->HasAlbedoTexture())
+				{
+					textureToUse = mat->GetAlbedoTexture();
+				}
+				else if (m_DefaultTexture)
+				{
+					textureToUse = m_DefaultTexture;
+				}
+
+				if (isTransparent)
+				{
+					cmd.pipeline = PipelineType::Transparent;
+
+					if (mat)
+					{
+						glm::vec4 glassColor = mat->GetAlbedoColor();
+						glassColor.a = 0.3f;  // Set transparency
+						cmd.pushConstants.customData = glassColor;
+					}
+					else
+					{
+						cmd.pushConstants.customData = glm::vec4(0.9f, 0.95f, 1.0f, 0.3f);
+					}
+
+					if (textureToUse)
+						cmd.textures.push_back(textureToUse);
+
+					transparentCommands.push_back(cmd);
+				}
+				else
+				{
+					cmd.pipeline = PipelineType::Mesh;
+
+					cmd.pushConstants.customData = glm::vec4(0.0f);
+
+					if (textureToUse)
+						cmd.textures.push_back(textureToUse);
+
+					opaqueCommands.push_back(cmd);
+				}
 	        }
 	
-	        return commands;
+			opaqueCommands.insert(opaqueCommands.end(),
+				transparentCommands.begin(),
+				transparentCommands.end());
+
+	        return opaqueCommands;
 	    }
 	
 	    void SetModel(Model* model) { m_Model = model; }
@@ -200,6 +236,7 @@ namespace Nightbloom
 	
 	private:
 	    Model* m_Model = nullptr;
+		Texture* m_DefaultTexture = nullptr;
 	};
 
 	// Debug shape drawable (for editor gizmos, etc.)

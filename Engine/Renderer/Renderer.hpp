@@ -80,6 +80,14 @@ namespace Nightbloom
 		// Status
 		bool IsInitialized() const { return m_Initialized; }
 
+		void WaitForIdle()
+		{
+			if (m_Device)
+			{
+				m_Device->WaitForIdle();
+			}
+		}
+
 	private:
 		// Core systems (owned by Renderer)
 		std::unique_ptr<RenderDevice> m_Device;

@@ -9,11 +9,11 @@
 #include "Engine/Core/FileUtils.hpp"  
 #include <filesystem>
 #include <fstream>
-#include "AssetManager.hpp"
+
 
 namespace Nightbloom
 {
-	bool AssetManager::Initialize(const std::string& executablePath)
+	bool AssetManager::Initialize(const std::string& basePathHint)
 	{
 		if (m_Initialized)
 		{
@@ -21,10 +21,10 @@ namespace Nightbloom
 			return true;
 		}
 
-		LOG_INFO("Initializing AssetManager with executable path: {}", executablePath);
+		LOG_INFO("Initializing AssetManager with executable path: {}", basePathHint);
 
 		// Find project root
-		if (!FindProjectRoot(executablePath))
+		if (!FindProjectRoot(basePathHint))
 		{
 			LOG_ERROR("Failed to find project root directory");
 			return false;
@@ -36,7 +36,7 @@ namespace Nightbloom
 		m_ModelsPath = m_AssetsPath + "/Models";
 
 		// For shaders, we need to check multiple possible locations
-		std::filesystem::path exePath(executablePath);
+		std::filesystem::path exePath(basePathHint);
 
 		// Priority order for shader locations:
 		// 1. Build output directory (compiled SPIR-V files) - where the .exe actually is
@@ -292,23 +292,24 @@ namespace Nightbloom
 		return allValid;
 	}
 
-	bool AssetManager::FindProjectRoot(const std::string& executablePath)
+	bool AssetManager::FindProjectRoot(const std::string& basePathHint)
 	{
-		std::filesystem::path currentPath(executablePath);
+		std::filesystem::path p(basePathHint);
 
 		// Get the directory containing the executable
-		if (currentPath.has_parent_path())
+		if (std::filesystem::is_regular_file(p))
 		{
-			currentPath = currentPath.parent_path();
+			p = p.parent_path();
 		}
+
+		if (!std::filesystem::exists(p))
+			p = std::filesystem::path(basePathHint).parent_path();
 
 		// Search up the directory tree for markers that indicate project root
 		const std::vector<std::string> rootMarkers = {
-			"Assets",           // Assets folder
 			"CMakeLists.txt",   // CMake project file
 			".git",             // Git repository
 			"NightBloom.sln",   // Visual Studio solution
-			"README.md"         // Project readme
 		};
 
 		// Search up to 5 levels up
@@ -316,28 +317,21 @@ namespace Nightbloom
 		{
 			for (const auto& marker : rootMarkers)
 			{
-				if (std::filesystem::exists(currentPath / marker))
+				if (std::filesystem::exists(p / marker))
 				{
-					m_RootPath = currentPath.string();
+					m_RootPath = p.string();
 					LOG_INFO("Found project root at: {}", m_RootPath);
 					return true;
 				}
 			}
 
 			// Go up one directory
-			if (currentPath.has_parent_path())
-			{
-				currentPath = currentPath.parent_path();
-			}
-			else
-			{
-				break;
-			}
+			if (!p.has_parent_path()) break;
+			p = p.parent_path();
 		}
 
 		// Fallback: use executable directory
-		currentPath = std::filesystem::path(executablePath).parent_path();
-		m_RootPath = currentPath.string();
+		m_RootPath = std::filesystem::absolute(std::filesystem::path(basePathHint)).string();
 		LOG_WARN("Could not find project root markers, using executable directory: {}", m_RootPath);
 
 		return true;

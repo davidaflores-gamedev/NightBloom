@@ -95,9 +95,13 @@ namespace Nightbloom
 	// static pipeline types that are used in the engine base pipeline
 	enum class PipelineType
 	{
-		// Current
+		//Old
 		Triangle,
+
+		// Current
 		Mesh,
+		Transparent,
+
 
 		// Future
 		Shadow,
@@ -126,33 +130,33 @@ namespace Nightbloom
 		std::string fragmentShaderPath;
 		std::string geometryShaderPath;  // Optional
 		std::string computeShaderPath;   // For compute pipelines
-	
+
 		// Vertex input
 		bool useVertexInput = false;
-	
+
 		// Primitive assembly
 		PrimitiveTopology topology = PrimitiveTopology::TriangleList;
-	
+
 		// Rasterization state
 		PolygonMode polygonMode = PolygonMode::Fill;
 		CullMode cullMode = CullMode::Back;
 		FrontFace frontFace = FrontFace::CounterClockwise;
 		float lineWidth = 1.0f;
-	
-		// Depth testing
+
+		// Depth testing (configured for reverse-Z by default)
 		bool depthTestEnable = true;
 		bool depthWriteEnable = true;
-		CompareOp depthCompareOp = CompareOp::Less;
-	
+		CompareOp depthCompareOp = CompareOp::GreaterOrEqual;  // Reverse-Z: near=1.0, far=0.0
+
 		// Blending
 		bool blendEnable = false;
 		BlendFactor srcColorBlendFactor = BlendFactor::SrcAlpha;
 		BlendFactor dstColorBlendFactor = BlendFactor::OneMinusSrcAlpha;
-	
+
 		// Push constants
 		uint32_t pushConstantSize = 0;
 		ShaderStage pushConstantStages = ShaderStage::Vertex;
-	
+
 		// Replace descriptorSetCount with more specific flags
 		bool useTextures = false;        // Pipeline uses texture sampling
 		bool useUniformBuffer = false;   // Pipeline uses uniform buffers

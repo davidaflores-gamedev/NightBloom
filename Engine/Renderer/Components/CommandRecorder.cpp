@@ -207,7 +207,7 @@ namespace Nightbloom
 			m_CurrentPipelineLayout = layout;
 		}
 
-		bool pipelineUsesUniforms = (cmd.pipeline == PipelineType::Mesh ||
+		bool pipelineUsesUniforms = (cmd.pipeline == PipelineType::Mesh || cmd.pipeline == PipelineType::Transparent ||
 			cmd.pipeline == PipelineType::NodeGenerated ||
 			cmd.pipeline == PipelineType::Triangle);
 
@@ -226,7 +226,7 @@ namespace Nightbloom
 			);
 		}
 
-		bool pipelineUsesTextures = (cmd.pipeline == PipelineType::Mesh ||
+		bool pipelineUsesTextures = (cmd.pipeline == PipelineType::Mesh || cmd.pipeline == PipelineType::Transparent ||
 			cmd.pipeline == PipelineType::NodeGenerated);
 
 		if (!cmd.textures.empty() && m_DescriptorManager &&
