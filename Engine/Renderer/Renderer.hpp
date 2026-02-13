@@ -79,6 +79,7 @@ namespace Nightbloom
 
 		// Status
 		bool IsInitialized() const { return m_Initialized; }
+		bool IsFrameValid() const { return m_FrameValid; }
 
 		void WaitForIdle()
 		{
@@ -122,6 +123,7 @@ namespace Nightbloom
 		uint32_t m_Width = 0;
 		uint32_t m_Height = 0;
 		void* m_WindowHandle = nullptr;
+		bool m_FrameValid = false;
 
 		// Private initialization helpers
 		bool InitializeCore();

@@ -288,7 +288,8 @@ namespace Nightbloom
 		desc.width = imageData.width;
 		desc.height = imageData.height;
 		desc.format = imageData.channels == 4 ? TextureFormat::RGBA8 : TextureFormat::RGB8;
-		desc.mipLevels = 1; // TODO: Calculate mip levels
+		desc.mipLevels = 1; 
+		desc.generateMips = true;
 		desc.usage = TextureUsage::Sampled | TextureUsage::Transfer;
 
 		// Create VulkanTexture

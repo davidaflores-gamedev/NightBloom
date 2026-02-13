@@ -50,6 +50,8 @@ namespace Nightbloom
 		bool CreateImage();
 		bool CreateImageView();
 		bool CreateSampler();
+		void GenerateMipmaps(VkCommandBuffer cmd);
+		static uint32_t CalculateMipLevels(uint32_t width, uint32_t heights);
 
 		VkFormat ConvertToVkFormat(TextureFormat format);
 
@@ -74,5 +76,6 @@ namespace Nightbloom
 		uint32_t m_ArrayLayers = 1;
 		TextureFormat m_Format = TextureFormat::RGBA8;
 		TextureUsage m_Usage = TextureUsage::Sampled;
+		bool m_GenerateMips = false;
 	};
 } // namespace Nightbloom

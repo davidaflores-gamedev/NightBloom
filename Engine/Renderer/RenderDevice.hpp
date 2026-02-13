@@ -124,6 +124,7 @@ namespace Nightbloom
 		size_t initialDataSize = 0;
 		bool isRenderTarget = false; // is this necessary?
 		bool isDepthStencil = false;
+		bool generateMips = false;
 	};
 
 	struct ShaderDesc

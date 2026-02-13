@@ -31,10 +31,21 @@ namespace Nightbloom
 		m_Width = desc.width;
 		m_Height = desc.height;
 		m_Depth = desc.depth;
-		m_MipLevels = desc.mipLevels;
 		m_ArrayLayers = desc.arrayLayers;
 		m_Format = desc.format;
 		m_Usage = desc.usage;
+		m_GenerateMips = desc.generateMips;
+
+		// Calculate mip levels if generating mips
+		if (m_GenerateMips)
+		{
+			m_MipLevels = CalculateMipLevels(m_Width, m_Height);
+			LOG_INFO("Texture {}x{} will have {} mip levels", m_Width, m_Height, m_MipLevels);
+		}
+		else
+		{
+			m_MipLevels = desc.mipLevels;
+		}
 
 		// Create image through VMA
 		if (!CreateImage())
@@ -120,8 +131,16 @@ namespace Nightbloom
 							&region
 						);
 
-						// Transition to shader-read
-						TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+						//Generate mipmaps if requested
+						if (m_GenerateMips && m_MipLevels > 1)
+						{
+							GenerateMipmaps(commandBuffer);
+						}
+						else
+						{
+							// Transition to shader-read
+							TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+						}
 
 						cmd.End();
 						return true;
@@ -180,7 +199,14 @@ namespace Nightbloom
 			&region
 		);
 
-		TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		if (m_GenerateMips && m_MipLevels > 1)
+		{
+			GenerateMipmaps(commandBuffer);
+		}
+		else
+		{
+			TransitionLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		}
 
 		cmd.End();
 
@@ -324,6 +350,11 @@ namespace Nightbloom
 		// Always allow transfers for uploads
 		imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
+		if (m_GenerateMips && m_MipLevels > 1)
+		{
+			imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		}
+
 		m_ImageAllocation = m_MemoryManager->CreateImage(imageInfo);
 		return m_ImageAllocation != nullptr;
 	}
@@ -383,7 +414,7 @@ namespace Nightbloom
 		samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
 		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
 		samplerInfo.mipLodBias = 0.0f;
-		samplerInfo.minLod = 0.0f;
+		samplerInfo.minLod = 0;
 		samplerInfo.maxLod = (m_MipLevels > 0) ? float(m_MipLevels - 1) : 0.0f;
 		// test this samplerInfo.maxLod = static_cast<float>(m_MipLevels); 
 
@@ -393,6 +424,139 @@ namespace Nightbloom
 		}
 
 		return true;
+	}
+
+	void VulkanTexture::GenerateMipmaps(VkCommandBuffer cmd)
+	{
+		// Check if format supports linear filtering (required for blit)
+		VkFormatProperties formatProperties;
+		vkGetPhysicalDeviceFormatProperties(
+			m_Device->GetPhysicalDevice(),
+			ConvertToVkFormat(m_Format),
+			&formatProperties
+		);
+
+		if (!(formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+		{
+			LOG_WARN("Texture format does not support linear filtering for mipmap generation");
+			return;
+		}
+
+		VkImage image = m_ImageAllocation->image;
+		int32_t mipWidth = static_cast<int32_t>(m_Width);
+		int32_t mipHeight = static_cast<int32_t>(m_Height);
+
+		// Generate each mip level by blitting from the previous one
+		for (uint32_t i = 1; i < m_MipLevels; i++)
+		{
+			// Transition mip i-1 from TRANSFER_DST to TRANSFER_SRC
+			VkImageMemoryBarrier barrier{};
+			barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			barrier.image = image;
+			barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			barrier.subresourceRange.baseMipLevel = i - 1;
+			barrier.subresourceRange.levelCount = 1;
+			barrier.subresourceRange.baseArrayLayer = 0;
+			barrier.subresourceRange.layerCount = m_ArrayLayers;
+			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+			vkCmdPipelineBarrier(cmd,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				0,
+				0, nullptr,
+				0, nullptr,
+				1, &barrier);
+
+			//blit from mip i-1 to mip 1
+			VkImageBlit blit{};
+			blit.srcOffsets[0] = { 0, 0, 0 };
+			blit.srcOffsets[1] = { mipWidth, mipHeight, 1 };
+			blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			blit.srcSubresource.mipLevel = i - 1;
+			blit.srcSubresource.baseArrayLayer = 0;
+			blit.srcSubresource.layerCount = m_ArrayLayers;
+
+			// Calculate next mip dimensions ( halved, minimum 1)
+			int32_t nextWidth = mipWidth > 1 ? mipWidth / 2 : 1;
+			int32_t nextHeight = mipHeight > 1 ? mipHeight / 2 : 1;
+
+			blit.dstOffsets[0] = { 0, 0, 0 };
+			blit.dstOffsets[1] = { nextWidth, nextHeight, 1 };
+			blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			blit.dstSubresource.mipLevel = i;
+			blit.dstSubresource.baseArrayLayer = 0;
+			blit.dstSubresource.layerCount = m_ArrayLayers;
+
+			vkCmdBlitImage(cmd,
+				image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				1, &blit,
+				VK_FILTER_LINEAR);
+
+			// Transition mip i-1 from TRANSFER_SRC to SHADER_READ_ONLY
+			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			vkCmdPipelineBarrier(cmd,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				0,
+				0, nullptr,
+				0, nullptr,
+				1, &barrier);
+
+			// Update dimensions for next iteration
+			mipWidth = nextWidth;
+			mipHeight = nextHeight;
+		}
+
+		// Transition the last mip level to SHADER_READ_ONLY
+		VkImageMemoryBarrier barrier{};
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		barrier.image = image;
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		barrier.subresourceRange.baseMipLevel = m_MipLevels - 1;
+		barrier.subresourceRange.levelCount = 1;
+		barrier.subresourceRange.baseArrayLayer = 0;
+		barrier.subresourceRange.layerCount = m_ArrayLayers;
+		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		vkCmdPipelineBarrier(cmd,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &barrier);
+
+		// Update tracked layout
+		m_CurrentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		LOG_INFO("Generated {} mip levels for {}x{} texture", m_MipLevels, m_Width, m_Height);
+	}
+
+	uint32_t VulkanTexture::CalculateMipLevels(uint32_t width, uint32_t height)
+	{
+		// floor(log2(max(width, height))) + 1
+		uint32_t maxDim = std::max(width, height);
+		uint32_t levels = 1;
+		while (maxDim > 1)
+		{
+			maxDim >>= 1;
+			levels++;
+		}
+
+		return levels;
 	}
 
 	VkFormat VulkanTexture::ConvertToVkFormat(TextureFormat format)

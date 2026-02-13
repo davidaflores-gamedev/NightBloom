@@ -34,6 +34,7 @@ namespace Nightbloom
 		VkFormat GetImageFormat() const { return m_SwapchainImageFormat; }
 		VkExtent2D GetExtent() const { return m_SwapchainExtent; }
 		uint32_t GetImageCount() const { return static_cast<uint32_t>(m_SwapchainImages.size()); }
+		VkSurfaceKHR GetSurface() const { return m_Surface; }
 
 		const std::vector<VkImage>& GetImages() const { return m_SwapchainImages; }
 		const std::vector<VkImageView>& GetImageViews() const { return m_SwapchainImageViews; }

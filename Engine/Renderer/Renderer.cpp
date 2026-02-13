@@ -182,6 +182,8 @@ namespace Nightbloom
 
 	void Renderer::BeginFrame()
 	{
+		m_FrameValid = false;
+
 		if (!m_Initialized)
 		{
 			LOG_ERROR("Renderer not initialized");
@@ -238,6 +240,8 @@ namespace Nightbloom
 		{
 			m_UI->BeginFrame();
 		}
+
+		m_FrameValid = true;
 	}
 
 	void Renderer::EndFrame()
@@ -766,8 +770,33 @@ namespace Nightbloom
 		// Wait for device to be idle
 		m_Device->WaitForIdle();
 
+		// Get ACTUAL current size from the swapchain/surface, not stored values
+		VkSurfaceCapabilitiesKHR caps;
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+			vkDevice->GetPhysicalDevice(),
+			m_Swapchain->GetSurface(),
+			&caps
+		);
+
+		// If minimized (0x0), skip recreation
+		if (caps.currentExtent.width == 0 || caps.currentExtent.height == 0)
+		{
+			LOG_INFO("Window minimized, skipping swapchain recreation");
+			return false;
+		}
+
+		// Use the ACTUAL extent from surface capabilities
+		uint32_t newWidth = caps.currentExtent.width;
+		uint32_t newHeight = caps.currentExtent.height;
+
+		LOG_INFO("Recreating swapchain with width: {}, height: {}", newWidth, newHeight);
+
+		// Update stored dimensions
+		m_Width = newWidth;
+		m_Height = newHeight;
+
 		// Recreate swapchain
-		if (!m_Swapchain->RecreateSwapchain(m_Width, m_Height))
+		if (!m_Swapchain->RecreateSwapchain(newWidth, newHeight))
 		{
 			LOG_ERROR("Failed to recreate swapchain");
 			return false;

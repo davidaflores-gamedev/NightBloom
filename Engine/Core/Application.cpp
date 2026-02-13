@@ -90,6 +90,14 @@ namespace Nightbloom
 			
 			m_Input->BeginFrame();
 			m_Window->PollEvents();
+			m_Input->EndFrame();
+
+			if (m_Window->GetWidth() == 0 || m_Window->GetHeight() == 0)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+				continue;
+			}
+
 			// Use input
 			if (m_Input->IsPressed(InputCode::Key_P))
 				m_Renderer->TogglePipeline();
@@ -99,18 +107,20 @@ namespace Nightbloom
 				m_Renderer->ReloadShaders();
 			}
 
-			m_Input->EndFrame();
-
-
 			OnUpdate(deltaTime);
 			
 			// RENDER WITH THE NEW RENDERER
-			if (m_Renderer && m_Renderer->IsInitialized()) {
+			if (m_Renderer && m_Renderer->IsInitialized())
+			{
 				m_Renderer->BeginFrame();
-				m_Renderer->Clear(0.1f, 0.1f, 0.2f, 1.0f);  // Dark blue background
-				OnRender();  // Your app can override this
-				m_Renderer->FinalizeFrame();
-				m_Renderer->EndFrame();
+
+				if (m_Renderer->IsFrameValid())
+				{
+					m_Renderer->Clear(0.1f, 0.1f, 0.2f, 1.0f);  // Dark blue background
+					OnRender();  // Your app can override this
+					m_Renderer->FinalizeFrame();
+					m_Renderer->EndFrame();
+				}
 			}
 			
 			//m_Window->SwapBuffers();
