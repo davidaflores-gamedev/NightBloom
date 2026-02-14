@@ -27,6 +27,12 @@ namespace Nightbloom
 		desc.resizable = true;
 
 		m_Window = Window::Create(desc);
+
+		if (!m_Window)
+		{
+			LOG_ERROR("Failed to create window!");
+			throw std::runtime_error("Window creation failed");
+		}
 		
 		m_Input = std::make_unique<InputSystem>();
 

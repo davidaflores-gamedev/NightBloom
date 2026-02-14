@@ -12,6 +12,7 @@
 #include "Engine/Renderer/Renderer.hpp"
 #include "Engine/Renderer/PipelineInterface.hpp"  // ADD THIS for PipelineType enum
 #include "Engine/Renderer/DrawCommandSystem.hpp" // For DrawCommand and related types
+#include "Engine/Core/Scene.hpp"
 
 #include <glm/glm.hpp> // ToDo: remove this if reg mathclass is better
 
@@ -48,8 +49,6 @@ namespace Nightbloom
 			return m_Renderer ? m_Renderer->GetPipelineManager() : nullptr;
 		}
 
-		//TestScene* GetScene() const { return m_Scene.get(); }
-		//void SetScene(std::unique_ptr<TestScene> scene) { m_Scene = std::move(scene); }
 		//MeshDrawable* GetTestCube() const { return m_TestCube.get(); }
 		//void SetTestCube(std::unique_ptr<MeshDrawable> cube) { m_TestCube = std::move(cube); }
 		//
@@ -59,8 +58,6 @@ namespace Nightbloom
 		//void SetProjectionMatrix(const glm::mat4& proj) { m_ProjectionMatrix = proj; }
 
 	public:
-		// Scene management
-		std::unique_ptr<TestScene> m_Scene;
 
 		// Camera
 		glm::mat4 m_ViewMatrix;

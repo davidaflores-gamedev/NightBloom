@@ -65,6 +65,10 @@ namespace Nightbloom
 		void SetScale(const glm::vec3& scale);
 		void SetScale(float uniformScale);
 
+		glm::vec3 GetPosition() const { return m_Position; }
+		glm::vec3 GetRotation() const { return m_Rotation; }
+		glm::vec3 GetScale() const { return m_Scale; }
+
 		// Bounds (world space, considering transform)
 		glm::vec3 GetBoundsMin() const { return m_BoundsMin; }
 		glm::vec3 GetBoundsMax() const { return m_BoundsMax; }

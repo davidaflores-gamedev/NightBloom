@@ -13,11 +13,14 @@ namespace Nightbloom
 		// Set up pipeline names for debugging
 		m_PipelineNames[PipelineType::Triangle] = "Triangle";
 		m_PipelineNames[PipelineType::Mesh] = "Mesh";
+		m_PipelineNames[PipelineType::Transparent] = "Transparent";       // ADD THIS LINE
 		m_PipelineNames[PipelineType::Shadow] = "Shadow";
 		m_PipelineNames[PipelineType::Skybox] = "Skybox";
 		m_PipelineNames[PipelineType::Volumetric] = "Volumetric";
 		m_PipelineNames[PipelineType::PostProcess] = "PostProcess";
 		m_PipelineNames[PipelineType::Compute] = "Compute";
+		m_PipelineNames[PipelineType::NodeGenerated] = "NodeGenerated";   // ADD THIS LINE
+
 
 		LOG_INFO("VulkanPipelineManager initialized");
 		return true;
