@@ -27,6 +27,7 @@ namespace Nightbloom
 		// Layout creation
 		VkDescriptorSetLayout CreateTextureSetLayout();
 		VkDescriptorSetLayout CreateUniformSetLayout();
+		VkDescriptorSetLayout CreateLightingSetLayout();
 
 		// Per-frame descriptor sets
 		VkDescriptorSet AllocateTextureSet(uint32_t frameIndex);
@@ -42,6 +43,10 @@ namespace Nightbloom
 		VkDescriptorSetLayout GetUniformSetLayout() const { return m_UniformSetLayout; }
 		VkDescriptorSet GetUniformDescriptorSet(uint32_t frameIndex) { return m_UniformDescriptorSets[frameIndex]; }
 
+		VkDescriptorSet AllocateLightingSet(uint32_t frameIndex);
+		void UpdateLightingSet(uint32_t frameIndex, VkBuffer buffer, size_t size);
+		VkDescriptorSetLayout GetLightingSetLayout() const { return m_LightingSetLayout; }
+		VkDescriptorSet GetLightingDescriptorSet(uint32_t frameIndex) { return m_LightingDescriptorSets[frameIndex]; }
 
 	private:
 		VulkanDevice* m_Device = nullptr;
@@ -50,9 +55,11 @@ namespace Nightbloom
 		// Layouts
 		VkDescriptorSetLayout m_TextureSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_UniformSetLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_LightingSetLayout = VK_NULL_HANDLE;
 
 		// Per-frame descriptor sets
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_TextureDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_UniformDescriptorSets{};
+		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_LightingDescriptorSets{};
 	};
 }

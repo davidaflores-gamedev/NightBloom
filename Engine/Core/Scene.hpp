@@ -8,6 +8,7 @@
 
 #include "Engine/Renderer/Model.hpp"
 #include "Engine/Renderer/DrawCommandSystem.hpp"
+#include "Engine/Renderer/Light.hpp"
 #include <glm/glm.hpp>
 #include <vector>
 #include <string>
@@ -117,6 +118,16 @@ namespace Nightbloom
 			return &m_Objects.back();
 		}
 
+		Light* AddLight(const std::string& name, LightType type = LightType::Directional)
+		{
+			Light light;
+			light.name = name;
+			light.type = type;
+			m_Lights.push_back(light);
+			return &m_Lights.back();
+		}
+
+
 		void Select(int index)
 		{
 			m_SelectedIndex = (index >= 0 && index < static_cast<int>(m_Objects.size()))
@@ -150,9 +161,18 @@ namespace Nightbloom
 		const std::vector<SceneObject>& GetObjects() const { return m_Objects; }
 		size_t GetObjectCount() const { return m_Objects.size(); }
 
+		std::vector<Light>& GetLights() { return m_Lights; }
+		const std::vector<Light>& GetLights() const { return m_Lights; }
+		size_t GetLightCount() const { return m_Lights.size(); }
+
 		SceneObject* GetObject(size_t index)
 		{
 			return index < m_Objects.size() ? &m_Objects[index] : nullptr;
+		}
+
+		Light* GetLight(size_t index)
+		{
+			return index < m_Lights.size() ? &m_Lights[index] : nullptr;
 		}
 
 		// Build draw list from all visible objects
@@ -168,6 +188,26 @@ namespace Nightbloom
 					}
 				}
 			}
+		}
+
+		// Build GPU-ready lighting data from all enabled lights
+		SceneLightingData BuildLightingData() const
+		{
+			SceneLightingData data;
+			int count = 0;
+
+			for (const auto& light : m_Lights)
+			{
+				if (!light.enabled) continue;
+				if (count >= static_cast<int>(MAX_LIGHTS)) break;
+
+				data.lights[count] = light.ToGPUData();
+				count++;
+			}
+
+			data.numLights = count;
+			// ambient is already defaulted in SceneLightingData
+			return data;
 		}
 
 		void Update(float deltaTime)
@@ -204,6 +244,14 @@ namespace Nightbloom
 			}
 		}
 
+		void RemoveLight(size_t index)
+		{
+			if (index < m_Lights.size())
+			{
+				m_Lights.erase(m_Lights.begin() + index);
+			}
+		}
+
 		void Clear()
 		{
 			m_Objects.clear();
@@ -212,6 +260,7 @@ namespace Nightbloom
 
 	private:
 		std::vector<SceneObject> m_Objects;
+		std::vector<Light> m_Lights;
 		int m_SelectedIndex = -1;
 	};
 

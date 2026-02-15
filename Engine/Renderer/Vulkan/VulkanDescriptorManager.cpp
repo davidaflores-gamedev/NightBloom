@@ -79,6 +79,25 @@ namespace Nightbloom
 			}
 		}
 
+		// Create lighting set layout
+		m_LightingSetLayout = CreateLightingSetLayout();
+		if (m_LightingSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create lighting descriptor set layout");
+			return false;
+		}
+
+		// Allocate lighting descriptor sets for each frame
+		for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+		{
+			m_LightingDescriptorSets[i] = AllocateLightingSet(i);
+			if (m_LightingDescriptorSets[i] == VK_NULL_HANDLE)
+			{
+				LOG_ERROR("Failed to allocate lighting descriptor set for frame {}", i);
+				return false;
+			}
+		}
+
 		LOG_INFO("VulkanDescriptorManager initialized successfully");
 		return true;
 	}
@@ -105,6 +124,12 @@ namespace Nightbloom
 		{
 			vkDestroyDescriptorSetLayout(device, m_UniformSetLayout, nullptr);
 			m_UniformSetLayout = VK_NULL_HANDLE;
+		}
+
+		if (m_LightingSetLayout != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorSetLayout(device, m_LightingSetLayout, nullptr);
+			m_LightingSetLayout = VK_NULL_HANDLE;
 		}
 
 		if (m_DescriptorPool != VK_NULL_HANDLE)
@@ -153,6 +178,30 @@ namespace Nightbloom
 		VkDescriptorSetLayout layout;
 		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
 		{
+			return VK_NULL_HANDLE;
+		}
+
+		return layout;
+	}
+
+	VkDescriptorSetLayout VulkanDescriptorManager::CreateLightingSetLayout()
+	{
+		// Single UBO binding for scene lighting data
+		VkDescriptorSetLayoutBinding lightingBinding{};
+		lightingBinding.binding = 0;
+		lightingBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		lightingBinding.descriptorCount = 1;
+		lightingBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;  // Lighting calcs are in fragment shader
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &lightingBinding;
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create lighting descriptor set layout");
 			return VK_NULL_HANDLE;
 		}
 
@@ -245,6 +294,41 @@ namespace Nightbloom
 		VkWriteDescriptorSet descriptorWrite{};
 		descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		descriptorWrite.dstSet = m_UniformDescriptorSets[frameIndex];
+		descriptorWrite.dstBinding = 0;
+		descriptorWrite.dstArrayElement = 0;
+		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		descriptorWrite.descriptorCount = 1;
+		descriptorWrite.pBufferInfo = &bufferInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
+	}
+	VkDescriptorSet VulkanDescriptorManager::AllocateLightingSet(uint32_t frameIndex)
+	{
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_LightingSetLayout;
+
+		VkDescriptorSet descriptorSet;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &descriptorSet) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate lighting descriptor set for frame {}", frameIndex);
+			return VK_NULL_HANDLE;
+		}
+
+		return descriptorSet;
+	}
+	void VulkanDescriptorManager::UpdateLightingSet(uint32_t frameIndex, VkBuffer buffer, size_t size)
+	{
+		VkDescriptorBufferInfo bufferInfo{};
+		bufferInfo.buffer = buffer;
+		bufferInfo.offset = 0;
+		bufferInfo.range = size;
+
+		VkWriteDescriptorSet descriptorWrite{};
+		descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descriptorWrite.dstSet = m_LightingDescriptorSets[frameIndex];
 		descriptorWrite.dstBinding = 0;
 		descriptorWrite.dstArrayElement = 0;
 		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;

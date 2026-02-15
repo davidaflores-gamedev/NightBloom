@@ -220,13 +220,22 @@ namespace Nightbloom
 		m_CurrentFrameData.view = m_ViewMatrix;
 		m_CurrentFrameData.proj = m_ProjectionMatrix;
 		m_CurrentFrameData.time.x = m_TotalTime;  // You'll need to track time
-		m_CurrentFrameData.cameraPos = glm::vec4(0.0f);  // Set camera position when you have it
+		m_CurrentFrameData.cameraPos = glm::vec4(m_CameraPosition, 1.0f);  // Set camera position when you have it
 
+		// Update uniform data uniform buffer
 		void* mapped = m_FrameUniforms[frameIndex]->GetPersistentMappedPtr();
 		if (mapped)
 		{
 			memcpy(mapped, &m_CurrentFrameData, sizeof(FrameUniformData));
 			m_FrameUniforms[frameIndex]->Flush();
+		}
+
+		// Update lighting data uniform buffer
+		void* lightMapped = m_LightingUniforms[frameIndex]->GetPersistentMappedPtr();
+		if (lightMapped)
+		{
+			memcpy(lightMapped, &m_CurrentLightingData, sizeof(SceneLightingData));
+			m_LightingUniforms[frameIndex]->Flush();
 		}
 
 		// Clear draw list for new frame
@@ -570,7 +579,28 @@ namespace Nightbloom
 		}
 		LOG_INFO("Frame uniform buffers created");
 
+		// Create lighting uniform buffers for each frame in flight
+		LOG_INFO("Creating lighting uniform buffers");
+		for (uint32_t i = 0; i < 2; ++i)
+		{
+			std::string bufferName = "LightingUniform_" + std::to_string(i);
+			m_LightingUniforms[i] = m_Resources->CreateUniformBuffer(
+				bufferName,
+				sizeof(SceneLightingData)
+			);
 
+			if (!m_LightingUniforms[i])
+			{
+				LOG_ERROR("Failed to create lighting uniform buffer for frame {}", i);
+				return false;
+			}
+
+			// Update descriptor set with this buffer
+			m_DescriptorManager->UpdateLightingSet(i,
+				m_LightingUniforms[i]->GetBuffer(),
+				sizeof(SceneLightingData));
+		}
+		LOG_INFO("Lighting uniform buffers created");
 
 		// Create test geometry
 		if (!m_Resources->CreateTestCube())
@@ -676,6 +706,7 @@ namespace Nightbloom
 				config.pushConstantStages = ShaderStage::VertexFragment;
 				config.useUniformBuffer = true;
 				config.useTextures = true;
+				config.useLighting = true;
 
 				if (m_PipelineAdapter->CreatePipeline(PipelineType::Mesh, config))
 				{
@@ -709,6 +740,7 @@ namespace Nightbloom
 
 			transparentConfig.useUniformBuffer = true;
 			transparentConfig.useTextures = true;
+			transparentConfig.useLighting = true;
 			transparentConfig.pushConstantSize = sizeof(PushConstantData);
 			transparentConfig.pushConstantStages = ShaderStage::VertexFragment;
 

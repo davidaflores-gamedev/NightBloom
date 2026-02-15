@@ -160,6 +160,7 @@ namespace Nightbloom
 		// Replace descriptorSetCount with more specific flags
 		bool useTextures = false;        // Pipeline uses texture sampling
 		bool useUniformBuffer = false;   // Pipeline uses uniform buffers
+		bool useLighting = false;	// Pipeline uses scene lighting UBO (set 2)
 
 		// Optional: custom render pass name (backend will resolve)
 		std::string renderPassName;  // Empty = use default

@@ -9,6 +9,7 @@
 #include "Engine/Renderer/Vulkan/VulkanCommon.hpp"  // This should include all necessary Vulkan headers
 #include "Engine/Renderer/PipelineInterface.hpp"  // Interface for pipeline management
 #include "Engine/Renderer/DrawCommandSystem.hpp"
+#include "Engine/Renderer/Light.hpp"
 #include <array>
 #include <memory>
 #include <glm/glm.hpp>
@@ -54,6 +55,8 @@ namespace Nightbloom
 		void SubmitDrawList(const DrawList& drawList);
 		void SetViewMatrix(const glm::mat4& view) { m_ViewMatrix = view; }
 		void SetProjectionMatrix(const glm::mat4& proj) { m_ProjectionMatrix = proj; }
+		void SetCameraPosition(const glm::vec3& pos) { m_CameraPosition = pos; }
+		void SetLightingData(const SceneLightingData& data) { m_CurrentLightingData = data; }
 
 		// Clear screen (for when draw list is empty)
 		void Clear(float r = 0.0f, float g = 0.0f, float b = 0.0f, float a = 1.0f);
@@ -108,11 +111,14 @@ namespace Nightbloom
 		DrawList m_FrameDrawList;
 		glm::mat4 m_ViewMatrix = glm::mat4(1.0f);
 		glm::mat4 m_ProjectionMatrix = glm::mat4(1.0f);
+		glm::vec3 m_CameraPosition = glm::vec3(0.0f);
 		uint32_t m_CurrentImageIndex = 0;
 		glm::vec4 m_ClearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
 		std::array<VulkanBuffer*, 2> m_FrameUniforms;  // 2 = MAX_FRAMES_IN_FLIGHT
 		FrameUniformData m_CurrentFrameData;
+		std::array<VulkanBuffer*, 2> m_LightingUniforms{};
+		SceneLightingData m_CurrentLightingData;
 		float m_TotalTime = 0.0f;  // Track time for shaders
 
 		// Testing state (temporary)

@@ -242,6 +242,7 @@ namespace Nightbloom
 			);
 		}
 
+		// --- Bind texture descriptor set (set 1) ---
 		bool pipelineUsesTextures = (cmd.pipeline == PipelineType::Mesh || cmd.pipeline == PipelineType::Transparent ||
 			cmd.pipeline == PipelineType::NodeGenerated);
 
@@ -270,6 +271,25 @@ namespace Nightbloom
 			{
 				LOG_WARN("Texture has no descriptor set - texture may not have been properly initialized");
 			}
+		}
+
+		// --- Bind lighting descriptor set (set 2) ---
+		bool pipelineUsesLighting = (cmd.pipeline == PipelineType::Mesh ||
+			cmd.pipeline == PipelineType::Transparent);
+
+		if (pipelineUsesLighting && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
+		{
+			VkDescriptorSet lightingSet = m_DescriptorManager->GetLightingDescriptorSet(bufferIndex);
+			vkCmdBindDescriptorSets(
+				commandBuffer,
+				VK_PIPELINE_BIND_POINT_GRAPHICS,
+				m_CurrentPipelineLayout,
+				2,  // set 2 for lighting
+				1,
+				&lightingSet,
+				0,
+				nullptr
+			);
 		}
 
 		// Set push constants if needed

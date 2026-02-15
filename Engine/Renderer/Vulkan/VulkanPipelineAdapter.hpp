@@ -203,6 +203,12 @@ namespace Nightbloom
 				vkConfig.descriptorSetLayouts.push_back(textureLayout);
 			}
 
+			if (config.useLighting && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout lightingLayout = m_DescriptorManager->GetLightingSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(lightingLayout);
+			}
+
 			// TODO: Handle descriptor set layouts based on descriptorSetCount
 			// For now, leave empty
 
