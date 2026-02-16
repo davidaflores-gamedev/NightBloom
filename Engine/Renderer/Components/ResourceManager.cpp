@@ -538,6 +538,96 @@ namespace Nightbloom
 		return nullptr;
 	}
 
+	bool ResourceManager::CreateGroundPlane(float size, float uvTile)
+	{
+		// A flat quad on the XZ plane at y = 0
+ // Normal points up (+Y), UVs tile for texture repetition
+		float half = size * 0.5f;
+
+		std::vector<VertexPNT> vertices = {
+			// position                    normal              texCoord
+			{{ -half, 0.0f, -half },  { 0.0f, 1.0f, 0.0f },  { 0.0f,    0.0f    }},
+			{{  half, 0.0f, -half },  { 0.0f, 1.0f, 0.0f },  { uvTile,  0.0f    }},
+			{{  half, 0.0f,  half },  { 0.0f, 1.0f, 0.0f },  { uvTile,  uvTile  }},
+			{{ -half, 0.0f,  half },  { 0.0f, 1.0f, 0.0f },  { 0.0f,    uvTile  }},
+		};
+
+		std::vector<uint32_t> indices = {
+			0, 2, 1,
+			0, 3, 2
+		};
+
+		// Create vertex buffer
+		VkDeviceSize vertexBufferSize = sizeof(VertexPNT) * vertices.size();
+		VulkanBuffer* vertexBuffer = CreateVertexBuffer(
+			"GroundPlaneVertices",
+			vertexBufferSize,
+			false  // Device local
+		);
+
+		if (!vertexBuffer)
+		{
+			LOG_ERROR("Failed to create ground plane vertex buffer");
+			return false;
+		}
+
+		if (!vertexBuffer->UploadData(vertices.data(), vertexBufferSize, 0, m_TransferCommandPool.get()))
+		{
+			LOG_ERROR("Failed to upload ground plane vertex data");
+			DestroyBuffer("GroundPlaneVertices");
+			return false;
+		}
+
+		// Create index buffer
+		VkDeviceSize indexBufferSize = sizeof(uint32_t) * indices.size();
+		VulkanBuffer* indexBuffer = CreateIndexBuffer(
+			"GroundPlaneIndices",
+			indexBufferSize,
+			false
+		);
+
+		if (!indexBuffer)
+		{
+			LOG_ERROR("Failed to create ground plane index buffer");
+			DestroyBuffer("GroundPlaneVertices");
+			return false;
+		}
+
+		if (!indexBuffer->UploadData(indices.data(), indexBufferSize, 0, m_TransferCommandPool.get()))
+		{
+			LOG_ERROR("Failed to upload ground plane index data");
+			DestroyBuffer("GroundPlaneVertices");
+			DestroyBuffer("GroundPlaneIndices");
+			return false;
+		}
+
+		m_GroundPlaneIndexCount = static_cast<uint32_t>(indices.size());
+
+		LOG_INFO("Created ground plane: {}x{} units, UV tiling {}x{}",
+			size, size, uvTile, uvTile);
+		return true;
+	}
+
+	Buffer* ResourceManager::GetGroundPlaneVertexBuffer() const
+	{
+		auto it = m_Buffers.find("GroundPlaneVertices");
+		if (it != m_Buffers.end())
+		{
+			return static_cast<Buffer*>(it->second.get());
+		}
+		return nullptr;
+	}
+
+	Buffer* ResourceManager::GetGroundPlaneIndexBuffer() const
+	{
+		auto it = m_Buffers.find("GroundPlaneIndices");
+		if (it != m_Buffers.end())
+		{
+			return static_cast<Buffer*>(it->second.get());
+		}
+		return nullptr;
+	}
+
 	bool ResourceManager::CreateDefaultTextures()
 	{
 		LOG_INFO("Creating default textures");

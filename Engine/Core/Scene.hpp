@@ -132,6 +132,7 @@ namespace Nightbloom
 		{
 			m_SelectedIndex = (index >= 0 && index < static_cast<int>(m_Objects.size()))
 				? index : -1;
+			m_SelectedLightIndex = -1;
 		}
 
 		void Deselect() { m_SelectedIndex = -1; }
@@ -154,6 +155,37 @@ namespace Nightbloom
 				return &m_Objects[m_SelectedIndex];
 			}
 			return nullptr;
+		}
+
+		// ADD AFTER:
+		void SelectLight(int index)
+		{
+			m_SelectedLightIndex = (index >= 0 && index < static_cast<int>(m_Lights.size()))
+				? index : -1;
+			// Deselect object when selecting a light
+			m_SelectedIndex = -1;
+		}
+
+		void DeselectLight() { m_SelectedLightIndex = -1; }
+
+		int GetSelectedLightIndex() const { return m_SelectedLightIndex; }
+
+		Light* GetSelectedLight()
+		{
+			if (m_SelectedLightIndex >= 0 && m_SelectedLightIndex < static_cast<int>(m_Lights.size()))
+			{
+				return &m_Lights[m_SelectedLightIndex];
+			}
+			return nullptr;
+		}
+
+		glm::vec3 GetAmbientColor() const { return m_AmbientColor; }
+		float GetAmbientIntensity() const { return m_AmbientIntensity; }
+
+		void SetAmbient(const glm::vec3& color, float intensity)
+		{
+			m_AmbientColor = color;
+			m_AmbientIntensity = intensity;
 		}
 
 		// Iteration
@@ -206,7 +238,8 @@ namespace Nightbloom
 			}
 
 			data.numLights = count;
-			// ambient is already defaulted in SceneLightingData
+			data.ambient = glm::vec4(m_AmbientColor, m_AmbientIntensity);
+
 			return data;
 		}
 
@@ -262,6 +295,9 @@ namespace Nightbloom
 		std::vector<SceneObject> m_Objects;
 		std::vector<Light> m_Lights;
 		int m_SelectedIndex = -1;
+		int m_SelectedLightIndex = -1;
+		glm::vec3 m_AmbientColor = glm::vec3(0.03f, 0.03f, 0.05f);
+		float m_AmbientIntensity = 1.0f;
 	};
 
 } // namespace Nightbloom

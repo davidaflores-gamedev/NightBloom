@@ -66,6 +66,10 @@ namespace Nightbloom
 		Buffer* GetTestIndexBuffer() const;
 		uint32_t GetTestIndexCount() const;
 
+		Buffer* GetGroundPlaneVertexBuffer() const;
+		Buffer* GetGroundPlaneIndexBuffer() const;
+		uint32_t GetGroundPlaneIndexCount() const;
+
 		void TestShaderClass();
 
 		bool LoadShaders();

@@ -74,6 +74,12 @@ namespace Nightbloom
 		Buffer* GetTestIndexBuffer() const;
 		uint32_t GetTestIndexCount() const { return m_TestIndexCount; }
 
+		bool CreateGroundPlane(float size = 20.0f, float uvTile = 10.0f);
+		Buffer* GetGroundPlaneVertexBuffer() const;
+		Buffer* GetGroundPlaneIndexBuffer() const;
+		uint32_t GetGroundPlaneIndexCount() const { return m_GroundPlaneIndexCount; }
+
+
 		bool CreateDefaultTextures();
 
 		// Resource statistics
@@ -96,6 +102,7 @@ namespace Nightbloom
 
 		// Test resources (temporary)
 		uint32_t m_TestIndexCount = 0;
+		uint32_t m_GroundPlaneIndexCount = 0;
 
 		// Prevent copying
 		ResourceManager(const ResourceManager&) = delete;

@@ -357,6 +357,24 @@ namespace Nightbloom
 		return m_Resources->GetTestIndexCount();
 	}
 
+	Buffer* Renderer::GetGroundPlaneVertexBuffer() const
+	{
+		if (!m_Resources) return nullptr;
+		return m_Resources->GetGroundPlaneVertexBuffer();
+	}
+
+	Buffer* Renderer::GetGroundPlaneIndexBuffer() const
+	{
+		if (!m_Resources) return nullptr;
+		return m_Resources->GetGroundPlaneIndexBuffer();
+	}
+
+	uint32_t Renderer::GetGroundPlaneIndexCount() const
+	{
+		if (!m_Resources) return 0;
+		return m_Resources->GetGroundPlaneIndexCount();
+	}
+
 	void Renderer::TestShaderClass()
 	{
 		// Load a shader file
@@ -607,6 +625,12 @@ namespace Nightbloom
 		{
 			LOG_ERROR("Failed to create test geometry");
 			return false;
+		}
+
+		if (!m_Resources->CreateGroundPlane(20.0f, 10.0f))
+		{
+			LOG_WARN("Failed to create ground plane");
+			// Non-fatal — continue without it
 		}
 
 		// Create test Textures
