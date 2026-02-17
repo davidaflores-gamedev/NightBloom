@@ -249,7 +249,7 @@ namespace Nightbloom
 		if (!cmd.textures.empty() && m_DescriptorManager &&
 			m_CurrentPipelineLayout != VK_NULL_HANDLE && pipelineUsesTextures)
 		{
-			// NEW: Use the texture's own descriptor set instead of updating a shared one
+			// Use the texture's own descriptor set instead of updating a shared one
 			VulkanTexture* vkTexture = static_cast<VulkanTexture*>(cmd.textures[0]);
 
 			if (vkTexture && vkTexture->HasDescriptorSet())
@@ -290,6 +290,26 @@ namespace Nightbloom
 				0,
 				nullptr
 			);
+		}
+
+		bool pipelineUsesShadowMap = (cmd.pipeline == PipelineType::Mesh);
+
+		if (pipelineUsesShadowMap && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
+		{
+			VkDescriptorSet shadowSet = m_DescriptorManager->GetShadowDescriptorSet(bufferIndex);
+			if (shadowSet != VK_NULL_HANDLE)
+			{
+				vkCmdBindDescriptorSets(
+					commandBuffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					m_CurrentPipelineLayout,
+					3,  // set 3 for shadow map
+					1,
+					&shadowSet,
+					0,
+					nullptr
+				);
+			}
 		}
 
 		// Set push constants if needed

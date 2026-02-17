@@ -42,6 +42,11 @@ namespace Nightbloom
 		bool depthWriteEnable = true;
 		VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS;
 
+		bool depthBiasEnable = false;
+		float depthBiasConstant = 0.0f;
+		float depthBiasSlope = 0.0f;
+		float depthBiasClamp = 0.0f;
+
 		// Blending
 		bool blendEnable = false;
 		VkBlendFactor srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -56,6 +61,9 @@ namespace Nightbloom
 
 		// Optional: render pass override (if different from default)
 		VkRenderPass renderPass = VK_NULL_HANDLE;
+
+		// NEW: Color attachment configuration (false for depth-only passes)
+		bool hasColorAttachment = true;
 	};
 
 	class VulkanPipelineManager

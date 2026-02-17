@@ -11,6 +11,7 @@
 #include "Engine/Renderer/Vulkan/VulkanPipeline.hpp"
 #include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include <vulkan/vulkan.h>
+#include "Engine/Core/Logger/logger.hpp"
 
 namespace Nightbloom
 {
@@ -151,8 +152,14 @@ namespace Nightbloom
 		{
 			m_VulkanManager = std::make_unique<VulkanPipelineManager>();
 			m_DescriptorManager = descriptorManager;
+			m_DefaultRenderPass = renderPass;
 
 			return m_VulkanManager->Initialize(device, renderPass, extent);
+		}
+
+		void SetShadowRenderPass(VkRenderPass shadowRenderPass)
+		{
+			m_ShadowRenderPass = shadowRenderPass;
 		}
 
 		bool CreatePipeline(PipelineType type, const PipelineConfig& config) override
@@ -190,6 +197,18 @@ namespace Nightbloom
 			vkConfig.pushConstantSize = config.pushConstantSize;
 			vkConfig.pushConstantStages = VulkanEnumConverter::ToVkShaderStages(config.pushConstantStages);
 
+			vkConfig.depthBiasEnable = config.depthBiasEnable;
+			vkConfig.depthBiasConstant = config.depthBiasConstant;
+			vkConfig.depthBiasSlope = config.depthBiasSlope;
+			vkConfig.depthBiasClamp = config.depthBiasClamp;
+
+			vkConfig.hasColorAttachment = config.hasColorAttachment;
+
+			if (type == PipelineType::Shadow && m_ShadowRenderPass != VK_NULL_HANDLE)
+			{
+				vkConfig.renderPass = m_ShadowRenderPass;
+			}
+
 			if (config.useUniformBuffer && m_DescriptorManager)
 			{
 				VkDescriptorSetLayout uniformLayout = m_DescriptorManager->GetUniformSetLayout();
@@ -209,8 +228,17 @@ namespace Nightbloom
 				vkConfig.descriptorSetLayouts.push_back(lightingLayout);
 			}
 
-			// TODO: Handle descriptor set layouts based on descriptorSetCount
-			// For now, leave empty
+			if (config.useShadowMap && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout shadowLayout = m_DescriptorManager->GetShadowSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(shadowLayout);
+			}
+
+			LOG_INFO("Creating pipeline with {} descriptor set layouts", vkConfig.descriptorSetLayouts.size());
+			for (size_t i = 0; i < vkConfig.descriptorSetLayouts.size(); ++i)
+			{
+				LOG_INFO("  Set {}: layout = {}", i, (void*)vkConfig.descriptorSetLayouts[i]);
+			}
 
 			bool success = m_VulkanManager->CreatePipeline(type, vkConfig);
 
@@ -278,6 +306,9 @@ namespace Nightbloom
 
 	private:
 		VulkanDescriptorManager* m_DescriptorManager = nullptr;
+		VkRenderPass m_DefaultRenderPass = VK_NULL_HANDLE;
+		VkRenderPass m_ShadowRenderPass = VK_NULL_HANDLE;
+
 
 		std::unique_ptr<VulkanPipelineManager> m_VulkanManager;
 		std::unordered_map<PipelineType, std::unique_ptr<VulkanPipeline>> m_Pipelines;

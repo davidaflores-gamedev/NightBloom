@@ -215,7 +215,10 @@ namespace Nightbloom
 		rasterizer.lineWidth = 1.0f;
 		rasterizer.cullMode = config.cullMode;
 		rasterizer.frontFace = config.frontFace;
-		rasterizer.depthBiasEnable = VK_FALSE;
+		rasterizer.depthBiasEnable = config.depthBiasEnable ? VK_TRUE : VK_FALSE;
+		rasterizer.depthBiasConstantFactor = config.depthBiasConstant;
+		rasterizer.depthBiasSlopeFactor = config.depthBiasSlope;
+		rasterizer.depthBiasClamp = config.depthBiasClamp;
 
 		// Multisampling
 		VkPipelineMultisampleStateCreateInfo multisampling{};
@@ -250,8 +253,17 @@ namespace Nightbloom
 		VkPipelineColorBlendStateCreateInfo colorBlending{};
 		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 		colorBlending.logicOpEnable = VK_FALSE;
-		colorBlending.attachmentCount = 1;
-		colorBlending.pAttachments = &colorBlendAttachment;
+		
+		if (config.hasColorAttachment)
+		{
+			colorBlending.attachmentCount = 1;
+			colorBlending.pAttachments = &colorBlendAttachment;
+		}
+		else
+		{
+			colorBlending.attachmentCount = 0;
+			colorBlending.pAttachments = nullptr;
+		}
 
 		std::vector<VkDynamicState> dynamicStates = {
 			VK_DYNAMIC_STATE_VIEWPORT,

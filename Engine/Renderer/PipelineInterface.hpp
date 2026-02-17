@@ -148,6 +148,12 @@ namespace Nightbloom
 		bool depthWriteEnable = true;
 		CompareOp depthCompareOp = CompareOp::GreaterOrEqual;  // Reverse-Z: near=1.0, far=0.0
 
+		// Depth bias for shadow mapping(reduces shadow acne)
+		bool depthBiasEnable = false;
+		float depthBiasConstant = 0.0f;
+		float depthBiasSlope = 0.0f;
+		float depthBiasClamp = 0.0f;
+
 		// Blending
 		bool blendEnable = false;
 		BlendFactor srcColorBlendFactor = BlendFactor::SrcAlpha;
@@ -161,6 +167,9 @@ namespace Nightbloom
 		bool useTextures = false;        // Pipeline uses texture sampling
 		bool useUniformBuffer = false;   // Pipeline uses uniform buffers
 		bool useLighting = false;	// Pipeline uses scene lighting UBO (set 2)
+		bool useShadowMap = false;  // Pipeline samples shadow map (set 3)
+
+		bool hasColorAttachment = true;  // False for depth-only passes (shadow)
 
 		// Optional: custom render pass name (backend will resolve)
 		std::string renderPassName;  // Empty = use default

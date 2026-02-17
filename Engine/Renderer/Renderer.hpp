@@ -6,8 +6,8 @@
 //------------------------------------------------------------------------------
 #pragma once
 
-#include "Engine/Renderer/Vulkan/VulkanCommon.hpp"  // This should include all necessary Vulkan headers
-#include "Engine/Renderer/PipelineInterface.hpp"  // Interface for pipeline management
+#include "Engine/Renderer/Vulkan/VulkanCommon.hpp"
+#include "Engine/Renderer/PipelineInterface.hpp"
 #include "Engine/Renderer/DrawCommandSystem.hpp"
 #include "Engine/Renderer/Light.hpp"
 #include <array>
@@ -23,7 +23,7 @@ namespace Nightbloom
 	class VulkanMemoryManager;
 	class VulkanPipelineAdapter;
 	class Buffer;
-	class UniformBuffer; // right now only vulkan equivalent exists
+	class UniformBuffer;
 	//class Shader;
 	class DrawList;
 	class IPipelineManager;
@@ -35,6 +35,7 @@ namespace Nightbloom
 	class ResourceManager;
 	class VulkanDescriptorManager;
 	class UIManager;
+	class ShadowMapManager;
 
 	class Renderer
 	{
@@ -84,6 +85,11 @@ namespace Nightbloom
 		void TogglePipeline();
 		void ReloadShaders();
 
+		// Shadow controls
+		bool IsShadowEnabled() const { return m_ShadowEnabled; }
+		void SetShadowEnabled(bool enabled) { m_ShadowEnabled = enabled; }
+		void SetShadowCenter(const glm::vec3& center) { m_ShadowCenter = center; }
+
 		// Status
 		bool IsInitialized() const { return m_Initialized; }
 		bool IsFrameValid() const { return m_FrameValid; }
@@ -110,6 +116,7 @@ namespace Nightbloom
 		std::unique_ptr<ResourceManager> m_Resources;
 		std::unique_ptr<VulkanDescriptorManager> m_DescriptorManager;
 		std::unique_ptr<UIManager> m_UI;
+		std::unique_ptr<ShadowMapManager> m_ShadowManager;
 
 		// Frame state
 		DrawList m_FrameDrawList;
@@ -119,10 +126,22 @@ namespace Nightbloom
 		uint32_t m_CurrentImageIndex = 0;
 		glm::vec4 m_ClearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
-		std::array<VulkanBuffer*, 2> m_FrameUniforms;  // 2 = MAX_FRAMES_IN_FLIGHT
+		// Camera uniform buffers (set 0 in main pass)
+		std::array<VulkanBuffer*, 2> m_FrameUniforms{};  // 2 = MAX_FRAMES_IN_FLIGHT
 		FrameUniformData m_CurrentFrameData;
+
+		// Lighting uniform buffers (set 2)
 		std::array<VulkanBuffer*, 2> m_LightingUniforms{};
 		SceneLightingData m_CurrentLightingData;
+
+		// Shadow uniform buffers (set 0 in shadow pass - light's view/proj)
+		std::array<VulkanBuffer*, 2> m_ShadowUniforms{};
+		FrameUniformData m_ShadowFrameData;
+
+		// Shadow state
+		bool m_ShadowEnabled = true;
+		glm::vec3 m_ShadowCenter = glm::vec3(0.0f);
+
 		float m_TotalTime = 0.0f;  // Track time for shaders
 
 		// Testing state (temporary)
@@ -139,9 +158,12 @@ namespace Nightbloom
 		bool InitializeCore();
 		bool InitializeComponents();
 		bool InitializePipelines();
+		bool InitializeShadowMapping();
 
 		// Helper methods
 		void RecordCommandBuffer(uint32_t frameIndex, uint32_t imageIndex);
+		void RecordShadowPass(uint32_t frameIndex);
+		void UpdateShadowMatrices();
 		bool HandleSwapchainResize();
 
 		// Prevent copying
