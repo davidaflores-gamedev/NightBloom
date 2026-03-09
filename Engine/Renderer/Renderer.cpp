@@ -18,6 +18,7 @@
 #include "Engine/Renderer/Components/RenderPassManager.hpp"
 #include "Engine/Renderer/Components/CommandRecorder.hpp"
 #include "Engine/Renderer/Components/ResourceManager.hpp"
+#include "Engine/Renderer/Components/ComputeDispatcher.hpp"
 #include "Engine/Renderer/Components/ShadowMapManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Engine/Renderer/Components/UIManager.hpp"
@@ -84,6 +85,13 @@ namespace Nightbloom
 			m_ShadowEnabled = false;
 		}
 
+		// Initialize compute support (optional - continues without if it fails)
+		if (!InitializeCompute())
+		{
+			LOG_WARN("Failed to initialize compute - continuing without compute support");
+			m_ComputeEnabled = false;
+		}
+
 		m_Initialized = true;
 
 		// End initialization timing
@@ -122,6 +130,8 @@ namespace Nightbloom
 
 		// Cleanup components in reverse order of initialization
 		VulkanDevice* vkDevice = static_cast<VulkanDevice*>(m_Device.get());
+
+		CleanupCompute();
 
 		if (m_ShadowManager)
 		{
@@ -428,6 +438,109 @@ namespace Nightbloom
 		{
 			LOG_ERROR("Failed to create test shader");
 		}
+	}
+
+	void Renderer::RunComputeTest()
+	{
+	}
+
+	void Renderer::PrintComputeTestResults()
+	{
+		if (!m_ComputeEnabled || !m_ComputeTestOutputBuffer)
+		{
+			LOG_WARN("Compute test not available");
+			return;
+		}
+
+		// Wait for GPU to finish
+		m_Device->WaitForIdle();
+
+		// Capture current time for verification (matches what was used in last dispatch)
+		float capturedTime = m_TotalTime;
+		float timeOffset = std::sin(capturedTime);
+
+		size_t bufferSize = COMPUTE_TEST_ELEMENT_COUNT * sizeof(float);
+
+		// Create a host-visible readback buffer
+		VulkanBuffer* readbackBuffer = m_Resources->CreateStorageBuffer(
+			"ComputeTestReadback",
+			bufferSize,
+			true  // Host visible for CPU read
+		);
+
+		if (!readbackBuffer)
+		{
+			LOG_ERROR("Failed to create readback buffer");
+			return;
+		}
+
+		// Copy GPU buffer to readback buffer
+		VulkanDevice* vkDevice = static_cast<VulkanDevice*>(m_Device.get());
+		VulkanSingleTimeCommand cmd(vkDevice, m_Resources->GetTransferCommandPool());
+
+		VkCommandBuffer cmdBuffer = cmd.Begin();
+
+		VkBufferCopy copyRegion{};
+		copyRegion.srcOffset = 0;
+		copyRegion.dstOffset = 0;
+		copyRegion.size = bufferSize;
+
+		vkCmdCopyBuffer(cmdBuffer,
+			m_ComputeTestOutputBuffer->GetBuffer(),
+			readbackBuffer->GetBuffer(),
+			1, &copyRegion);
+
+		cmd.End();
+
+		// Read results
+		void* mapped = readbackBuffer->Map();
+		if (mapped)
+		{
+			float* results = static_cast<float*>(mapped);
+
+			LOG_INFO("=== Compute Test Results ===");
+			LOG_INFO("Time: {:.3f}s, sin(time) offset: {:.3f}", capturedTime, timeOffset);
+			LOG_INFO("Formula: output[i] = input[i] * 2.0 + sin(time)");
+			LOG_INFO("");
+			LOG_INFO("First 8 values:");
+
+			bool success = true;
+			for (uint32_t i = 0; i < 8 && i < COMPUTE_TEST_ELEMENT_COUNT; ++i)
+			{
+				float input = static_cast<float>(i + 1);
+				float expected = input * 2.0f + timeOffset;
+				float actual = results[i];
+				float error = std::abs(actual - expected);
+
+				// Allow small floating point tolerance
+				bool match = error < 0.01f;
+
+				if (match)
+				{
+					LOG_INFO("  [{}]: {:.3f} (expected: {:.3f}) OK", i, actual, expected);
+				}
+				else
+				{
+					LOG_ERROR("  [{}]: {:.3f} (expected: {:.3f}) MISMATCH", i, actual, expected);
+					success = false;
+				}
+			}
+
+			LOG_INFO("");
+			if (success)
+			{
+				LOG_INFO("Compute test PASSED!");
+			}
+			else
+			{
+				LOG_ERROR("Compute test FAILED!");
+			}
+
+			readbackBuffer->Unmap();
+		}
+
+		// Clean up readback buffer
+		m_Resources->DestroyBuffer("ComputeTestReadback");
 	}
 
 	bool Renderer::LoadShaders()
@@ -835,6 +948,107 @@ namespace Nightbloom
 		return true;
 	}
 
+	bool Renderer::InitializeCompute()
+	{
+		LOG_INFO("=== Initializing Compute Support ===");
+
+		VulkanDevice* vkDevice = static_cast<VulkanDevice*>(m_Device.get());
+
+		// Create compute dispatcher
+		m_ComputeDispatcher = std::make_unique<ComputeDispatcher>();
+		if (!m_ComputeDispatcher->Initialize(vkDevice, m_PipelineAdapter->GetVulkanManager()))
+		{
+			LOG_ERROR("Failed to initialize compute dispatcher");
+			return false;
+		}
+
+		// Create compute pipeline - go directly to VulkanPipelineManager
+		// since we need to specify custom descriptor set layouts
+		{
+			VulkanPipelineConfig vkConfig;
+			vkConfig.computeShaderPath = "MultiplyByTwo.comp";
+			vkConfig.pushConstantSize = sizeof(ComputePushConstants);
+			vkConfig.descriptorSetLayouts = { m_DescriptorManager->GetComputeStorageSetLayout() };
+
+			if (!m_PipelineAdapter->GetVulkanManager()->CreatePipeline(PipelineType::Compute, vkConfig))
+			{
+				LOG_WARN("Failed to create compute pipeline - continuing without compute");
+				return false;
+			}
+			LOG_INFO("Compute pipeline created successfully");
+		}
+
+		// Create test buffers using ResourceManager
+		LOG_INFO("Creating compute test buffers");
+
+		size_t bufferSize = COMPUTE_TEST_ELEMENT_COUNT * sizeof(float);
+
+		// Input buffer - device local storage buffer
+		m_ComputeTestInputBuffer = m_Resources->CreateStorageBuffer(
+			"ComputeTestInput",
+			bufferSize,
+			false  // GPU only
+		);
+
+		if (!m_ComputeTestInputBuffer)
+		{
+			LOG_ERROR("Failed to create compute test input buffer");
+			return false;
+		}
+
+		// Output buffer - device local storage buffer  
+		m_ComputeTestOutputBuffer = m_Resources->CreateStorageBuffer(
+			"ComputeTestOutput",
+			bufferSize,
+			false  // GPU only
+		);
+
+		if (!m_ComputeTestOutputBuffer)
+		{
+			LOG_ERROR("Failed to create compute test output buffer");
+			return false;
+		}
+
+		// Upload initial test data (1.0, 2.0, 3.0, ...)
+		{
+			std::vector<float> testData(COMPUTE_TEST_ELEMENT_COUNT);
+			for (uint32_t i = 0; i < COMPUTE_TEST_ELEMENT_COUNT; ++i)
+			{
+				testData[i] = static_cast<float>(i + 1);
+			}
+
+			// VulkanBuffer::UploadData handles staging internally
+			if (!m_ComputeTestInputBuffer->UploadData(
+				testData.data(),
+				bufferSize,
+				0,
+				m_Resources->GetTransferCommandPool()))
+			{
+				LOG_ERROR("Failed to upload compute test data");
+				return false;
+			}
+			LOG_INFO("Uploaded {} floats to compute input buffer", COMPUTE_TEST_ELEMENT_COUNT);
+		}
+
+		// Allocate and update descriptor set
+		m_ComputeTestDescriptorSet = m_DescriptorManager->AllocateComputeStorageSet();
+		if (m_ComputeTestDescriptorSet == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to allocate compute test descriptor set");
+			return false;
+		}
+
+		m_DescriptorManager->UpdateComputeStorageSet(
+			m_ComputeTestDescriptorSet,
+			m_ComputeTestInputBuffer->GetBuffer(), bufferSize,
+			m_ComputeTestOutputBuffer->GetBuffer(), bufferSize
+		);
+
+		m_ComputeEnabled = true;
+		LOG_INFO("Compute support initialized successfully");
+		return true;
+	}
+
 	bool Renderer::InitializeShadowMapping()
 	{
 		LOG_INFO("=== Initializing Shadow Mapping ===");
@@ -845,10 +1059,10 @@ namespace Nightbloom
 		m_ShadowManager = std::make_unique<ShadowMapManager>();
 
 		ShadowMapConfig shadowMapConfig;  // Renamed from shadowConfig to avoid shadowing
-		shadowMapConfig.resolution = 2048;
+		shadowMapConfig.resolution = 4096;
 		shadowMapConfig.depthFormat = VK_FORMAT_D32_SFLOAT;
-		shadowMapConfig.depthBiasConstant = 1.25f;
-		shadowMapConfig.depthBiasSlope = 1.75f;
+		shadowMapConfig.depthBiasConstant = .25f;
+		shadowMapConfig.depthBiasSlope = .25f;
 		shadowMapConfig.enablePCF = true;
 
 		if (!m_ShadowManager->Initialize(vkDevice, m_MemoryManager.get(),
@@ -924,6 +1138,17 @@ namespace Nightbloom
 		m_Commands->ResetCommandBuffer(frameIndex);
 		m_Commands->BeginCommandBuffer(frameIndex);
 
+		// =========================================================================
+		// COMPUTE PASS - Runs BEFORE any render passes (outside render pass)
+		// =========================================================================
+		if (m_ComputeEnabled && m_ComputeDispatcher)
+		{
+			RecordComputePass(frameIndex);
+		}
+
+		// =========================================================================
+		// SHADOW PASS
+		// =========================================================================
 		if (m_ShadowEnabled && m_ShadowManager)
 		{
 			RecordShadowPass(frameIndex);
@@ -960,6 +1185,47 @@ namespace Nightbloom
 		// End render pass and command buffer
 		m_Commands->EndRenderPass(frameIndex);
 		m_Commands->EndCommandBuffer(frameIndex);
+	}
+
+	void Renderer::RecordComputePass(uint32_t frameIndex)
+	{
+		if (!m_ComputeEnabled || !m_ComputeDispatcher)
+		{
+			return;
+		}
+
+		VkCommandBuffer cmd = m_Commands->GetCommandBuffer(frameIndex);
+
+		// Get compute pipeline and layout
+		VkPipeline computePipeline = m_PipelineAdapter->GetVulkanManager()->GetPipeline(PipelineType::Compute);
+		VkPipelineLayout computeLayout = m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::Compute);
+
+		if (computePipeline == VK_NULL_HANDLE || computeLayout == VK_NULL_HANDLE)
+		{
+			LOG_WARN("Compute pipeline or layout is null");
+			return;
+		}
+
+		// Bind compute pipeline
+		m_ComputeDispatcher->BindPipeline(cmd, computePipeline);
+
+		// Bind descriptor set with our storage buffers
+		m_ComputeDispatcher->BindDescriptorSet(cmd, computeLayout, 0, m_ComputeTestDescriptorSet);
+
+		// Set push constants with current time
+		ComputePushConstants pushData;
+		pushData.dataSize = COMPUTE_TEST_ELEMENT_COUNT;
+		pushData.time = m_TotalTime;  // Use the renderer's time value
+
+		m_ComputeDispatcher->PushConstants(cmd, computeLayout, &pushData, sizeof(pushData));
+
+		// Dispatch compute work
+		// With local_size_x = 64, we need 1 workgroup for 64 elements
+		uint32_t groupCountX = ComputeDispatcher::CalculateGroupCount(COMPUTE_TEST_ELEMENT_COUNT, 64);
+		m_ComputeDispatcher->Dispatch(cmd, groupCountX, 1, 1);
+
+		// Barrier: ensure compute writes are visible before any graphics work
+		m_ComputeDispatcher->ComputeToGraphicsGlobalBarrier(cmd);
 	}
 
 	// =====================================================================
@@ -1123,6 +1389,29 @@ namespace Nightbloom
 		return true;
 	}
 
+	void Renderer::CleanupCompute()
+	{
+		if (m_ComputeDispatcher)
+		{
+			m_ComputeDispatcher->Cleanup();
+			m_ComputeDispatcher.reset();
+		}
+
+		// Buffers are owned by ResourceManager, destroy by name
+		if (m_Resources)
+		{
+			m_Resources->DestroyBuffer("ComputeTestInput");
+			m_Resources->DestroyBuffer("ComputeTestOutput");
+		}
+
+		m_ComputeTestInputBuffer = nullptr;
+		m_ComputeTestOutputBuffer = nullptr;
+		m_ComputeTestDescriptorSet = VK_NULL_HANDLE;
+
+		m_ComputeEnabled = false;
+		LOG_INFO("Compute resources cleaned up");
+	}
+
 	void Renderer::UpdateShadowMatrices()
 	{
 		if (!m_ShadowEnabled || m_CurrentLightingData.numLights == 0)
@@ -1139,11 +1428,11 @@ namespace Nightbloom
 			return;
 		}
 
-		float orthoSize = 25.0f;
+		float orthoSize = 10.0f;
 		float nearPlane = 0.1f;
 		float farPlane = 100.0f;
-		float bias = 0.001f;
-		float normalBias = 0.02f;
+		float bias = 0.0002f;
+		float normalBias = 0.05f;
 
 		// Get light direction from the light data
 		// primaryLight.position.xyz = direction light is SHINING (e.g., (0,-1,0) = down)

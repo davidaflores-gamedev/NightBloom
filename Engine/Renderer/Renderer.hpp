@@ -35,6 +35,7 @@ namespace Nightbloom
 	class ResourceManager;
 	class VulkanDescriptorManager;
 	class UIManager;
+	class ComputeDispatcher;
 	class ShadowMapManager;
 
 	class Renderer
@@ -72,6 +73,9 @@ namespace Nightbloom
 		uint32_t GetGroundPlaneIndexCount() const;
 
 		void TestShaderClass();
+
+		void RunComputeTest();
+		void PrintComputeTestResults();
 
 		bool LoadShaders();
 
@@ -116,6 +120,7 @@ namespace Nightbloom
 		std::unique_ptr<ResourceManager> m_Resources;
 		std::unique_ptr<VulkanDescriptorManager> m_DescriptorManager;
 		std::unique_ptr<UIManager> m_UI;
+		std::unique_ptr<ComputeDispatcher> m_ComputeDispatcher;
 		std::unique_ptr<ShadowMapManager> m_ShadowManager;
 
 		// Frame state
@@ -138,6 +143,20 @@ namespace Nightbloom
 		std::array<VulkanBuffer*, 2> m_ShadowUniforms{};
 		FrameUniformData m_ShadowFrameData;
 
+		//Compute support
+		bool m_ComputeEnabled = false;
+		VkDescriptorSet m_ComputeTestDescriptorSet = VK_NULL_HANDLE;
+		VulkanBuffer* m_ComputeTestInputBuffer;
+		VulkanBuffer* m_ComputeTestOutputBuffer;
+		static constexpr uint32_t COMPUTE_TEST_ELEMENT_COUNT = 64;
+
+		// Compute push constants
+		struct ComputePushConstants
+		{
+			uint32_t dataSize;
+			float time;
+		};
+
 		// Shadow state
 		bool m_ShadowEnabled = true;
 		glm::vec3 m_ShadowCenter = glm::vec3(0.0f);
@@ -158,13 +177,17 @@ namespace Nightbloom
 		bool InitializeCore();
 		bool InitializeComponents();
 		bool InitializePipelines();
+		bool InitializeCompute();
 		bool InitializeShadowMapping();
 
 		// Helper methods
 		void RecordCommandBuffer(uint32_t frameIndex, uint32_t imageIndex);
+		void RecordComputePass(uint32_t frameIndex);
 		void RecordShadowPass(uint32_t frameIndex);
 		void UpdateShadowMatrices();
 		bool HandleSwapchainResize();
+
+		void CleanupCompute();
 
 		// Prevent copying
 		Renderer(const Renderer&) = delete;

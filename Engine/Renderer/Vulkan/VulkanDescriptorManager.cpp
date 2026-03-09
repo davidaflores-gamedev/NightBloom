@@ -21,11 +21,13 @@ namespace Nightbloom
 		LOG_INFO("Initializing VulkanDescriptorManager");
 
 		// Create descriptor pool
-		std::array<VkDescriptorPoolSize, 2> poolSizes{};
+		std::array<VkDescriptorPoolSize, 3> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		poolSizes[0].descriptorCount = MAX_DESCRIPTOR_SETS;
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		poolSizes[1].descriptorCount = MAX_DESCRIPTOR_SETS;
+		poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		poolSizes[2].descriptorCount = MAX_DESCRIPTOR_SETS;
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -129,6 +131,14 @@ namespace Nightbloom
 			}
 		}
 
+		// Create compute storage layout
+		m_ComputeStorageSetLayout = CreateComputeStorageSetLayout();
+		if (m_ComputeStorageSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create compute storage descriptor set layout");
+			return false;
+		}
+
 		LOG_INFO("VulkanDescriptorManager initialized successfully");
 		return true;
 	}
@@ -167,6 +177,12 @@ namespace Nightbloom
 		{
 			vkDestroyDescriptorSetLayout(device, m_ShadowSetLayout, nullptr);
 			m_ShadowSetLayout = VK_NULL_HANDLE;
+		}
+
+		if (m_ComputeStorageSetLayout != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorSetLayout(device, m_ComputeStorageSetLayout, nullptr);
+			m_ComputeStorageSetLayout = VK_NULL_HANDLE;
 		}
 
 		if (m_DescriptorPool != VK_NULL_HANDLE)
@@ -266,6 +282,45 @@ namespace Nightbloom
 		}
 
 		LOG_INFO("Shadow descriptor set layout created");
+		return layout;
+	}
+
+	// =====================================================================
+	// Compute storage sets (for compute shader input/output buffers)
+	// =====================================================================
+
+	VkDescriptorSetLayout VulkanDescriptorManager::CreateComputeStorageSetLayout()
+	{
+		// Two storage buffer bindings: input (binding 0) and output (binding 1)
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+
+		// Input buffer (binding 0) - read-only in shader
+		bindings[0].binding = 0;
+		bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		bindings[0].descriptorCount = 1;
+		bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+		bindings[0].pImmutableSamplers = nullptr;
+
+		//Output buffer (binding 1) - write in shader
+		bindings[1].binding = 1;
+		bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		bindings[1].descriptorCount = 1;
+		bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+		bindings[1].pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+		layoutInfo.pBindings = bindings.data();
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create compute storage descriptor set layout");
+			return VK_NULL_HANDLE;
+		}
+
+		LOG_INFO("Created compute storage descriptor set layout");
 		return layout;
 	}
 
@@ -489,6 +544,103 @@ namespace Nightbloom
 		descriptorWrite.dstBinding = 0;
 		descriptorWrite.dstArrayElement = 0;
 		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		descriptorWrite.descriptorCount = 1;
+		descriptorWrite.pBufferInfo = &bufferInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
+	}
+	VkDescriptorSet VulkanDescriptorManager::AllocateComputeStorageSet()
+	{
+		if (m_ComputeStorageSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Compute storage set layout not created");
+			return VK_NULL_HANDLE;
+		}
+
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_ComputeStorageSetLayout;
+
+		VkDescriptorSet descriptorSet;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &descriptorSet) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate compute storage descriptor set");
+			return VK_NULL_HANDLE;
+		}
+
+		return descriptorSet;
+	}
+	void VulkanDescriptorManager::UpdateComputeStorageSet(
+		VkDescriptorSet set, 
+		VkBuffer inputBuffer, VkDeviceSize inputSize, 
+		VkBuffer outputBuffer, VkDeviceSize outputSize)
+	{
+		if (set == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Cannot update null descriptor set");
+			return;
+		}
+
+		std::array<VkDescriptorBufferInfo, 2> bufferInfos{};
+
+		//Input buffer info
+		bufferInfos[0].buffer = inputBuffer;
+		bufferInfos[0].offset = 0;
+		bufferInfos[0].range = inputSize;
+
+		// Output buffer info
+		bufferInfos[1].buffer = outputBuffer;
+		bufferInfos[1].offset = 0;
+		bufferInfos[1].range = outputSize;
+
+		std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+		//Input buffer write (binding 0)
+		descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descriptorWrites[0].dstSet = set;
+		descriptorWrites[0].dstBinding = 0;
+		descriptorWrites[0].dstArrayElement = 0;
+		descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		descriptorWrites[0].descriptorCount = 1;
+		descriptorWrites[0].pBufferInfo = &bufferInfos[0];
+
+		// Output buffer writes (binding 1)
+		descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descriptorWrites[1].dstSet = set;
+		descriptorWrites[1].dstBinding = 1;
+		descriptorWrites[1].dstArrayElement = 0;
+		descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		descriptorWrites[1].descriptorCount = 1;
+		descriptorWrites[1].pBufferInfo = &bufferInfos[1];
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(),
+			static_cast<uint32_t>(descriptorWrites.size()),
+			descriptorWrites.data(),
+			0, nullptr);
+	}
+	void VulkanDescriptorManager::UpdateComputeStorageSet(
+		VkDescriptorSet set, 
+		VkBuffer buffer, VkDeviceSize size, uint32_t binding)
+	{
+		if (set == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Cannot update null descriptor set");
+			return;
+		}
+
+		VkDescriptorBufferInfo bufferInfo{};
+		bufferInfo.buffer = buffer;
+		bufferInfo.offset = 0;
+		bufferInfo.range = size;
+
+		VkWriteDescriptorSet descriptorWrite{};
+		descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descriptorWrite.dstSet = set;
+		descriptorWrite.dstBinding = binding;
+		descriptorWrite.dstArrayElement = 0;
+		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		descriptorWrite.descriptorCount = 1;
 		descriptorWrite.pBufferInfo = &bufferInfo;
 

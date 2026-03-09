@@ -23,6 +23,7 @@ namespace Nightbloom
 	{
 		VulkanShader* vertexShader = nullptr;   // NEW: Option to use shader object
 		VulkanShader* fragmentShader = nullptr; // NEW: Option to use shader object
+		VulkanShader* computeShader = nullptr;
 
 		std::string vertexShaderPath;
 		std::string fragmentShaderPath;
@@ -83,6 +84,9 @@ namespace Nightbloom
 
 		// Bind pipeline to commandbuffer 
 		void BindPipeline(VkCommandBuffer cmd, PipelineType type);
+
+		// seperate function to bind compute
+		void BindComputePipeline(VkCommandBuffer cmd, PipelineType type);
 
 		// Push constants helper
 		void PushConstants(VkCommandBuffer cmd, PipelineType type,

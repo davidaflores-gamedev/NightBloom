@@ -29,6 +29,7 @@ namespace Nightbloom
 		VkDescriptorSetLayout CreateUniformSetLayout();
 		VkDescriptorSetLayout CreateLightingSetLayout();
 		VkDescriptorSetLayout CreateShadowSetLayout();
+		VkDescriptorSetLayout CreateComputeStorageSetLayout();
 
 		// --- Texture (set 1 in main pass) ---
 		VkDescriptorSet AllocateTextureSet(uint32_t frameIndex);
@@ -61,6 +62,14 @@ namespace Nightbloom
 		void UpdateShadowUniformSet(uint32_t frameIndex, VkBuffer buffer, size_t size);
 		VkDescriptorSet GetShadowUniformDescriptorSet(uint32_t frameIndex) { return m_ShadowUniformDescriptorSets[frameIndex]; }
 
+		// --- Compute storage buffers ---
+		VkDescriptorSet AllocateComputeStorageSet();
+		void UpdateComputeStorageSet(VkDescriptorSet set, VkBuffer inputBuffer, VkDeviceSize inputSize,
+			VkBuffer outputBuffer, VkDeviceSize outputSize);
+		// Single-buffer variant (for read-write usage)
+		void UpdateComputeStorageSet(VkDescriptorSet set, VkBuffer buffer, VkDeviceSize size, uint32_t binding = 0);
+		VkDescriptorSetLayout GetComputeStorageSetLayout() const { return m_ComputeStorageSetLayout; }
+
 	private:
 		VulkanDevice* m_Device = nullptr;
 		VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
@@ -70,6 +79,7 @@ namespace Nightbloom
 		VkDescriptorSetLayout m_UniformSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_LightingSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_ShadowSetLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_ComputeStorageSetLayout = VK_NULL_HANDLE;
 		// Shadow uniform reuses m_UniformSetLayout (same binding, different buffer)
 
 		// Per-frame descriptor sets

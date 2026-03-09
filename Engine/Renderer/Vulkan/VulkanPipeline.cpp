@@ -335,9 +335,111 @@ namespace Nightbloom
 
 	bool VulkanPipelineManager::CreateComputePipeline(const VulkanPipelineConfig& config, Pipeline& outPipeline)
 	{
-		return false;
+		// Validate we have a compute shader
+		if (config.computeShader == nullptr && config.computeShaderPath.empty())
+		{
+			LOG_ERROR("No compute shader provided");
+			return false;
+		}
+
+		// Shader module handling
+		VkShaderModule computeShaderModule = VK_NULL_HANDLE;
+		bool ownsComputeModule = false;
+		VkPipelineShaderStageCreateInfo shaderStageInfo{};
+
+		if (config.computeShader != nullptr)
+		{
+			// Use provided shader object
+			shaderStageInfo = config.computeShader->GetStageInfo();
+			LOG_TRACE("Using compute shader object");
+		}
+		else
+		{
+			// Load from path
+			auto& assetManager = AssetManager::Get();
+			auto computeShaderCode = assetManager.LoadShaderBinary(config.computeShaderPath);
+
+			if (computeShaderCode.empty())
+			{
+				LOG_ERROR("Failed to load compute shader: {}", config.computeShaderPath);
+				return false;
+			}
+
+			computeShaderModule = CreateShaderModule(computeShaderCode);
+			if (computeShaderModule == VK_NULL_HANDLE)
+			{
+				LOG_ERROR("Failed to create compute shader module");
+				return false;
+			}
+			ownsComputeModule = true;
+
+			shaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+			shaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+			shaderStageInfo.module = computeShaderModule;
+			shaderStageInfo.pName = "main";
+
+			LOG_TRACE("Loaded compute shader from path: {}", config.computeShaderPath);
+		}
+
+		// Push constants
+		VkPushConstantRange pushConstantRange{};
+		if (config.pushConstantSize > 0)
+		{
+			pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+			pushConstantRange.offset = 0;
+			pushConstantRange.size = config.pushConstantSize;
+		}
+
+		// Pipeline layout
+		VkPipelineLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		layoutInfo.setLayoutCount = static_cast<uint32_t>(config.descriptorSetLayouts.size());
+		layoutInfo.pSetLayouts = config.descriptorSetLayouts.data();
+		layoutInfo.pushConstantRangeCount = config.pushConstantSize > 0 ? 1 : 0;
+		layoutInfo.pPushConstantRanges = config.pushConstantSize > 0 ? &pushConstantRange : nullptr;
+
+		if (vkCreatePipelineLayout(m_Device, &layoutInfo, nullptr, &outPipeline.layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create compute pipeline layout");
+			if (ownsComputeModule) vkDestroyShaderModule(m_Device, computeShaderModule, nullptr);
+			return false;
+		}
+
+		// Create compute pipeline
+		VkComputePipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+		pipelineInfo.stage = shaderStageInfo;
+		pipelineInfo.layout = outPipeline.layout;
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+		pipelineInfo.basePipelineIndex = -1;
+
+		VkResult result = vkCreateComputePipelines(
+			m_Device,
+			VK_NULL_HANDLE,  // Pipeline cache (could add later for faster loading)
+			1,
+			&pipelineInfo,
+			nullptr,
+			&outPipeline.pipeline
+		);
+
+		// Cleanup shader module
+		if (ownsComputeModule)
+		{
+			vkDestroyShaderModule(m_Device, computeShaderModule, nullptr);
+		}
+
+		if (result != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create compute pipeline");
+			vkDestroyPipelineLayout(m_Device, outPipeline.layout, nullptr);
+			outPipeline.layout = VK_NULL_HANDLE;
+			return false;
+		}
+
+		return true;
 	}
 
+	//TODO: potentially rework seperate bind pipelines because this seems like a small waste of space or rename to bindgraphics and bind compute seperately
 	void VulkanPipelineManager::BindPipeline(VkCommandBuffer cmd, PipelineType type) {
 		size_t index = static_cast<size_t>(type);
 		if (index >= m_Pipelines.size() || !m_Pipelines[index].isValid) {
@@ -346,6 +448,18 @@ namespace Nightbloom
 		}
 
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Pipelines[index].pipeline);
+	}
+
+	void VulkanPipelineManager::BindComputePipeline(VkCommandBuffer cmd, PipelineType type)
+	{
+		size_t index = static_cast<size_t>(type);
+		if (index >= m_Pipelines.size() || !m_Pipelines[index].isValid)
+		{
+			LOG_ERROR("Attempting to bind invalid compute pipeline: {}", m_PipelineNames[type]);
+			return;
+		}
+
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_Pipelines[index].pipeline);
 	}
 
 	void VulkanPipelineManager::PushConstants(VkCommandBuffer cmd, PipelineType type,
