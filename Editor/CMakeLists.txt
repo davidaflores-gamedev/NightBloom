@@ -14,6 +14,11 @@ file(GLOB_RECURSE EDITOR_SOURCES
 # Create executable
 add_executable(NightbloomEditor ${EDITOR_SOURCES})
 
+# Set working directory
+set_target_properties(NightbloomEditor PROPERTIES
+    VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:NightbloomEditor>"
+)
+
 # Set output name
 set_target_properties(NightbloomEditor PROPERTIES OUTPUT_NAME "Editor")
 
