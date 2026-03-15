@@ -1,19 +1,31 @@
-# ==== Build trees (CMake/VS) ====
-build/
+# =============================================================================
+# Nightbloom Engine .gitignore
+# =============================================================================
+
+# ==== Build directories (CMake/VS) ====
 Build/
-**/build/
+build/
 **/Build/
-CMakeFiles/
+**/build/
+out/
+cmake-build-*/
+
+# ==== CMake generated files ====
 CMakeCache.txt
+CMakeFiles/
 cmake_install.cmake
+CTestTestfile.cmake
 install_manifest.txt
 Testing/
-out/
+**/CMakeScripts/
+**/*Targets.cmake
+**/*Config.cmake
 
 # ==== Visual Studio / MSVC ====
 .vs/
 *.sln
-*.vcxproj*
+*.vcxproj
+*.vcxproj.*
 *.vcproj*
 *.vcxitems*
 *.ipch
@@ -22,6 +34,13 @@ out/
 *.tlog
 *.lastbuildstate
 *.user
+*.suo
+x64/
+x86/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
 
 # ==== Binaries & libs ====
 bin/
@@ -34,13 +53,26 @@ lib/
 *.obj
 *.o
 *.a
+*.exp
+
+# ==== Shader artifacts (keep source .vert/.frag/.comp, ignore compiled) ====
+*.spv
+
+# ==== Logs and runtime files ====
 *.log
 engine.log
 imgui.ini
 
-# ==== Shader artifacts ====
-**/*.spv
-
-# ==== Misc ====
-*.DS_Store
+# ==== OS files ====
+.DS_Store
 Thumbs.db
+desktop.ini
+
+# ==== IDE ====
+.idea/
+.vscode/
+*.swp
+*~
+
+# ==== Backup folder ====
+Backup/

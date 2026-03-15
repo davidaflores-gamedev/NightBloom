@@ -1,0 +1,291 @@
+//------------------------------------------------------------------------------
+// noise_generate.comp
+//
+// GPU noise generation compute shader
+// Generates Perlin, Worley, and combined noise for volumetric effects
+//
+// Compile with: glslc noise_generate.comp -o noise_generate.comp.spv
+//------------------------------------------------------------------------------
+
+#version 450
+
+// Workgroup size (8x8x8 is good for 3D compute)
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+// Output 3D texture (storage image)
+layout(binding = 0, rgba16f) uniform writeonly image3D outputTexture;
+
+// Push constants for noise parameters
+layout(push_constant) uniform PushConstants
+{
+    uvec3 dimensions;
+    uint seed;
+    float frequency;
+    float persistence;
+    float lacunarity;
+    int octaves;
+    int noiseType;      // 0=Perlin, 1=Worley, 2=PerlinWorley, 3=FBM
+    int cellCount;
+} params;
+
+//------------------------------------------------------------------------------
+// Hash functions for randomness
+//------------------------------------------------------------------------------
+
+// Wang hash for seed mixing
+uint wangHash(uint seed)
+{
+    seed = (seed ^ 61u) ^ (seed >> 16u);
+    seed *= 9u;
+    seed = seed ^ (seed >> 4u);
+    seed *= 0x27d4eb2du;
+    seed = seed ^ (seed >> 15u);
+    return seed;
+}
+
+// Hash3 - converts integer coords to pseudo-random vec3
+vec3 hash3(ivec3 p, uint seed)
+{
+    uint n = uint(p.x * 73856093) ^ uint(p.y * 19349663) ^ uint(p.z * 83492791);
+    n = wangHash(n + seed);
+    
+    vec3 result;
+    result.x = float(n & 0xFFFFu) / 65535.0;
+    n = wangHash(n);
+    result.y = float(n & 0xFFFFu) / 65535.0;
+    n = wangHash(n);
+    result.z = float(n & 0xFFFFu) / 65535.0;
+    
+    return result;
+}
+
+// Gradient hash for Perlin noise
+vec3 gradientHash(ivec3 p, uint seed)
+{
+    vec3 h = hash3(p, seed);
+    return normalize(h * 2.0 - 1.0);
+}
+
+//------------------------------------------------------------------------------
+// Interpolation helpers
+//------------------------------------------------------------------------------
+
+// Quintic smoothstep (Ken Perlin's improved version)
+float quinticInterp(float t)
+{
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+
+vec3 quinticInterpVec3(vec3 t)
+{
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+
+//------------------------------------------------------------------------------
+// 3D Perlin Noise
+//------------------------------------------------------------------------------
+
+float perlinNoise3D(vec3 p, uint seed)
+{
+    // Integer and fractional parts
+    ivec3 i = ivec3(floor(p));
+    vec3 f = fract(p);
+    
+    // Interpolation weights
+    vec3 u = quinticInterpVec3(f);
+    
+    // 8 corners of the cube
+    float n000 = dot(gradientHash(i + ivec3(0, 0, 0), seed), f - vec3(0, 0, 0));
+    float n100 = dot(gradientHash(i + ivec3(1, 0, 0), seed), f - vec3(1, 0, 0));
+    float n010 = dot(gradientHash(i + ivec3(0, 1, 0), seed), f - vec3(0, 1, 0));
+    float n110 = dot(gradientHash(i + ivec3(1, 1, 0), seed), f - vec3(1, 1, 0));
+    float n001 = dot(gradientHash(i + ivec3(0, 0, 1), seed), f - vec3(0, 0, 1));
+    float n101 = dot(gradientHash(i + ivec3(1, 0, 1), seed), f - vec3(1, 0, 1));
+    float n011 = dot(gradientHash(i + ivec3(0, 1, 1), seed), f - vec3(0, 1, 1));
+    float n111 = dot(gradientHash(i + ivec3(1, 1, 1), seed), f - vec3(1, 1, 1));
+    
+    // Trilinear interpolation
+    float nx00 = mix(n000, n100, u.x);
+    float nx10 = mix(n010, n110, u.x);
+    float nx01 = mix(n001, n101, u.x);
+    float nx11 = mix(n011, n111, u.x);
+    
+    float nxy0 = mix(nx00, nx10, u.y);
+    float nxy1 = mix(nx01, nx11, u.y);
+    
+    return mix(nxy0, nxy1, u.z);
+}
+
+//------------------------------------------------------------------------------
+// 3D Worley (Cellular) Noise
+//------------------------------------------------------------------------------
+
+float worleyNoise3D(vec3 p, uint seed, int cells)
+{
+    vec3 cellPos = p * float(cells);
+    ivec3 cellInt = ivec3(floor(cellPos));
+    vec3 cellFrac = fract(cellPos);
+    
+    float minDist = 1.0;
+    
+    // Check 3x3x3 neighborhood
+    for (int z = -1; z <= 1; z++)
+    {
+        for (int y = -1; y <= 1; y++)
+        {
+            for (int x = -1; x <= 1; x++)
+            {
+                ivec3 neighbor = cellInt + ivec3(x, y, z);
+                
+                // Wrap for tiling
+                ivec3 wrapped = ((neighbor % cells) + cells) % cells;
+                
+                // Random point in this cell
+                vec3 point = hash3(wrapped, seed);
+                
+                // Position relative to current cell
+                vec3 diff = vec3(neighbor) + point - cellPos;
+                float dist = length(diff);
+                
+                minDist = min(minDist, dist);
+            }
+        }
+    }
+    
+    return minDist;
+}
+
+// Inverted Worley (useful for clouds - high values where far from cell centers)
+float worleyNoiseInverted(vec3 p, uint seed, int cells)
+{
+    return 1.0 - worleyNoise3D(p, seed, cells);
+}
+
+//------------------------------------------------------------------------------
+// Fractal Brownian Motion (FBM)
+//------------------------------------------------------------------------------
+
+float fbmPerlin(vec3 p, uint seed, int octaves, float persistence, float lacunarity)
+{
+    float total = 0.0;
+    float amplitude = 1.0;
+    float maxValue = 0.0;
+    float freq = 1.0;
+    
+    for (int i = 0; i < octaves; i++)
+    {
+        total += perlinNoise3D(p * freq, seed + uint(i)) * amplitude;
+        maxValue += amplitude;
+        amplitude *= persistence;
+        freq *= lacunarity;
+    }
+    
+    return total / maxValue;
+}
+
+float fbmWorley(vec3 p, uint seed, int octaves, float persistence, float lacunarity, int baseCells)
+{
+    float total = 0.0;
+    float amplitude = 1.0;
+    float maxValue = 0.0;
+    int cells = baseCells;
+    
+    for (int i = 0; i < octaves; i++)
+    {
+        total += worleyNoiseInverted(p, seed + uint(i), cells) * amplitude;
+        maxValue += amplitude;
+        amplitude *= persistence;
+        cells = int(float(cells) * lacunarity);
+    }
+    
+    return total / maxValue;
+}
+
+//------------------------------------------------------------------------------
+// Combined Perlin-Worley Noise (for clouds)
+//------------------------------------------------------------------------------
+
+float perlinWorleyNoise(vec3 p, uint seed, int octaves, float persistence, float lacunarity, int cells)
+{
+    // Generate both noise types
+    float perlin = fbmPerlin(p, seed, octaves, persistence, lacunarity);
+    float worley = fbmWorley(p, seed + 1000u, octaves, persistence, lacunarity, cells);
+    
+    // Remap Perlin from [-1,1] to [0,1]
+    perlin = perlin * 0.5 + 0.5;
+    
+    // Combine: use Perlin as base, modulated by Worley for detail
+    // This creates the soft, billowy look of clouds
+    float combined = perlin * (1.0 - worley * 0.3);
+    
+    return clamp(combined, 0.0, 1.0);
+}
+
+//------------------------------------------------------------------------------
+// Main compute shader
+//------------------------------------------------------------------------------
+
+void main()
+{
+    // Get global invocation ID
+    uvec3 gid = gl_GlobalInvocationID;
+    
+    // Bounds check
+    if (gid.x >= params.dimensions.x || 
+        gid.y >= params.dimensions.y || 
+        gid.z >= params.dimensions.z)
+    {
+        return;
+    }
+    
+    // Normalize coordinates to [0, 1]
+    vec3 uvw = vec3(gid) / vec3(params.dimensions);
+    
+    // Scale by frequency
+    vec3 p = uvw * params.frequency;
+    
+    // Generate noise based on type
+    float noiseValue = 0.0;
+    
+    if (params.noiseType == 0) // Perlin
+    {
+        noiseValue = fbmPerlin(p, params.seed, params.octaves, params.persistence, params.lacunarity);
+        noiseValue = noiseValue * 0.5 + 0.5; // Remap to [0, 1]
+    }
+    else if (params.noiseType == 1) // Worley
+    {
+        noiseValue = fbmWorley(p, params.seed, params.octaves, params.persistence, params.lacunarity, params.cellCount);
+    }
+    else if (params.noiseType == 2) // Perlin-Worley (for clouds)
+    {
+        noiseValue = perlinWorleyNoise(p, params.seed, params.octaves, params.persistence, params.lacunarity, params.cellCount);
+    }
+    else // FBM (pure fractal)
+    {
+        noiseValue = fbmPerlin(p, params.seed, params.octaves, params.persistence, params.lacunarity);
+        noiseValue = noiseValue * 0.5 + 0.5;
+    }
+    
+    // Pack noise value into RGBA
+    // R = main noise value
+    // G = 1 - noise (for detail subtraction)
+    // B = derivative-based normal X (approximation)
+    // A = derivative-based normal Y (approximation)
+    
+    // Simple gradient approximation for normals (useful for lighting)
+    float eps = 1.0 / float(max(params.dimensions.x, max(params.dimensions.y, params.dimensions.z)));
+    vec3 pX = p + vec3(eps, 0, 0);
+    vec3 pY = p + vec3(0, eps, 0);
+    
+    float gradX = fbmPerlin(pX, params.seed, params.octaves, params.persistence, params.lacunarity) - noiseValue;
+    float gradY = fbmPerlin(pY, params.seed, params.octaves, params.persistence, params.lacunarity) - noiseValue;
+    
+    // Normalize gradients to [0, 1] range for storage
+    float normalX = gradX * 0.5 + 0.5;
+    float normalY = gradY * 0.5 + 0.5;
+    
+    // Write result (renamed from 'output' which is reserved)
+    vec4 result = vec4(noiseValue, 1.0 - noiseValue, normalX, normalY);
+    
+    imageStore(outputTexture, ivec3(gid), result);
+}
