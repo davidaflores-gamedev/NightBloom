@@ -4,7 +4,7 @@
 # Configuration for third-party dependencies
 #------------------------------------------------------------------------------
 
-set(VULKAN_SDK_PATH "C:/VulkanSDK/1.4.321.1")
+set(VULKAN_SDK_PATH "$ENV{VULKAN_SDK}")
 set(VULKAN_INCLUDE_DIR "${VULKAN_SDK_PATH}/Include")
 set(VULKAN_LIBRARY "${VULKAN_SDK_PATH}/Lib/vulkan-1.lib")
 
@@ -59,6 +59,7 @@ if(EXISTS ${IMGUI_DIR})
     target_include_directories(ImGui PUBLIC 
         ${IMGUI_DIR}
         ${IMGUI_DIR}/backends
+	$ENV{VULKAN_SDK}/Include
         ${VULKAN_INCLUDE_DIR}  # This is the key fix - ImGui needs to find vulkan/vulkan.h
     )
     

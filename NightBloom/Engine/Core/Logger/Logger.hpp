@@ -46,12 +46,12 @@ namespace Nightbloom
 
 		//Formatted logging 
 		template<typename... Args>
-		void LogFormatted(LogLevel level, const std::string& format, Args&&... args)
+		void LogFormatted(LogLevel level, std::string_view format, Args&&... args)
 		{
 			if (level < m_MinLogLevel)
 				return;
 
-			std::string message = std::vformat(format, std::make_format_args(std::forward<Args>(args)...));
+			std::string message = std::vformat(format, std::make_format_args(args...));
 			Log(level, message);
 		}
 

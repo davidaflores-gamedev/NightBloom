@@ -5,7 +5,7 @@
 #------------------------------------------------------------------------------
 
 # Manual Vulkan setup (ADD THIS SECTION AT THE TOP)
-set(VULKAN_SDK_PATH "C:/VulkanSDK/1.4.321.1")
+set(VULKAN_SDK_PATH "$ENV{VULKAN_SDK}")
 set(VULKAN_INCLUDE_DIR "${VULKAN_SDK_PATH}/Include")
 set(VULKAN_LIBRARY "${VULKAN_SDK_PATH}/Lib/vulkan-1.lib")
 
@@ -43,6 +43,7 @@ target_include_directories(NightbloomEngine
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
         $<INSTALL_INTERFACE:include>
         ${VULKAN_INCLUDE_DIR}
+	${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/glm
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )

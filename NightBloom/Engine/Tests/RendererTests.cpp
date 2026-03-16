@@ -11,7 +11,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 
 // Include only what we need
-#include "C:/VulkanSDK/1.4.321.1/Include/vulkan/vulkan_core.h"
+#include <vulkan/vulkan_core.h>
 
 // Manually declare the functions we need (avoids video header issues)
 typedef VkResult(VKAPI_PTR* PFN_vkCreateInstance)(const VkInstanceCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkInstance* pInstance);

@@ -37,15 +37,15 @@ cd Build
 
 REM Generate Visual Studio solution
 echo.
-echo Generating Visual Studio 2022 solution...
-cmake .. -G "Visual Studio 17 2022" -A x64
+echo Generating Visual Studio 2026 solution...
+cmake .. -G "Visual Studio 18 2026" -A x64
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo [ERROR] CMake generation failed!
     echo.
     echo Common fixes:
-    echo   - Install Visual Studio 2022 with "Desktop development with C++"
+    echo   - Install Visual Studio 2026 with "Desktop development with C++"
     echo   - Install CMake 3.20+
     echo   - Install Vulkan SDK
     cd ..
