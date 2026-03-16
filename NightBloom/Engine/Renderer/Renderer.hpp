@@ -36,7 +36,12 @@ namespace Nightbloom
 	class VulkanDescriptorManager;
 	class UIManager;
 	class ComputeDispatcher;
+	class NoiseTextureGenerator;
+	struct NoiseTextureDesc;
 	class ShadowMapManager;
+
+	//texture include?
+	class VulkanTexture;
 
 	class Renderer
 	{
@@ -76,6 +81,12 @@ namespace Nightbloom
 
 		void RunComputeTest();
 		void PrintComputeTestResults();
+
+		// Noise access
+		VulkanTexture* GetNoisePreview() const { return m_NoisePreview; }
+		bool RegenerateNoisePreview(const NoiseTextureDesc& desc);
+		NoiseTextureGenerator* GetNoiseGenerator() const { return m_NoiseGenerator.get(); }
+		ComputeDispatcher* GetComputeDispatcher() const { return m_ComputeDispatcher.get(); }
 
 		bool LoadShaders();
 
@@ -121,6 +132,7 @@ namespace Nightbloom
 		std::unique_ptr<VulkanDescriptorManager> m_DescriptorManager;
 		std::unique_ptr<UIManager> m_UI;
 		std::unique_ptr<ComputeDispatcher> m_ComputeDispatcher;
+		std::unique_ptr<NoiseTextureGenerator> m_NoiseGenerator;
 		std::unique_ptr<ShadowMapManager> m_ShadowManager;
 
 		// Frame state
@@ -156,6 +168,10 @@ namespace Nightbloom
 			uint32_t dataSize;
 			float time;
 		};
+
+		// Noise Generator test texture
+		VulkanTexture* m_TestNoise = nullptr;
+		VulkanTexture* m_NoisePreview = nullptr;  // 2D (depth=1), displayable in ImGui
 
 		// Shadow state
 		bool m_ShadowEnabled = true;

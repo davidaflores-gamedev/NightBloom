@@ -1,0 +1,229 @@
+//------------------------------------------------------------------------------
+// noise.comp
+//
+// GPU noise generation compute shader for Nightbloom Engine.
+// Generates a single-channel (R32F) 3D noise texture in one dispatch.
+//
+// Supported noise types (controlled by noiseType push constant):
+//   0 = Perlin FBM        — smooth gradient noise stacked in octaves
+//   1 = Worley FBM        — cellular/voronoi noise (inverted: bright = centers)
+//   2 = Perlin-Worley     — Perlin base eroded by Worley, for cloud base shape
+//
+// Workgroup size: 8x8x8. Dispatch with ceil(dim / 8) groups per axis.
+// Output image must be bound as a STORAGE_IMAGE in GENERAL layout.
+//------------------------------------------------------------------------------
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+// set=0, binding=0: the output 3D noise texture
+// r32f must match the VkFormat (VK_FORMAT_R32_SFLOAT)
+layout(set = 0, binding = 0, rgba32f) uniform writeonly image2D outImage;
+
+// Push constants — must match NoisePushConstants in NoiseTextureGenerator.hpp
+layout(push_constant) uniform PushConstants
+{
+    uint  width;
+    uint  height;
+    uint  depth;
+    uint  seed;
+    uint  octaves;
+    float frequency;
+    float persistence;
+    float lacunarity;
+    uint  noiseType;
+} pc;
+
+// ============================================================================
+// Hash — maps a 3D lattice point to a pseudo-random vec3 in [0, 1]^3
+// This is a fast, GPU-friendly hash with good distribution properties.
+// ============================================================================
+
+vec3 hash33(vec3 p)
+{
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.xxy + p.yxx) * p.zyx);
+}
+
+// ============================================================================
+// Perlin noise (3D gradient noise)
+// Returns approximately [-1, 1] — not clamped, callers should remap.
+// ============================================================================
+
+float perlin(vec3 p)
+{
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+
+    // Quintic interpolation (Ken Perlin's improved smoothstep)
+    vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+
+    // Gradient dot products at the 8 corners of the unit cube
+    float n000 = dot(hash33(i + vec3(0.0, 0.0, 0.0)) * 2.0 - 1.0, f - vec3(0.0, 0.0, 0.0));
+    float n100 = dot(hash33(i + vec3(1.0, 0.0, 0.0)) * 2.0 - 1.0, f - vec3(1.0, 0.0, 0.0));
+    float n010 = dot(hash33(i + vec3(0.0, 1.0, 0.0)) * 2.0 - 1.0, f - vec3(0.0, 1.0, 0.0));
+    float n110 = dot(hash33(i + vec3(1.0, 1.0, 0.0)) * 2.0 - 1.0, f - vec3(1.0, 1.0, 0.0));
+    float n001 = dot(hash33(i + vec3(0.0, 0.0, 1.0)) * 2.0 - 1.0, f - vec3(0.0, 0.0, 1.0));
+    float n101 = dot(hash33(i + vec3(1.0, 0.0, 1.0)) * 2.0 - 1.0, f - vec3(1.0, 0.0, 1.0));
+    float n011 = dot(hash33(i + vec3(0.0, 1.0, 1.0)) * 2.0 - 1.0, f - vec3(0.0, 1.0, 1.0));
+    float n111 = dot(hash33(i + vec3(1.0, 1.0, 1.0)) * 2.0 - 1.0, f - vec3(1.0, 1.0, 1.0));
+
+    return mix(
+        mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+        mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y),
+        u.z
+    );
+}
+
+// ============================================================================
+// Worley noise (3D cellular / Voronoi)
+// Returns distance to the nearest random cell point, clamped to [0, 1].
+// Searching 3x3x3 neighborhood guarantees we don't miss the nearest point.
+// ============================================================================
+
+float worley(vec3 p)
+{
+    vec3  i       = floor(p);
+    float minDist = 1e10;
+
+    for (int z = -1; z <= 1; z++)
+    for (int y = -1; y <= 1; y++)
+    for (int x = -1; x <= 1; x++)
+    {
+        vec3 neighbor  = i + vec3(float(x), float(y), float(z));
+        vec3 cellPoint = neighbor + hash33(neighbor); // random point inside the cell
+        float d        = length(cellPoint - p);
+        minDist        = min(minDist, d);
+    }
+
+    return clamp(minDist, 0.0, 1.0);
+}
+
+// ============================================================================
+// Remap — clamp-safe linear remap from [lo, hi] to [newLo, newHi]
+// ============================================================================
+
+float remap(float v, float lo, float hi, float newLo, float newHi)
+{
+    return newLo + clamp((v - lo) / max(hi - lo, 1e-6), 0.0, 1.0) * (newHi - newLo);
+}
+
+// ============================================================================
+// FBM (Fractional Brownian Motion) over Perlin
+// Stacks octaves of increasing frequency and decreasing amplitude.
+// Output: [0, 1] (remapped from Perlin's [-1, 1] range)
+// ============================================================================
+
+float fbm_perlin(vec3 p)
+{
+    float val      = 0.0;
+    float amp      = 0.5;
+    float totalAmp = 0.0;
+    float freq     = pc.frequency;
+
+    for (uint i = 0u; i < pc.octaves; i++)
+    {
+        val      += amp * perlin(p * freq);
+        totalAmp += amp;
+        freq     *= pc.lacunarity;
+        amp      *= pc.persistence;
+    }
+
+    // Remap the signed, amplitude-weighted sum into [0, 1]
+    return (val / totalAmp) * 0.5 + 0.5;
+}
+
+// ============================================================================
+// FBM over Worley
+// Inverted so bright areas are cell centers (dense cloud-like regions).
+// Output: [0, 1]
+// ============================================================================
+
+float fbm_worley(vec3 p)
+{
+    float val      = 0.0;
+    float amp      = 0.5;
+    float totalAmp = 0.0;
+    float freq     = pc.frequency;
+
+    for (uint i = 0u; i < pc.octaves; i++)
+    {
+        val      += amp * (1.0 - worley(p * freq)); // invert: 0 = far from cell, 1 = at center
+        totalAmp += amp;
+        freq     *= pc.lacunarity;
+        amp      *= pc.persistence;
+    }
+
+    return clamp(val / totalAmp, 0.0, 1.0);
+}
+
+// ============================================================================
+// Perlin-Worley
+//
+// This is the noise blend used for the R channel of the cloud base shape
+// texture, following the technique from Schneider & Hasgstrom (GPU Pro 7).
+//
+// Broad cloud density comes from Perlin FBM.
+// Worley then "erodes" the Perlin base — where Worley is low (far from cell
+// centers), it pulls Perlin values down toward zero, thinning the cloud edges.
+// Where both are high, the cloud stays bright and billowy.
+// ============================================================================
+
+float perlin_worley(vec3 p)
+{
+    float perlinVal = fbm_perlin(p);
+
+    // Single-octave Worley at 2x base frequency adds midrange erosion detail
+    float worleyVal = 1.0 - worley(p * pc.frequency * 2.0);
+
+    // Remap Perlin using Worley as the lower bound of the input range.
+    // When Worley is low, the entire Perlin range maps down toward 0.
+    // When Worley is high, Perlin values map closer to their natural values.
+    return remap(perlinVal, worleyVal * 0.5, 1.0, 0.0, 1.0);
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
+void main()
+{
+    uvec3 coord = gl_GlobalInvocationID;
+
+    // Discard threads outside texture bounds
+    if (coord.x >= pc.width || coord.y >= pc.height)
+        return;
+
+    // Map texel coordinate to [0, 1] UV (centered on each texel)
+    vec2 uv = (vec2(coord.xy) + 0.5) / vec2(float(pc.width), float(pc.height));
+
+    // Offset by a seed-derived displacement so different seeds produce
+    // genuinely different noise fields (not just differently scaled ones)
+    vec3 seedOffset = hash33(vec3(float(pc.seed) * 1.0,
+                                  float(pc.seed) * 1.3,
+                                  float(pc.seed) * 0.7));
+    vec3 p = vec3(uv, 0.5) + seedOffset;  // fix z to 0.5
+
+    float value = 0.0;
+
+    if (pc.noiseType == 0u)
+    {
+        value = fbm_perlin(p);
+    }
+    else if (pc.noiseType == 1u)
+    {
+        value = fbm_worley(p);
+    }
+    else if (pc.noiseType == 2u)
+    {
+        value = perlin_worley(p);
+    }
+    else
+    {
+        // Fallback to plain Perlin FBM for unknown types
+        value = fbm_perlin(p);
+    }
+
+   imageStore(outImage, ivec2(coord.xy), vec4(value, value, value, 1.0));
+}

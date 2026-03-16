@@ -31,6 +31,10 @@
 #include "Engine/Renderer/AssetManager.hpp"
 //#include "Engine/Compute/Noisegenerator.hpp"
 
+#include <imgui_impl_vulkan.h>
+#include "Engine/Renderer/NoiseTextureGenerator.hpp"
+#include "Engine/Renderer/Vulkan/VulkanTexture.hpp"
+
 // Check if docking is available
 #ifdef IMGUI_HAS_DOCK
 #define USE_IMGUI_DOCKING 1
@@ -347,6 +351,19 @@ namespace Nightbloom {
 		bool m_ShowDebugPanel = false;
 		bool m_ComputeTestRan = false;
 
+		// Noise debug panel
+		bool         m_ShowNoiseDebug = true;
+		ImTextureID  m_NoisePreviewID = 0;
+		VulkanTexture* m_RegisteredNoiseTex = nullptr;  // Track which texture is registered
+
+		// Noise generation parameters
+		int   m_NoiseType = 0;    // 0=Perlin, 1=Worley, 2=PerlinWorley
+		int   m_NoiseOctaves = 4;
+		float m_NoiseFreq = 4.0f;
+		float m_NoisePersist = 0.5f;
+		float m_NoiseLacun = 2.0f;
+		int   m_NoiseSeed = 42;
+
 		// Tools
 		std::unique_ptr<ShaderNodeEditor> m_ShaderNodeEditor;
 
@@ -567,6 +584,7 @@ namespace Nightbloom {
 					if (ImGui::MenuItem("Inspector", nullptr, &m_ShowInspector)) {}
 					if (ImGui::MenuItem("Console", nullptr, &m_ShowConsole)) {}
 					if (ImGui::MenuItem("Lighting", nullptr, &m_ShowLightingPanel)) {}
+					if (ImGui::MenuItem("Noise Debug", nullptr, &m_ShowNoiseDebug)) {}
 					ImGui::Separator();
 					if (ImGui::MenuItem("ImGui Demo", nullptr, &m_ShowDemoWindow)) {}
 					if (ImGui::MenuItem("ImGui Metrics", nullptr, &m_ShowMetricsWindow)) {}
@@ -654,6 +672,7 @@ namespace Nightbloom {
 			if (m_ShowAssetBrowser) RenderAssetBrowser();
 			if (m_ShowProjectSettings) RenderProjectSettings();
 			if (m_ShowDebugPanel) RenderDebugPanel();
+			if (m_ShowNoiseDebug) RenderNoiseDebugPanel();
 
 			if (m_ShowShaderNodeEditor && m_ShaderNodeEditor)
 			{
@@ -679,6 +698,91 @@ namespace Nightbloom {
 			// Demo windows
 			if (m_ShowDemoWindow) ImGui::ShowDemoWindow(&m_ShowDemoWindow);
 			if (m_ShowMetricsWindow) ImGui::ShowMetricsWindow(&m_ShowMetricsWindow);
+		}
+
+		void RenderNoiseDebugPanel()
+		{
+			ImGui::Begin("Noise Debug", &m_ShowNoiseDebug);
+
+			Renderer* renderer = GetRenderer();
+			if (!renderer)
+			{
+				ImGui::Text("No renderer");
+				ImGui::End();
+				return;
+			}
+
+			// ---- Parameters ----
+			const char* noiseTypes[] = { "Perlin", "Worley", "PerlinWorley" };
+			ImGui::Combo("Type", &m_NoiseType, noiseTypes, 3);
+			ImGui::SliderInt("Octaves", &m_NoiseOctaves, 1, 8);
+			ImGui::SliderFloat("Frequency", &m_NoiseFreq, 0.5f, 16.0f);
+			ImGui::SliderFloat("Persistence", &m_NoisePersist, 0.1f, 1.0f);
+			ImGui::SliderFloat("Lacunarity", &m_NoiseLacun, 1.0f, 4.0f);
+			ImGui::SliderInt("Seed", &m_NoiseSeed, 0, 999);
+
+			if (ImGui::Button("Generate"))
+			{
+				NoiseTextureDesc desc;
+				desc.width = 256;
+				desc.height = 256;
+				desc.depth = 1;
+				desc.noiseType = static_cast<NoiseType>(m_NoiseType);
+				desc.octaves = static_cast<uint32_t>(m_NoiseOctaves);
+				desc.frequency = m_NoiseFreq;
+				desc.persistence = m_NoisePersist;
+				desc.lacunarity = m_NoiseLacun;
+				desc.seed = static_cast<uint32_t>(m_NoiseSeed);
+				desc.debugName = "NoisePreview";
+
+				// Unregister old texture from ImGui before regenerating
+				if (m_NoisePreviewID)
+				{
+					ImGui_ImplVulkan_RemoveTexture(reinterpret_cast<VkDescriptorSet>(m_NoisePreviewID));
+					m_NoisePreviewID = 0;
+					m_RegisteredNoiseTex = nullptr;
+				}
+
+				renderer->RegenerateNoisePreview(desc);
+			}
+
+			ImGui::Separator();
+
+			// ---- Texture preview ----
+			VulkanTexture* noiseTex = renderer->GetNoisePreview();
+			if (noiseTex)
+			{
+				// Register with ImGui if new or changed
+				if (noiseTex != m_RegisteredNoiseTex)
+				{
+					if (m_NoisePreviewID)
+					{
+						ImGui_ImplVulkan_RemoveTexture(reinterpret_cast<VkDescriptorSet>(m_NoisePreviewID));
+					}
+
+					m_NoisePreviewID = reinterpret_cast<ImTextureID>(
+						ImGui_ImplVulkan_AddTexture(
+							noiseTex->GetSampler(),
+							noiseTex->GetImageView(),
+							VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+					m_RegisteredNoiseTex = noiseTex;
+				}
+
+				if (m_NoisePreviewID)
+				{
+					float panelWidth = ImGui::GetContentRegionAvail().x;
+					ImGui::Image(m_NoisePreviewID, ImVec2(panelWidth, panelWidth));
+					ImGui::Text("256x256 | Type: %s | Octaves: %d | Freq: %.1f",
+						noiseTypes[m_NoiseType], m_NoiseOctaves, m_NoiseFreq);
+				}
+			}
+			else
+			{
+				ImGui::TextDisabled("No noise texture generated");
+			}
+
+			ImGui::End();
 		}
 
 		void RenderDebugPanel()

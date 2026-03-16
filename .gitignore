@@ -76,3 +76,5 @@ desktop.ini
 
 # ==== Backup folder ====
 Backup/
+Distribution/ 
+Docs/

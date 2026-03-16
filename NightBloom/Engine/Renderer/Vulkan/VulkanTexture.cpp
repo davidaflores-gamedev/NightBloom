@@ -35,6 +35,7 @@ namespace Nightbloom
 		m_Format = desc.format;
 		m_Usage = desc.usage;
 		m_GenerateMips = desc.generateMips;
+		m_Force3D = desc.force3D;
 
 		// Calculate mip levels if generating mips
 		if (m_GenerateMips)
@@ -241,6 +242,9 @@ namespace Nightbloom
 			return false;
 		}
 
+		LOG_INFO("CreateDescriptorSet: texture {}x{}x{} force3D={} → set={:p}",
+			m_Width, m_Height, m_Depth, m_Force3D, (void*)m_DescriptorSet);
+
 		descriptorManager->UpdateTextureSet(m_DescriptorSet, this);
 
 		return true;
@@ -310,6 +314,12 @@ namespace Nightbloom
 			m_Sampler = VK_NULL_HANDLE;
 		}
 
+		if (m_StorageImageView != VK_NULL_HANDLE)
+		{
+			vkDestroyImageView(device, m_StorageImageView, nullptr);
+			m_StorageImageView = VK_NULL_HANDLE;
+		}
+
 		if (m_ImageView != VK_NULL_HANDLE)
 		{
 			vkDestroyImageView(device, m_ImageView, nullptr);
@@ -336,6 +346,8 @@ namespace Nightbloom
 		imageInfo.usage = 0;
 		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 		imageInfo.memoryUsage = VMA_MEMORY_USAGE_AUTO;
+
+		imageInfo.force3D = m_Force3D;
 
 		// Set usage flags
 		if (static_cast<int>(m_Usage) & static_cast<int>(TextureUsage::Sampled))
@@ -366,7 +378,12 @@ namespace Nightbloom
 		VkImageViewCreateInfo viewInfo{};
 		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		viewInfo.image = m_ImageAllocation->image;
-		viewInfo.viewType = m_ArrayLayers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+		if (m_Depth > 1)
+			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
+		else if (m_ArrayLayers > 1)
+			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+		else
+			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
 		viewInfo.format = ConvertToVkFormat(m_Format);
 		viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		viewInfo.subresourceRange.baseMipLevel = 0;
@@ -377,6 +394,17 @@ namespace Nightbloom
 		if (vkCreateImageView(m_Device->GetDevice(), &viewInfo, nullptr, &m_ImageView) != VK_SUCCESS)
 		{
 			return false;
+		}
+
+		if (m_Force3D && m_Depth == 1)
+		{
+			VkImageViewCreateInfo storageViewInfo = viewInfo;  // copy the 2D viewInfo
+			storageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
+
+			if (vkCreateImageView(m_Device->GetDevice(), &storageViewInfo, nullptr, &m_StorageImageView) != VK_SUCCESS)
+			{
+				LOG_WARN("Failed to create storage image view for force3D depth=1 texture");
+			}
 		}
 
 		return true;

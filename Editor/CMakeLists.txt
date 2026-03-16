@@ -5,6 +5,9 @@
 # NOTE: This is built as part of the root CMakeLists.txt, not standalone
 #------------------------------------------------------------------------------
 
+cmake_minimum_required(VERSION 3.20)
+project(NightbloomEditor VERSION 0.1.0 LANGUAGES CXX)
+
 # Gather source files
 file(GLOB_RECURSE EDITOR_SOURCES 
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/*.cpp"
@@ -78,6 +81,8 @@ else()
         "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.tese"
     )
     
+message(STATUS "Found shaders: ${SHADER_SOURCES}")
+
     if(SHADER_SOURCES)
         foreach(SHADER ${SHADER_SOURCES})
             get_filename_component(SHADER_NAME ${SHADER} NAME)

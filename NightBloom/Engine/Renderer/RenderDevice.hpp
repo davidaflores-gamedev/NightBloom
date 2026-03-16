@@ -125,6 +125,7 @@ namespace Nightbloom
 		bool isRenderTarget = false; // is this necessary?
 		bool isDepthStencil = false;
 		bool generateMips = false;
+		bool force3D = false;
 	};
 
 	struct ShaderDesc

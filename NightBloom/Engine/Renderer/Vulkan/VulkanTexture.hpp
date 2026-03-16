@@ -41,9 +41,19 @@ namespace Nightbloom
 		VkSampler GetSampler() const { return m_Sampler; }
 		VkImageLayout GetCurrentLayout() const { return m_CurrentLayout; }
 		VkDescriptorSet GetDescriptorSet() const { return m_DescriptorSet; }
+
+		// Returns 3D view for compute writes, falls back to m_ImageView for true 3D textures
+		VkImageView GetStorageImageView() const {
+			return m_StorageImageView != VK_NULL_HANDLE ? m_StorageImageView : m_ImageView;
+		}
+
 		bool HasDescriptorSet() const { return m_DescriptorSet != VK_NULL_HANDLE; }
 
 		void TransitionLayout(VkCommandBuffer cmd, VkImageLayout newLayout);
+
+		// Allow external code (e.g. compute barriers) to update the tracked layout
+		// after performing transitions outside of TransitionLayout()
+		void SetCurrentLayout(VkImageLayout layout) { m_CurrentLayout = layout; }
 
 	private:
 		void Cleanup();
@@ -68,6 +78,8 @@ namespace Nightbloom
 		VkImageLayout m_CurrentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 		VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
 
+		VkImageView m_StorageImageView = VK_NULL_HANDLE;  // 3D view for compute (only when force3D && depth==1)
+
 		// Properties
 		uint32_t m_Width = 0;
 		uint32_t m_Height = 0;
@@ -77,5 +89,6 @@ namespace Nightbloom
 		TextureFormat m_Format = TextureFormat::RGBA8;
 		TextureUsage m_Usage = TextureUsage::Sampled;
 		bool m_GenerateMips = false;
+		bool m_Force3D = false;
 	};
 } // namespace Nightbloom

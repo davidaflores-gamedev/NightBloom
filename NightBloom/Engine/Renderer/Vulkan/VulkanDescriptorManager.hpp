@@ -70,6 +70,12 @@ namespace Nightbloom
 		void UpdateComputeStorageSet(VkDescriptorSet set, VkBuffer buffer, VkDeviceSize size, uint32_t binding = 0);
 		VkDescriptorSetLayout GetComputeStorageSetLayout() const { return m_ComputeStorageSetLayout; }
 
+		// --- Compute storage image (write target for noise generation) ---
+		VkDescriptorSetLayout CreateComputeImageSetLayout();
+		VkDescriptorSet AllocateComputeImageSet();
+		void UpdateComputeImageSet(VkDescriptorSet set, VkImageView imageView);
+		VkDescriptorSetLayout GetComputeImageSetLayout() const { return m_ComputeImageSetLayout; }
+
 	private:
 		VulkanDevice* m_Device = nullptr;
 		VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
@@ -80,6 +86,7 @@ namespace Nightbloom
 		VkDescriptorSetLayout m_LightingSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_ShadowSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_ComputeStorageSetLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_ComputeImageSetLayout = VK_NULL_HANDLE;
 		// Shadow uniform reuses m_UniformSetLayout (same binding, different buffer)
 
 		// Per-frame descriptor sets

@@ -184,7 +184,9 @@ namespace Nightbloom
 		// Setup image creation info
 		VkImageCreateInfo imageInfo = {};
 		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-		imageInfo.imageType = (createInfo.depth > 1) ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+		imageInfo.imageType = (createInfo.depth > 1 || createInfo.force3D)
+			? VK_IMAGE_TYPE_3D
+			: VK_IMAGE_TYPE_2D;
 		imageInfo.extent.width = createInfo.width;
 		imageInfo.extent.height = createInfo.height;
 		imageInfo.extent.depth = createInfo.depth;
@@ -196,6 +198,10 @@ namespace Nightbloom
 		imageInfo.usage = createInfo.usage;
 		imageInfo.samples = createInfo.samples;
 		imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		if (createInfo.force3D && createInfo.depth == 1)
+		{
+			imageInfo.flags |= VK_IMAGE_CREATE_2D_VIEW_COMPATIBLE_BIT_EXT;
+		}
 
 		// Setup allocation info
 		VmaAllocationCreateInfo allocInfo = {};

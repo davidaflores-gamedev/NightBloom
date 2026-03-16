@@ -12,7 +12,7 @@ if not exist "..\NightBloom\Build\NightbloomEngineConfig.cmake" (
 if not exist "Build" mkdir Build
 cd Build
 
-cmake .. -G "Visual Studio 17 2022" -A x64
+cmake .. -G "Visual Studio 18 2026" -A x64
 
 if %ERRORLEVEL% NEQ 0 (
     echo CMake generation failed!

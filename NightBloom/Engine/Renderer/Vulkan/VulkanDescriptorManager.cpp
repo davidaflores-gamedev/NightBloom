@@ -21,13 +21,15 @@ namespace Nightbloom
 		LOG_INFO("Initializing VulkanDescriptorManager");
 
 		// Create descriptor pool
-		std::array<VkDescriptorPoolSize, 3> poolSizes{};
+		std::array<VkDescriptorPoolSize, 4> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		poolSizes[0].descriptorCount = MAX_DESCRIPTOR_SETS;
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		poolSizes[1].descriptorCount = MAX_DESCRIPTOR_SETS;
 		poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		poolSizes[2].descriptorCount = MAX_DESCRIPTOR_SETS;
+		poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		poolSizes[3].descriptorCount = MAX_DESCRIPTOR_SETS;
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -139,6 +141,14 @@ namespace Nightbloom
 			return false;
 		}
 
+		// Create compute image set layout
+		m_ComputeImageSetLayout = CreateComputeImageSetLayout();
+		if (m_ComputeImageSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create compute image descriptor set layout");
+			return false;
+		}
+
 		LOG_INFO("VulkanDescriptorManager initialized successfully");
 		return true;
 	}
@@ -183,6 +193,12 @@ namespace Nightbloom
 		{
 			vkDestroyDescriptorSetLayout(device, m_ComputeStorageSetLayout, nullptr);
 			m_ComputeStorageSetLayout = VK_NULL_HANDLE;
+		}
+
+		if (m_ComputeImageSetLayout != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorSetLayout(device, m_ComputeImageSetLayout, nullptr);
+			m_ComputeImageSetLayout = VK_NULL_HANDLE;
 		}
 
 		if (m_DescriptorPool != VK_NULL_HANDLE)
@@ -643,6 +659,68 @@ namespace Nightbloom
 		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		descriptorWrite.descriptorCount = 1;
 		descriptorWrite.pBufferInfo = &bufferInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
+	}
+	VkDescriptorSetLayout VulkanDescriptorManager::CreateComputeImageSetLayout()
+	{
+		VkDescriptorSetLayoutBinding imageBinding{};
+		imageBinding.binding = 0;
+		imageBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		imageBinding.descriptorCount = 1;
+		imageBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+		imageBinding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &imageBinding;
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create compute image descriptor set layout");
+			return VK_NULL_HANDLE;
+		}
+
+		LOG_INFO("Created compute image descriptor set layout");
+		return layout;
+	}
+	VkDescriptorSet VulkanDescriptorManager::AllocateComputeImageSet()
+	{
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_ComputeImageSetLayout;
+
+		VkDescriptorSet descriptorSet;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &descriptorSet) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate compute image descriptor set");
+			return VK_NULL_HANDLE;
+		}
+
+		return descriptorSet;
+	}
+	void VulkanDescriptorManager::UpdateComputeImageSet(VkDescriptorSet set, VkImageView imageView)
+	{
+		if (set == VK_NULL_HANDLE || imageView == VK_NULL_HANDLE) return;
+
+		// Storage images use GENERAL layout — no sampler
+		VkDescriptorImageInfo imageInfo{};
+		imageInfo.imageView = imageView;
+		imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+		imageInfo.sampler = VK_NULL_HANDLE;
+
+		VkWriteDescriptorSet descriptorWrite{};
+		descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descriptorWrite.dstSet = set;
+		descriptorWrite.dstBinding = 0;
+		descriptorWrite.dstArrayElement = 0;
+		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		descriptorWrite.descriptorCount = 1;
+		descriptorWrite.pImageInfo = &imageInfo;
 
 		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
 	}

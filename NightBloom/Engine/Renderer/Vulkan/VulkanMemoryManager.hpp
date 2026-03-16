@@ -73,6 +73,8 @@ namespace Nightbloom
 			VkImageUsageFlags usage;
 			VmaMemoryUsage memoryUsage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 			VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+
+			bool force3D = false;
 		};
 
 		struct ImageAllocation

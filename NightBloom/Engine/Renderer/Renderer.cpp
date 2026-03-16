@@ -12,6 +12,7 @@
 #include "Engine/Renderer/Vulkan/VulkanMemoryManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanPipelineAdapter.hpp"
 #include "Engine/Renderer/Vulkan/VulkanShader.hpp"
+#include "Engine/Renderer/Vulkan/VulkanTexture.hpp"
 
 //Components
 #include "Engine/Renderer/Components/FrameSyncManager.hpp"
@@ -19,6 +20,7 @@
 #include "Engine/Renderer/Components/CommandRecorder.hpp"
 #include "Engine/Renderer/Components/ResourceManager.hpp"
 #include "Engine/Renderer/Components/ComputeDispatcher.hpp"
+#include "Engine/Renderer/NoiseTextureGenerator.hpp"
 #include "Engine/Renderer/Components/ShadowMapManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Engine/Renderer/Components/UIManager.hpp"
@@ -543,6 +545,26 @@ namespace Nightbloom
 		m_Resources->DestroyBuffer("ComputeTestReadback");
 	}
 
+	bool Renderer::RegenerateNoisePreview(const NoiseTextureDesc& desc)
+	{
+		if (!m_NoiseGenerator) return false;
+
+		m_Device->WaitForIdle();
+
+		if (m_NoisePreview)
+		{
+			delete m_NoisePreview;
+			m_NoisePreview = nullptr;
+		}
+
+		// Force depth=1 so it gets a 2D image view (ImGui-displayable)
+		NoiseTextureDesc previewDesc = desc;
+		previewDesc.depth = 1;
+
+		m_NoisePreview = m_NoiseGenerator->Generate(previewDesc, m_ComputeDispatcher.get());
+		return m_NoisePreview != nullptr;
+	}
+
 	bool Renderer::LoadShaders()
 	{
 		LOG_INFO("=== Loading Shaders ===");
@@ -1044,6 +1066,46 @@ namespace Nightbloom
 			m_ComputeTestOutputBuffer->GetBuffer(), bufferSize
 		);
 
+		// Initialize noise texture generator
+		m_NoiseGenerator = std::make_unique<NoiseTextureGenerator>();
+		if (!m_NoiseGenerator->Initialize(
+			vkDevice,
+			m_MemoryManager.get(),
+			m_Resources->GetTransferCommandPool(),
+			m_DescriptorManager.get()))
+		{
+			LOG_WARN("Failed to initialize NoiseTextureGenerator - continuing without noise");
+		}
+		else
+		{
+			// Sanity check: generate a small test noise texture
+			NoiseTextureDesc testDesc;
+			testDesc.width = 64;
+			testDesc.height = 64;
+			testDesc.depth = 64;
+			testDesc.noiseType = NoiseType::Perlin;
+			testDesc.octaves = 4;
+			testDesc.frequency = 4.0f;
+			testDesc.debugName = "TestNoise";
+
+			m_TestNoise = m_NoiseGenerator->Generate(testDesc, m_ComputeDispatcher.get());
+			if (!m_TestNoise)
+			{
+				LOG_WARN("Test noise generation failed");
+			}
+		}
+
+		// Generate initial 2D preview for the editor panel
+		NoiseTextureDesc previewDesc;
+		previewDesc.width = 256;
+		previewDesc.height = 256;
+		previewDesc.depth = 1;
+		previewDesc.noiseType = NoiseType::Perlin;
+		previewDesc.octaves = 4;
+		previewDesc.frequency = 4.0f;
+		previewDesc.debugName = "NoisePreview";
+		m_NoisePreview = m_NoiseGenerator->Generate(previewDesc, m_ComputeDispatcher.get());
+
 		m_ComputeEnabled = true;
 		LOG_INFO("Compute support initialized successfully");
 		return true;
@@ -1391,6 +1453,24 @@ namespace Nightbloom
 
 	void Renderer::CleanupCompute()
 	{
+		if (m_NoisePreview)
+		{
+			delete m_NoisePreview;
+			m_NoisePreview = nullptr;
+		}
+
+		if (m_NoiseGenerator)
+		{
+			m_NoiseGenerator->Cleanup();
+			m_NoiseGenerator.reset();
+		}
+
+		if (m_TestNoise)
+		{
+			delete m_TestNoise;
+			m_TestNoise = nullptr;
+		}
+
 		if (m_ComputeDispatcher)
 		{
 			m_ComputeDispatcher->Cleanup();
