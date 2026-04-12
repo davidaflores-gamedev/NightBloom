@@ -439,7 +439,7 @@ namespace Nightbloom
 		return true;
 	}
 
-	//TODO: potentially rework seperate bind pipelines because this seems like a small waste of space or rename to bindgraphics and bind compute seperately
+	//TODO: rename to bind graphics pipeline
 	void VulkanPipelineManager::BindPipeline(VkCommandBuffer cmd, PipelineType type) {
 		size_t index = static_cast<size_t>(type);
 		if (index >= m_Pipelines.size() || !m_Pipelines[index].isValid) {
