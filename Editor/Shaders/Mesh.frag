@@ -25,7 +25,7 @@ struct LightData {
 
 struct ShadowData {
     mat4 lightSpaceMatrix;
-    vec4 shadowParams;
+    vec4 shadowParams; // x = bias, y = normalBias, z = unused, w = enabled
 };
 
 layout(std140, set = 2, binding = 0) uniform SceneLighting {
@@ -58,42 +58,50 @@ layout(location = 0) out vec4 outColor;
 // ============================================================================
 float CalculateShadow(vec3 worldPos, vec3 normal)
 {
-    // Check if shadows are enabled
     if (lighting.shadowData.shadowParams.w < 0.5)
         return 1.0;
-    
-    // Transform world position to light space
-    vec4 lightSpacePos = lighting.shadowData.lightSpaceMatrix * vec4(worldPos, 1.0);
-    
-    // Perspective divide
+
+    float bias       = lighting.shadowData.shadowParams.x;
+    float normalBias = lighting.shadowData.shadowParams.y;
+
+    // Normal bias — offset world pos before projection
+    vec3 lightDir    = normalize(-lighting.lights[0].position.xyz);
+    float cosTheta   = clamp(dot(normal, lightDir), 0.0, 1.0);
+    float slopeScale = clamp(1.0 - cosTheta, 0.0, 1.0);
+    vec3 biasedWorldPos = worldPos + normal * (normalBias * slopeScale);
+
+    // Project biasedWorldPos (was incorrectly using worldPos before)
+    vec4 lightSpacePos = lighting.shadowData.lightSpaceMatrix * vec4(biasedWorldPos, 1.0);
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
-    
-    // Transform from [-1,1] to [0,1] for texture sampling
-    // Note: If Y-flip is applied in the projection matrix, we don't need to flip here
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
-    
-    // =========================================================================
-    // ALTERNATIVE: If shadows are upside-down, try flipping Y here instead
-    // Uncomment this line if you're NOT applying Y-flip in the projection matrix:
-    // projCoords.y = 1.0 - projCoords.y;
-    // =========================================================================
-    
-    // Check if fragment is outside the shadow map frustum
+
     if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
         projCoords.y < 0.0 || projCoords.y > 1.0 ||
         projCoords.z < 0.0 || projCoords.z > 1.0)
+        return 1.0;
+
+    // Declare texelSize before anything that uses it
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+
+    // Receiver plane bias — adapts to surface slope automatically
+    float dzdx = dFdx(projCoords.z);
+    float dzdy = dFdy(projCoords.z);
+    float receiverBias = abs(dzdx) * texelSize.x + abs(dzdy) * texelSize.y;
+    receiverBias = clamp(receiverBias, 0.0, 0.005);
+
+    float currentDepth = projCoords.z - bias - receiverBias;
+
+    float shadow = 0.0;
+    for (int x = -1; x <= 1; ++x)
     {
-        return 1.0;  // Outside shadow frustum = fully lit
+        for (int y = -1; y <= 1; ++y)
+        {
+            vec2 offset = vec2(float(x), float(y)) * texelSize;
+            shadow += texture(shadowMap, vec3(projCoords.xy + offset, currentDepth));
+        }
     }
-    
-    // Apply bias
-    float bias = lighting.shadowData.shadowParams.x;
-    float currentDepth = projCoords.z - bias;
-    
-    // Sample shadow map with hardware PCF
-    float shadow = texture(shadowMap, vec3(projCoords.xy, currentDepth));
-    
-    return shadow;
+
+    return shadow / 9.0;
 }
 
 // ============================================================================

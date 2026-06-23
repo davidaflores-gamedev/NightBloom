@@ -31,6 +31,7 @@
 #include "Panels/NoiseDebugPanel.hpp"
 #include "Panels/ShaderCompilerPanel.hpp"
 #include "Panels/LiveShaderTestPanel.hpp"
+#include "Panels/TerrainEditorPanel.hpp"
 
 #include <imgui.h>
 #include <glm/glm.hpp>
@@ -63,6 +64,7 @@ namespace Nightbloom {
 
             // Cleanup panels that hold GPU resources before renderer goes away
             m_NoiseDebug.Cleanup();
+            m_TerrainPanel.Cleanup();
 
             m_EditorScene.reset();
             SaveEditorSettings();
@@ -101,7 +103,7 @@ namespace Nightbloom {
                 GetRenderer()->GetResourceManager(),
                 GetRenderer()->GetDescriptorManager()))
             {
-                toyCar->SetScale(0.01f);
+                toyCar->SetScale(.012f);
                 toyCar->SetPosition(glm::vec3(-3.0f, -2.0f, -3.0f));
                 m_EditorScene->AddObject("ToyCar", std::move(toyCar), defaultTex);
                 LOG_INFO("Added ToyCar to scene");
@@ -136,25 +138,25 @@ namespace Nightbloom {
             }
 
             // Ground plane
-            auto* gpVB = GetRenderer()->GetGroundPlaneVertexBuffer();
-            auto* gpIB = GetRenderer()->GetGroundPlaneIndexBuffer();
-            uint32_t gpIC = GetRenderer()->GetGroundPlaneIndexCount();
-
-            if (gpVB && gpIB && gpIC > 0)
-            {
-                auto groundPlane = std::make_unique<MeshDrawable>(
-                    gpVB, gpIB, gpIC, PipelineType::Mesh);
-                glm::mat4 groundTransform =
-                    glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -2.5f, 0.0f));
-                groundPlane->SetTransform(groundTransform);
-                if (auto* white = resources->GetTexture("default_white"))
-                    groundPlane->AddTexture(white);
-                SceneObject* groundObj =
-                    m_EditorScene->AddPrimitive("Ground", std::move(groundPlane));
-                groundObj->textureIndex = 1;
-                groundObj->pipeline = PipelineType::Mesh;
-                groundObj->primitiveTransform = groundTransform;
-            }
+            // auto* gpVB = GetRenderer()->GetGroundPlaneVertexBuffer();
+            // auto* gpIB = GetRenderer()->GetGroundPlaneIndexBuffer();
+            // uint32_t gpIC = GetRenderer()->GetGroundPlaneIndexCount();
+            // 
+            // if (gpVB && gpIB && gpIC > 0)
+            // {
+            //     auto groundPlane = std::make_unique<MeshDrawable>(
+            //         gpVB, gpIB, gpIC, PipelineType::Mesh);
+            //     glm::mat4 groundTransform =
+            //         glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -2.5f, 0.0f));
+            //     groundPlane->SetTransform(groundTransform);
+            //     if (auto* white = resources->GetTexture("default_white"))
+            //         groundPlane->AddTexture(white);
+            //     SceneObject* groundObj =
+            //         m_EditorScene->AddPrimitive("Ground", std::move(groundPlane));
+            //     groundObj->textureIndex = 1;
+            //     groundObj->pipeline = PipelineType::Mesh;
+            //     groundObj->primitiveTransform = groundTransform;
+            // }
 
             // Lighting
             Light* moonlight = m_EditorScene->AddLight("Moonlight", LightType::Directional);
@@ -162,6 +164,14 @@ namespace Nightbloom {
             moonlight->color = glm::vec3(0.6f, 0.7f, 1.0f);
             moonlight->intensity = 0.8f;
 
+            moonlight->shadowConfig.castsShadows = true;
+            moonlight->shadowConfig.orthoSize = 50.0f;
+            moonlight->shadowConfig.nearPlane = 10.f;
+            moonlight->shadowConfig.farPlane = 70.0f;
+            moonlight->shadowConfig.bias = 0.0006f;
+            moonlight->shadowConfig.normalBias = 0.004f;
+
+            GetRenderer()->SetShadowConfig(moonlight->shadowConfig);
             if (m_EditorScene->GetObjectCount() > 0)
                 m_EditorScene->Select(0);
 
@@ -236,6 +246,12 @@ namespace Nightbloom {
             GetRenderer()->SetCameraPosition(m_Camera->GetPosition());
             GetRenderer()->SetLightingData(m_EditorScene->BuildLightingData());
 
+            // Sync shadow config in case editor changed it
+            if (m_EditorScene->GetLightCount() > 0)
+            {
+                GetRenderer()->SetShadowConfig(m_EditorScene->GetLight(0)->shadowConfig);
+            }
+
             // Update live shader test panel (owns rotation state)
             m_LiveShaderTest.Update(deltaTime);
 
@@ -258,9 +274,12 @@ namespace Nightbloom {
         {
             DrawList drawList;
             if (m_EditorScene) m_EditorScene->BuildDrawList(drawList);
+
+            RenderEditorUI();
+            
+            m_TerrainPanel.SubmitTerrainDraw(drawList);
             drawList.SortByPipeline();
             GetRenderer()->SubmitDrawList(drawList);
-            RenderEditorUI();
         }
 
     private:
@@ -283,17 +302,18 @@ namespace Nightbloom {
         bool m_ShowMetricsWindow = false;
 
         // Panels
-        ConsolePanel         m_Console;
-        AssetBrowserPanel    m_AssetBrowser;
-        ViewportPanel        m_Viewport;
-        DebugPanel           m_DebugPanel;
-        SceneHierarchyPanel  m_SceneHierarchy;
-        InspectorPanel       m_Inspector;
-        LightingPanel        m_Lighting;
-        ProjectSettingsPanel m_ProjectSettings;
-        NoiseDebugPanel      m_NoiseDebug;
-        ShaderCompilerPanel  m_ShaderCompiler;
-        LiveShaderTestPanel  m_LiveShaderTest;
+        ConsolePanel            m_Console;
+        AssetBrowserPanel       m_AssetBrowser;
+        ViewportPanel           m_Viewport;
+        DebugPanel              m_DebugPanel;
+        SceneHierarchyPanel     m_SceneHierarchy;
+        InspectorPanel          m_Inspector;
+        LightingPanel           m_Lighting;
+        ProjectSettingsPanel    m_ProjectSettings;
+        NoiseDebugPanel         m_NoiseDebug;
+        ShaderCompilerPanel     m_ShaderCompiler;
+        LiveShaderTestPanel     m_LiveShaderTest;
+        TerrainPanel            m_TerrainPanel;
 
         // -------------------------------------------------------------------------
         // RenderEditorUI — builds the EditorContext and calls into each panel
@@ -341,6 +361,7 @@ namespace Nightbloom {
             if (m_NoiseDebug.isOpen)      m_NoiseDebug.Draw(ctx);
             if (m_LiveShaderTest.isOpen)  m_LiveShaderTest.Draw(ctx);
             if (m_Lighting.isOpen)        m_Lighting.Draw(ctx);
+            if (m_TerrainPanel.isOpen) m_TerrainPanel.Draw(ctx);
 
             m_Viewport.isPlayMode = m_Viewport.isPlayMode; // carried from menu bar
             m_Viewport.Draw(ctx);
@@ -399,6 +420,7 @@ namespace Nightbloom {
                 ImGui::MenuItem("Console", nullptr, &m_Console.isOpen);
                 ImGui::MenuItem("Lighting", nullptr, &m_Lighting.isOpen);
                 ImGui::MenuItem("Noise Debug", nullptr, &m_NoiseDebug.isOpen);
+                ImGui::MenuItem("Terrain", nullptr, &m_TerrainPanel.isOpen);
                 ImGui::MenuItem("Live Shader Test", nullptr, &m_LiveShaderTest.isOpen);
                 ImGui::Separator();
                 ImGui::MenuItem("ImGui Demo", nullptr, &m_ShowDemoWindow);

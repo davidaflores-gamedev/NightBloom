@@ -73,6 +73,7 @@ else()
     message(STATUS "Found glslc: ${GLSLC}")
     
     file(GLOB SHADER_SOURCES
+    	CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.vert"
         "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.frag"
         "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.comp"

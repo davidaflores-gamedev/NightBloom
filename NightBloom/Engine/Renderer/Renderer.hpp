@@ -104,6 +104,8 @@ namespace Nightbloom
 		bool IsShadowEnabled() const { return m_ShadowEnabled; }
 		void SetShadowEnabled(bool enabled) { m_ShadowEnabled = enabled; }
 		void SetShadowCenter(const glm::vec3& center) { m_ShadowCenter = center; }
+		void SetShadowConfig(const ShadowConfig& config) { m_ShadowConfig = config; }
+		const ShadowConfig& GetShadowConfig() const { return m_ShadowConfig; }
 
 		// Status
 		bool IsInitialized() const { return m_Initialized; }
@@ -176,6 +178,7 @@ namespace Nightbloom
 		// Shadow state
 		bool m_ShadowEnabled = true;
 		glm::vec3 m_ShadowCenter = glm::vec3(0.0f);
+		ShadowConfig m_ShadowConfig;
 
 		float m_TotalTime = 0.0f;  // Track time for shaders
 

@@ -70,6 +70,9 @@ namespace Nightbloom
 		// Textures (simplified for now - expand later)
 		std::vector<Texture*> textures;
 
+		VkDescriptorSet heightmapDescriptorSet = VK_NULL_HANDLE;  // Set 4 — terrain only
+		VkDescriptorSet textureDescriptorSet = VK_NULL_HANDLE;  // Set 4 — terrain only
+
 		// Custom render state overrides (optional)
 		std::function<void()> preDrawCallback = nullptr;  // Called before draw
 		std::function<void()> postDrawCallback = nullptr; // Called after draw

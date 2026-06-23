@@ -223,9 +223,12 @@ namespace Nightbloom
 			m_CurrentPipelineLayout = layout;
 		}
 
-		bool pipelineUsesUniforms = (cmd.pipeline == PipelineType::Mesh || cmd.pipeline == PipelineType::Transparent ||
+		bool pipelineUsesUniforms = (
+			cmd.pipeline == PipelineType::Mesh			||
+			cmd.pipeline == PipelineType::Transparent	||
 			cmd.pipeline == PipelineType::NodeGenerated ||
-			cmd.pipeline == PipelineType::Triangle);
+			cmd.pipeline == PipelineType::Triangle		|| 
+			cmd.pipeline == PipelineType::Terrain		);
 
 		if (pipelineUsesUniforms && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
@@ -243,39 +246,59 @@ namespace Nightbloom
 		}
 
 		// --- Bind texture descriptor set (set 1) ---
-		bool pipelineUsesTextures = (cmd.pipeline == PipelineType::Mesh || cmd.pipeline == PipelineType::Transparent ||
-			cmd.pipeline == PipelineType::NodeGenerated);
+		bool pipelineUsesTextures = (
+			cmd.pipeline == PipelineType::Mesh			|| 
+			cmd.pipeline == PipelineType::Transparent	||
+			cmd.pipeline == PipelineType::NodeGenerated || 
+			cmd.pipeline == PipelineType::Terrain		);
 
-		if (!cmd.textures.empty() && m_DescriptorManager &&
-			m_CurrentPipelineLayout != VK_NULL_HANDLE && pipelineUsesTextures)
+		if (pipelineUsesTextures && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE )
 		{
-			// Use the texture's own descriptor set instead of updating a shared one
-			VulkanTexture* vkTexture = static_cast<VulkanTexture*>(cmd.textures[0]);
-
-			if (vkTexture && vkTexture->HasDescriptorSet())
+			if (cmd.textureDescriptorSet != VK_NULL_HANDLE)
 			{
-				// Bind the texture's pre-allocated descriptor set - NO UPDATE during rendering!
-				VkDescriptorSet textureSet = vkTexture->GetDescriptorSet();
 				vkCmdBindDescriptorSets(
 					commandBuffer,
 					VK_PIPELINE_BIND_POINT_GRAPHICS,
 					m_CurrentPipelineLayout,
 					1,  // set 1 for textures
-					1,  // set count
-					&textureSet,
-					0,  // dynamic offset count
+					1,
+					&cmd.textureDescriptorSet,
+					0,
 					nullptr
 				);
 			}
-			else
+			else if (!cmd.textures.empty())
 			{
-				LOG_WARN("Texture has no descriptor set - texture may not have been properly initialized");
+				// Use the texture's own descriptor set instead of updating a shared one
+				VulkanTexture* vkTexture = static_cast<VulkanTexture*>(cmd.textures[0]);
+
+				if (vkTexture && vkTexture->HasDescriptorSet())
+				{
+					// Bind the texture's pre-allocated descriptor set - NO UPDATE during rendering!
+					VkDescriptorSet textureSet = vkTexture->GetDescriptorSet();
+					vkCmdBindDescriptorSets(
+						commandBuffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						m_CurrentPipelineLayout,
+						1,  // set 1 for textures
+						1,  // set count
+						&textureSet,
+						0,  // dynamic offset count
+						nullptr
+					);
+				}
+				else
+				{
+					LOG_WARN("Texture has no descriptor set - texture may not have been properly initialized");
+				}
 			}
 		}
 
 		// --- Bind lighting descriptor set (set 2) ---
-		bool pipelineUsesLighting = (cmd.pipeline == PipelineType::Mesh ||
-			cmd.pipeline == PipelineType::Transparent);
+		bool pipelineUsesLighting = (
+			cmd.pipeline == PipelineType::Mesh			||
+			cmd.pipeline == PipelineType::Transparent	||
+			cmd.pipeline == PipelineType::Terrain		);
 
 		if (pipelineUsesLighting && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
@@ -292,7 +315,9 @@ namespace Nightbloom
 			);
 		}
 
-		bool pipelineUsesShadowMap = (cmd.pipeline == PipelineType::Mesh);
+		bool pipelineUsesShadowMap = (
+			cmd.pipeline == PipelineType::Mesh		||
+			cmd.pipeline == PipelineType::Terrain	);
 
 		if (pipelineUsesShadowMap && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
@@ -310,6 +335,23 @@ namespace Nightbloom
 					nullptr
 				);
 			}
+		}
+
+		bool pipelineUsesHeightmap = (cmd.pipeline == PipelineType::Terrain);
+
+		if (pipelineUsesHeightmap && cmd.heightmapDescriptorSet != VK_NULL_HANDLE
+			&& m_CurrentPipelineLayout != VK_NULL_HANDLE)
+		{
+			vkCmdBindDescriptorSets(
+				commandBuffer,
+				VK_PIPELINE_BIND_POINT_GRAPHICS,
+				m_CurrentPipelineLayout,
+				4,   // set 4
+				1,
+				&cmd.heightmapDescriptorSet,
+				0,
+				nullptr
+			);
 		}
 
 		// Set push constants if needed

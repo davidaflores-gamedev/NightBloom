@@ -76,6 +76,12 @@ namespace Nightbloom
 		void UpdateComputeImageSet(VkDescriptorSet set, VkImageView imageView);
 		VkDescriptorSetLayout GetComputeImageSetLayout() const { return m_ComputeImageSetLayout; }
 
+		// --- Heightmap sampler (set 4 in terrain pass — vertex-stage visible) ---
+		VkDescriptorSetLayout CreateHeightmapSetLayout();
+		VkDescriptorSet AllocateHeightmapSet();
+		void UpdateHeightmapSet(VkDescriptorSet set, VulkanTexture* texture);
+		VkDescriptorSetLayout GetHeightmapSetLayout() const { return m_HeightmapSetLayout; }
+
 	private:
 		VulkanDevice* m_Device = nullptr;
 		VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
@@ -87,7 +93,7 @@ namespace Nightbloom
 		VkDescriptorSetLayout m_ShadowSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_ComputeStorageSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_ComputeImageSetLayout = VK_NULL_HANDLE;
-		// Shadow uniform reuses m_UniformSetLayout (same binding, different buffer)
+		VkDescriptorSetLayout m_HeightmapSetLayout = VK_NULL_HANDLE;
 
 		// Per-frame descriptor sets
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_TextureDescriptorSets{};

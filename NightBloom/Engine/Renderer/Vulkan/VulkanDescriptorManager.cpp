@@ -149,6 +149,14 @@ namespace Nightbloom
 			return false;
 		}
 
+		// Create Heightmap Set Layout
+		m_HeightmapSetLayout = CreateHeightmapSetLayout();
+		if (m_HeightmapSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create heightmap descriptor set layout");
+			return false;
+		}
+
 		LOG_INFO("VulkanDescriptorManager initialized successfully");
 		return true;
 	}
@@ -201,6 +209,12 @@ namespace Nightbloom
 			m_ComputeImageSetLayout = VK_NULL_HANDLE;
 		}
 
+		if (m_HeightmapSetLayout != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorSetLayout(device, m_HeightmapSetLayout, nullptr);
+			m_HeightmapSetLayout = VK_NULL_HANDLE;
+		}
+
 		if (m_DescriptorPool != VK_NULL_HANDLE)
 		{
 			vkDestroyDescriptorPool(device, m_DescriptorPool, nullptr);
@@ -210,17 +224,21 @@ namespace Nightbloom
 
 	VkDescriptorSetLayout VulkanDescriptorManager::CreateTextureSetLayout()
 	{
-		VkDescriptorSetLayoutBinding samplerLayoutBinding{};
-		samplerLayoutBinding.binding = 0;
-		samplerLayoutBinding.descriptorCount = 1;
-		samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		samplerLayoutBinding.pImmutableSamplers = nullptr;
-		samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
+
+		for (uint32_t i = 0; i < 3; ++i)
+		{
+			bindings[i].binding = i;
+			bindings[i].descriptorCount = 1;
+			bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			bindings[i].pImmutableSamplers = nullptr;
+			bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		}
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-		layoutInfo.bindingCount = 1;
-		layoutInfo.pBindings = &samplerLayoutBinding;
+		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+		layoutInfo.pBindings = bindings.data();
 
 		VkDescriptorSetLayout layout;
 		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
@@ -565,6 +583,7 @@ namespace Nightbloom
 
 		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
 	}
+
 	VkDescriptorSet VulkanDescriptorManager::AllocateComputeStorageSet()
 	{
 		if (m_ComputeStorageSetLayout == VK_NULL_HANDLE)
@@ -588,6 +607,7 @@ namespace Nightbloom
 
 		return descriptorSet;
 	}
+
 	void VulkanDescriptorManager::UpdateComputeStorageSet(
 		VkDescriptorSet set, 
 		VkBuffer inputBuffer, VkDeviceSize inputSize, 
@@ -636,6 +656,7 @@ namespace Nightbloom
 			descriptorWrites.data(),
 			0, nullptr);
 	}
+
 	void VulkanDescriptorManager::UpdateComputeStorageSet(
 		VkDescriptorSet set, 
 		VkBuffer buffer, VkDeviceSize size, uint32_t binding)
@@ -662,6 +683,7 @@ namespace Nightbloom
 
 		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
 	}
+
 	VkDescriptorSetLayout VulkanDescriptorManager::CreateComputeImageSetLayout()
 	{
 		VkDescriptorSetLayoutBinding imageBinding{};
@@ -686,6 +708,7 @@ namespace Nightbloom
 		LOG_INFO("Created compute image descriptor set layout");
 		return layout;
 	}
+
 	VkDescriptorSet VulkanDescriptorManager::AllocateComputeImageSet()
 	{
 		VkDescriptorSetAllocateInfo allocInfo{};
@@ -703,6 +726,7 @@ namespace Nightbloom
 
 		return descriptorSet;
 	}
+
 	void VulkanDescriptorManager::UpdateComputeImageSet(VkDescriptorSet set, VkImageView imageView)
 	{
 		if (set == VK_NULL_HANDLE || imageView == VK_NULL_HANDLE) return;
@@ -723,5 +747,70 @@ namespace Nightbloom
 		descriptorWrite.pImageInfo = &imageInfo;
 
 		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
+	}
+
+	VkDescriptorSetLayout VulkanDescriptorManager::CreateHeightmapSetLayout()
+	{
+		// Combined image sampler accessible from the VERTEX stage
+		// (unlike the texture set which is fragment-only)
+		VkDescriptorSetLayoutBinding binding{};
+		binding.binding = 0;
+		binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		binding.descriptorCount = 1;
+		binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;   // <-- key difference
+		binding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &binding;
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create heightmap descriptor set layout");
+			return VK_NULL_HANDLE;
+		}
+
+		LOG_INFO("Created heightmap (vertex-stage) descriptor set layout");
+		return layout;
+	}
+
+	VkDescriptorSet VulkanDescriptorManager::AllocateHeightmapSet()
+	{
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_HeightmapSetLayout;
+
+		VkDescriptorSet set;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &set) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate heightmap descriptor set");
+			return VK_NULL_HANDLE;
+		}
+		return set;
+	}
+
+	void VulkanDescriptorManager::UpdateHeightmapSet(VkDescriptorSet set, VulkanTexture* texture)
+	{
+		if (set == VK_NULL_HANDLE || !texture) return;
+
+		VkDescriptorImageInfo imageInfo{};
+		imageInfo.sampler = texture->GetSampler();
+		imageInfo.imageView = texture->GetImageView();
+		imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		VkWriteDescriptorSet write{};
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = set;
+		write.dstBinding = 0;
+		write.dstArrayElement = 0;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		write.descriptorCount = 1;
+		write.pImageInfo = &imageInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &write, 0, nullptr);
 	}
 }

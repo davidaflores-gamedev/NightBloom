@@ -204,7 +204,7 @@ namespace Nightbloom
 
 			vkConfig.hasColorAttachment = config.hasColorAttachment;
 
-			if (type == PipelineType::Shadow && m_ShadowRenderPass != VK_NULL_HANDLE)
+			if ((type == PipelineType::Shadow || type == PipelineType::TerrainShadow) && m_ShadowRenderPass != VK_NULL_HANDLE)
 			{
 				vkConfig.renderPass = m_ShadowRenderPass;
 			}
@@ -233,6 +233,13 @@ namespace Nightbloom
 				VkDescriptorSetLayout shadowLayout = m_DescriptorManager->GetShadowSetLayout();
 				vkConfig.descriptorSetLayouts.push_back(shadowLayout);
 			}
+
+			if (config.useHeightmap && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout heightmapLayout = m_DescriptorManager->GetHeightmapSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(heightmapLayout);  // becomes set 4
+			}
+
 
 			LOG_INFO("Creating pipeline with {} descriptor set layouts", vkConfig.descriptorSetLayouts.size());
 			for (size_t i = 0; i < vkConfig.descriptorSetLayouts.size(); ++i)

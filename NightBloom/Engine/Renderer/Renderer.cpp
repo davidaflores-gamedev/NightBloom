@@ -593,6 +593,17 @@ namespace Nightbloom
 			LOG_WARN("Failed to load mesh fragment shader - continuing without mesh pipeline");
 		}
 
+		
+		if (!m_Resources->LoadShader("terrain_vert", ShaderStage::Vertex, "Terrain.vert"))
+		{
+			LOG_WARN("Failed to load terrain vertex shader - continuing without terrain pipeline");
+		}
+			
+		if (!m_Resources->LoadShader("terrain_frag", ShaderStage::Fragment, "Terrain.frag"))
+		{
+			LOG_WARN("Failed to load terrain fragment shader - continuing without terrain pipeline");
+		}
+
 		LOG_INFO("Shaders loaded successfully");
 		return true;
 	}
@@ -820,7 +831,7 @@ namespace Nightbloom
 		if (!m_Resources->CreateGroundPlane(200.0f, 10.0f))
 		{
 			LOG_WARN("Failed to create ground plane");
-			// Non-fatal — continue without it
+			// Non-fatal ï¿½ continue without it
 		}
 
 		// Create test Textures
@@ -874,6 +885,7 @@ namespace Nightbloom
 			return false;
 		}
 
+		// ---- Triangle pipeline -------------------------------------------------------
 		// Create triangle pipeline using shader objects
 		{
 			PipelineConfig config;
@@ -898,6 +910,7 @@ namespace Nightbloom
 			LOG_INFO("Triangle pipeline created successfully");
 		}
 
+		// ---- Mesh pipeline -------------------------------------------------------
 		// Create mesh pipeline using shader objects (if shaders loaded)
 		{
 			VulkanShader* vertShader = m_Resources->GetShader("mesh_vert");
@@ -934,6 +947,7 @@ namespace Nightbloom
 			}
 		}
 
+		// ---- Transparent pipeline -------------------------------------------------------
 		{
 			PipelineConfig transparentConfig;
 			transparentConfig.vertexShaderPath = "Mesh.vert";
@@ -963,6 +977,53 @@ namespace Nightbloom
 			if (!m_PipelineAdapter->CreatePipeline(PipelineType::Transparent, transparentConfig))
 			{
 				LOG_ERROR("Failed to create Transparent pipeline");
+			}
+		}
+
+		// ---- Terrain pipeline -------------------------------------------------------
+		{
+			VulkanShader* terrainVert = m_Resources->GetShader("terrain_vert");
+			VulkanShader* terrainFrag = m_Resources->GetShader("terrain_frag");
+
+			if (terrainVert && terrainFrag)
+			{
+				PipelineConfig terrainConfig;
+				terrainConfig.vertexShader = terrainVert;
+				terrainConfig.fragmentShader = terrainFrag;
+				terrainConfig.useVertexInput = true;
+				terrainConfig.topology = PrimitiveTopology::TriangleList;
+				terrainConfig.polygonMode = PolygonMode::Fill;
+				terrainConfig.cullMode = CullMode::Back;
+				terrainConfig.frontFace = FrontFace::CounterClockwise;
+
+				// Reverse-Z depth (matches the rest of the scene)
+				terrainConfig.depthTestEnable = true;
+				terrainConfig.depthWriteEnable = true;
+				terrainConfig.depthCompareOp = CompareOp::GreaterOrEqual;
+
+				// Push constants carry model matrix + heightScale + texelSize
+				terrainConfig.pushConstantSize = sizeof(PushConstantData);
+				terrainConfig.pushConstantStages = ShaderStage::VertexFragment;
+
+				// Descriptor sets: 0=uniform, 1=albedo, 2=lighting, 3=shadow, 4=heightmap
+				terrainConfig.useUniformBuffer = true;
+				terrainConfig.useTextures = true;
+				terrainConfig.useLighting = true;
+				terrainConfig.useShadowMap = true;
+				terrainConfig.useHeightmap = true;   // <-- new flag (set 4)
+
+				if (m_PipelineAdapter->CreatePipeline(PipelineType::Terrain, terrainConfig))
+				{
+					LOG_INFO("Terrain pipeline created successfully");
+				}
+				else
+				{
+					LOG_WARN("Failed to create terrain pipeline ï¿½ terrain will not render");
+				}
+			}
+			else
+			{
+				LOG_WARN("Terrain shaders not found ï¿½ skipping terrain pipeline");
 			}
 		}
 
@@ -1123,8 +1184,8 @@ namespace Nightbloom
 		ShadowMapConfig shadowMapConfig;  // Renamed from shadowConfig to avoid shadowing
 		shadowMapConfig.resolution = 4096;
 		shadowMapConfig.depthFormat = VK_FORMAT_D32_SFLOAT;
-		shadowMapConfig.depthBiasConstant = .25f;
-		shadowMapConfig.depthBiasSlope = .25f;
+		shadowMapConfig.depthBiasConstant = 1.0f;
+		shadowMapConfig.depthBiasSlope = 1.5f;
 		shadowMapConfig.enablePCF = true;
 
 		if (!m_ShadowManager->Initialize(vkDevice, m_MemoryManager.get(),
@@ -1188,6 +1249,32 @@ namespace Nightbloom
 				LOG_ERROR("Failed to create shadow pipeline");
 				return false;
 			}
+		}
+
+		// Terrain Shadow Pipeline
+		{
+			PipelineConfig terrainShadowConfig;
+			terrainShadowConfig.vertexShaderPath = "TerrainShadow.vert";
+			terrainShadowConfig.fragmentShaderPath = "Shadow.frag";  // reuse existing
+			terrainShadowConfig.useVertexInput = true;
+			terrainShadowConfig.topology = PrimitiveTopology::TriangleList;
+			terrainShadowConfig.polygonMode = PolygonMode::Fill;
+			terrainShadowConfig.cullMode = CullMode::None;
+			terrainShadowConfig.frontFace = FrontFace::CounterClockwise;
+			terrainShadowConfig.depthTestEnable = true;
+			terrainShadowConfig.depthWriteEnable = true;
+			terrainShadowConfig.depthCompareOp = CompareOp::LessOrEqual;
+			terrainShadowConfig.depthBiasEnable = true;
+			terrainShadowConfig.depthBiasConstant = m_ShadowManager->GetTerrainDepthBiasConstant();
+			terrainShadowConfig.depthBiasSlope = m_ShadowManager->GetTerrainDepthBiasSlope();
+			terrainShadowConfig.useUniformBuffer = true;
+			terrainShadowConfig.useHeightmap = true;  // adds set 1 = heightmap layout
+			terrainShadowConfig.hasColorAttachment = false;
+			terrainShadowConfig.pushConstantSize = sizeof(PushConstantData);
+			terrainShadowConfig.pushConstantStages = ShaderStage::Vertex;
+
+			if (m_PipelineAdapter->CreatePipeline(PipelineType::TerrainShadow, terrainShadowConfig))
+				LOG_INFO("Terrain shadow pipeline created");
 		}
 
 		LOG_INFO("Shadow mapping initialized successfully");
@@ -1294,7 +1381,7 @@ namespace Nightbloom
 	// FIX: RecordShadowPass no longer touches m_FrameUniforms.
 	//
 	// The old version wrote light matrices into the camera UBO, recorded
-	// GPU commands, then restored camera data — all CPU-side. But the GPU
+	// GPU commands, then restored camera data ï¿½ all CPU-side. But the GPU
 	// doesn't execute until submit, so by that time the buffer always
 	// contained camera data for BOTH passes.
 	//
@@ -1345,13 +1432,6 @@ namespace Nightbloom
 		// Bind shadow pipeline
 		m_PipelineAdapter->BindPipeline(cmd, PipelineType::Shadow);
 
-		VkPipelineLayout shadowLayout = m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::Shadow);
-
-		// Bind the SHADOW uniform descriptor set (light's view/proj), NOT the camera one
-		VkDescriptorSet shadowUniformSet = m_DescriptorManager->GetShadowUniformDescriptorSet(frameIndex);
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowLayout,
-			0, 1, &shadowUniformSet, 0, nullptr);
-
 		// Render all shadow-casting geometry from the draw list
 		for (const auto& drawCmd : m_FrameDrawList.GetCommands())
 		{
@@ -1366,6 +1446,36 @@ namespace Nightbloom
 			{
 				continue;
 			}
+
+			bool isTerrain = (drawCmd.pipeline == PipelineType::Terrain);
+
+			// Bind appropriate shadow pipeline
+			VkPipeline shadowPipeline = isTerrain
+				? m_PipelineAdapter->GetVulkanManager()->GetPipeline(PipelineType::TerrainShadow)
+				: m_PipelineAdapter->GetVulkanManager()->GetPipeline(PipelineType::Shadow);
+			VkPipelineLayout shadowLayout = isTerrain
+				? m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::TerrainShadow)
+				: m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::Shadow);
+
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline);
+
+			// Bind shadow uniform (set 0) ï¿½ same for both
+			VkDescriptorSet shadowUniformSet = m_DescriptorManager->GetShadowUniformDescriptorSet(frameIndex);
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+				shadowLayout, 0, 1, &shadowUniformSet, 0, nullptr);
+
+			// For terrain: also bind heightmap at set 1
+			if (isTerrain)
+			{
+				if (drawCmd.heightmapDescriptorSet == VK_NULL_HANDLE)
+				{
+					LOG_WARN("TerrainShadow: heightmapDescriptorSet is null, skipping draw");
+					continue;
+				}
+
+				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+					shadowLayout, 1, 1, &drawCmd.heightmapDescriptorSet, 0, nullptr);
+			}	
 
 			// Set push constants (model matrix)
 			if (drawCmd.hasPushConstants)
@@ -1394,7 +1504,7 @@ namespace Nightbloom
 		}
 
 		vkCmdEndRenderPass(cmd);
-		// No UBO restore needed — each pass has its own dedicated buffer
+		// No UBO restore needed ï¿½ each pass has its own dedicated buffer
 	}
 
 	bool Renderer::HandleSwapchainResize()
@@ -1508,18 +1618,20 @@ namespace Nightbloom
 			return;
 		}
 
-		float orthoSize = 10.0f;
-		float nearPlane = 0.1f;
-		float farPlane = 100.0f;
-		float bias = 0.0002f;
-		float normalBias = 0.05f;
+		float orthoSize = m_ShadowConfig.orthoSize;
+		float nearPlane = m_ShadowConfig.nearPlane;
+		float farPlane = m_ShadowConfig.farPlane;
+		float bias = m_ShadowConfig.bias;
+		float depthRange = farPlane - nearPlane;
+		float ndcBias = (depthRange > 0.0f) ? (bias / depthRange) : bias;
+
+		float normalBias = m_ShadowConfig.normalBias;
+
+		m_ShadowCenter = glm::vec3(m_CameraPosition.x, 0.0f, m_CameraPosition.z);
 
 		// Get light direction from the light data
 		// primaryLight.position.xyz = direction light is SHINING (e.g., (0,-1,0) = down)
 		glm::vec3 lightShineDir = glm::normalize(glm::vec3(primaryLight.position));
-
-		// Position camera along the direction vector
-		glm::vec3 lightPos = m_ShadowCenter - lightShineDir * (farPlane * 0.5f);
 
 		// Up vector (handle edge case of looking straight up/down)
 		glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -1527,6 +1639,29 @@ namespace Nightbloom
 		{
 			up = glm::vec3(0.0f, 0.0f, 1.0f);
 		}
+
+		// Texel snapping: the camera moves continuously, but the shadow map
+		// only has finite texel resolution. Recentering the ortho frustum on
+		// the exact camera position every frame shifts the texel grid by a
+		// sub-texel amount each frame, which makes shadow edges shimmer as
+		// the camera moves. Snap the center to the light's own texel grid so
+		// the same world point always lands on the same texel center.
+		glm::vec3 lightRight = glm::normalize(glm::cross(lightShineDir, up));
+		glm::vec3 lightUp = glm::normalize(glm::cross(lightRight, lightShineDir));
+
+		float shadowMapResolution = static_cast<float>(m_ShadowManager->GetConfig().resolution);
+		float texelWorldSize = (2.0f * orthoSize) / shadowMapResolution;
+
+		float centerRight = glm::dot(m_ShadowCenter, lightRight);
+		float centerUp = glm::dot(m_ShadowCenter, lightUp);
+		centerRight = std::floor(centerRight / texelWorldSize) * texelWorldSize;
+		centerUp = std::floor(centerUp / texelWorldSize) * texelWorldSize;
+
+		float centerForward = glm::dot(m_ShadowCenter, lightShineDir);
+		m_ShadowCenter = lightRight * centerRight + lightUp * centerUp + lightShineDir * centerForward;
+
+		// Position camera along the direction vector
+		glm::vec3 lightPos = m_ShadowCenter - lightShineDir * (farPlane * 0.5f);
 
 		glm::mat4 lightView = glm::lookAt(lightPos, m_ShadowCenter, up);
 
@@ -1547,7 +1682,7 @@ namespace Nightbloom
 		// Fragment shader data
 		m_CurrentLightingData.shadowData.lightSpaceMatrix = lightSpaceMatrix;
 		m_CurrentLightingData.shadowData.shadowParams = glm::vec4(
-			bias, normalBias, 0.0f, 1.0f
+			ndcBias, normalBias, 0.0f, 1.0f
 		);
 
 		// Shadow pass data

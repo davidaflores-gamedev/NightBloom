@@ -112,6 +112,8 @@ namespace Nightbloom
 
 		// Editors
 		NodeGenerated,
+		Terrain,
+		TerrainShadow,
 
 		Count
 	};
@@ -168,6 +170,7 @@ namespace Nightbloom
 		bool useUniformBuffer = false;   // Pipeline uses uniform buffers
 		bool useLighting = false;	// Pipeline uses scene lighting UBO (set 2)
 		bool useShadowMap = false;  // Pipeline samples shadow map (set 3)
+		bool useHeightmap = false;  // Pipeline samples heightmap in vertex stage (set 4)
 
 		bool hasColorAttachment = true;  // False for depth-only passes (shadow)
 

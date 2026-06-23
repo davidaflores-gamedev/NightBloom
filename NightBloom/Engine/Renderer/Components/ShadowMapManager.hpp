@@ -23,9 +23,15 @@ namespace Nightbloom
 	{
 		uint32_t resolution = 2048;           // Shadow map resolution (square)
 		VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
-		float depthBiasConstant = 1.25f;      // Constant depth bias
+		float depthBiasConstant = 0.0f;      // Constant depth bias
 		float depthBiasSlope = 1.75f;         // Slope-scaled depth bias
 		bool enablePCF = true;                // Enable PCF filtering in sampler
+
+		// Terrain has much higher local slope variance than the test meshes
+		// these defaults were tuned for, so it needs a larger bias to avoid
+		// self-shadowing acne shaped like the underlying heightmap noise.
+		float terrainDepthBiasConstant = 1.5f;
+		float terrainDepthBiasSlope = 4.0f;
 	};
 
 	class ShadowMapManager
@@ -54,6 +60,8 @@ namespace Nightbloom
 		const ShadowMapConfig& GetConfig() const { return m_Config; }
 		float GetDepthBiasConstant() const { return m_Config.depthBiasConstant; }
 		float GetDepthBiasSlope() const { return m_Config.depthBiasSlope; }
+		float GetTerrainDepthBiasConstant() const { return m_Config.terrainDepthBiasConstant; }
+		float GetTerrainDepthBiasSlope() const { return m_Config.terrainDepthBiasSlope; }
 
 		// Resize shadow map (e.g., quality settings change)
 		bool Resize(uint32_t newResolution);
