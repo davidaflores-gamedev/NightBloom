@@ -221,11 +221,9 @@ namespace Nightbloom
 			// Not fatal — callers can still bind the texture manually
 		}
 
-		// Note: storageSet is "orphaned" in the pool after this point.
-		// The pool was created with VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-		// so it could be freed via vkFreeDescriptorSets if we expose the pool.
-		// For now it will be reclaimed when the descriptor pool resets on shutdown.
-		// TODO: Add VulkanDescriptorManager::FreeDescriptorSet() to reclaim it explicitly.
+		// storageSet was only needed for the compute dispatch above — free it now
+		// instead of leaking it until the pool resets on shutdown.
+		m_DescriptorManager->FreeDescriptorSet(storageSet);
 
 		LOG_INFO("Noise texture '{}' generated successfully ({}x{}x{})",
 			desc.debugName, desc.width, desc.height, desc.depth);

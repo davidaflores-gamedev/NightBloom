@@ -153,16 +153,20 @@ namespace Nightbloom
 			m_Commands.reset();
 		}
 
-		if (m_DescriptorManager)
-		{
-			m_DescriptorManager->Cleanup();
-			m_DescriptorManager.reset();
-		}
-
+		// Resources (textures) must be cleaned up while the descriptor manager
+		// is still alive — VulkanTexture::Cleanup() frees its own descriptor
+		// set via the manager it was allocated from. Tearing down the manager
+		// first leaves that pointer dangling.
 		if (m_Resources)
 		{
 			m_Resources->Cleanup();
 			m_Resources.reset();
+		}
+
+		if (m_DescriptorManager)
+		{
+			m_DescriptorManager->Cleanup();
+			m_DescriptorManager.reset();
 		}
 
 		if (m_RenderPasses)

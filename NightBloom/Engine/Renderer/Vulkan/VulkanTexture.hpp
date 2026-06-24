@@ -77,6 +77,7 @@ namespace Nightbloom
 		VkSampler m_Sampler = VK_NULL_HANDLE;
 		VkImageLayout m_CurrentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 		VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
+		VulkanDescriptorManager* m_DescriptorManager = nullptr;  // set by CreateDescriptorSet, used to free m_DescriptorSet on cleanup
 
 		VkImageView m_StorageImageView = VK_NULL_HANDLE;  // 3D view for compute (only when force3D && depth==1)
 

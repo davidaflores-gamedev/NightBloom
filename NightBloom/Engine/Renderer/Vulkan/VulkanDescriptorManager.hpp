@@ -23,6 +23,7 @@ namespace Nightbloom
 
 		bool Initialize();
 		void Cleanup();
+		void FreeDescriptorSet(VkDescriptorSet set);
 
 		// Layout creation
 		VkDescriptorSetLayout CreateTextureSetLayout();

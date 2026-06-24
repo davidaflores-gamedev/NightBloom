@@ -2,6 +2,9 @@
 # Nightbloom Engine .gitignore
 # =============================================================================
 
+# ==== Claude Code local files ====
+.claude/
+
 # ==== Build directories (CMake/VS) ====
 Build/
 build/

@@ -242,6 +242,8 @@ namespace Nightbloom
 			return false;
 		}
 
+		m_DescriptorManager = descriptorManager;  // remembered so Cleanup() can free the set
+
 		LOG_INFO("CreateDescriptorSet: texture {}x{}x{} force3D={} → set={:p}",
 			m_Width, m_Height, m_Depth, m_Force3D, (void*)m_DescriptorSet);
 
@@ -307,6 +309,13 @@ namespace Nightbloom
 	{
 		VkDevice device = m_Device ? m_Device->GetDevice() : VK_NULL_HANDLE;
 		if (device == VK_NULL_HANDLE) return;
+
+		if (m_DescriptorSet != VK_NULL_HANDLE && m_DescriptorManager)
+		{
+			m_DescriptorManager->FreeDescriptorSet(m_DescriptorSet);
+			m_DescriptorSet = VK_NULL_HANDLE;
+			m_DescriptorManager = nullptr;
+		}
 
 		if (m_Sampler != VK_NULL_HANDLE)
 		{

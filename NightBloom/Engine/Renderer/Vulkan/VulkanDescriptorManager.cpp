@@ -161,6 +161,14 @@ namespace Nightbloom
 		return true;
 	}
 
+	void VulkanDescriptorManager::FreeDescriptorSet(VkDescriptorSet set)
+	{
+		if (set == VK_NULL_HANDLE || !m_Device || m_DescriptorPool == VK_NULL_HANDLE)
+			return;
+
+		vkFreeDescriptorSets(m_Device->GetDevice(), m_DescriptorPool, 1, &set);
+	}
+
 	void VulkanDescriptorManager::Cleanup()
 	{
 		VkDevice device = m_Device ? m_Device->GetDevice() : VK_NULL_HANDLE;
