@@ -13,6 +13,7 @@
 #include "Engine/Renderer/Components/ComputeDispatcher.hpp"
 #include "Engine/Core/Logger/Logger.hpp"
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 
 namespace Nightbloom
 {
@@ -115,50 +116,115 @@ namespace Nightbloom
             }
         }
 
-        // ---- Regenerate heightmap -------------------------------------------
-        DestroyHeightmap();
+        // ---- Regenerate heightmap, but only if noise params actually changed
+        // (e.g. an LOD-driven resolution change has no effect on the noise
+        // texture — regenerating it would be a wasted compute dispatch)
+        bool needsHeightmap = !m_Heightmap
+            || desc.noise.width != m_CurrentDesc.noise.width
+            || desc.noise.height != m_CurrentDesc.noise.height
+            || desc.noise.noiseType != m_CurrentDesc.noise.noiseType
+            || desc.noise.octaves != m_CurrentDesc.noise.octaves
+            || desc.noise.frequency != m_CurrentDesc.noise.frequency
+            || desc.noise.persistence != m_CurrentDesc.noise.persistence
+            || desc.noise.lacunarity != m_CurrentDesc.noise.lacunarity
+            || desc.noise.seed != m_CurrentDesc.noise.seed;
 
-        NoiseTextureGenerator* noiseGen = m_Renderer->GetNoiseGenerator();
-        ComputeDispatcher* dispatch = m_Renderer->GetComputeDispatcher();
-
-        if (!noiseGen || !dispatch)
+        if (needsHeightmap)
         {
-            LOG_ERROR("TerrainSystem::Regenerate — noise generator not available");
-            return false;
+            DestroyHeightmap();
+
+            NoiseTextureGenerator* noiseGen = m_Renderer->GetNoiseGenerator();
+            ComputeDispatcher* dispatch = m_Renderer->GetComputeDispatcher();
+
+            if (!noiseGen || !dispatch)
+            {
+                LOG_ERROR("TerrainSystem::Regenerate — noise generator not available");
+                return false;
+            }
+
+            // Force depth=1 — we need a true 2D texture that the vertex shader
+            // can sample with sampler2D (3D textures are not valid here)
+            NoiseTextureDesc noiseDesc = desc.noise;
+            noiseDesc.depth = 1;
+            noiseDesc.debugName = "TerrainHeightmap";
+
+            m_Heightmap = noiseGen->Generate(noiseDesc, dispatch);
+            if (!m_Heightmap)
+            {
+                LOG_ERROR("TerrainSystem::Regenerate — noise generation failed");
+                return false;
+            }
+
+            // ---- Allocate / update heightmap descriptor set ----------------
+            // We allocate a fresh set each time. Old set is reclaimed by the pool
+            // on the next pool reset (or on Shutdown via vkResetDescriptorPool).
+            m_HeightmapDescriptorSet = m_DescriptorManager->AllocateHeightmapSet();
+            if (m_HeightmapDescriptorSet == VK_NULL_HANDLE)
+            {
+                LOG_ERROR("TerrainSystem::Regenerate — failed to allocate heightmap descriptor set");
+                return false;
+            }
+
+            m_DescriptorManager->UpdateHeightmapSet(m_HeightmapDescriptorSet, m_Heightmap);
+
+            LOG_INFO("TerrainSystem: heightmap regenerated ({}x{}, scale={:.1f})",
+                noiseDesc.width, noiseDesc.height, desc.heightScale);
         }
-
-        // Force depth=1 — we need a true 2D texture that the vertex shader
-        // can sample with sampler2D (3D textures are not valid here)
-        NoiseTextureDesc noiseDesc = desc.noise;
-        noiseDesc.depth = 1;
-        noiseDesc.debugName = "TerrainHeightmap";
-
-        m_Heightmap = noiseGen->Generate(noiseDesc, dispatch);
-        if (!m_Heightmap)
-        {
-            LOG_ERROR("TerrainSystem::Regenerate — noise generation failed");
-            return false;
-        }
-
-        // ---- Allocate / update heightmap descriptor set --------------------
-        // We allocate a fresh set each time. Old set is reclaimed by the pool
-        // on the next pool reset (or on Shutdown via vkResetDescriptorPool).
-        m_HeightmapDescriptorSet = m_DescriptorManager->AllocateHeightmapSet();
-        if (m_HeightmapDescriptorSet == VK_NULL_HANDLE)
-        {
-            LOG_ERROR("TerrainSystem::Regenerate — failed to allocate heightmap descriptor set");
-            return false;
-        }
-
-        m_DescriptorManager->UpdateHeightmapSet(m_HeightmapDescriptorSet, m_Heightmap);
 
         m_CurrentDesc = desc;
         m_Ready = true;
 
-        LOG_INFO("TerrainSystem: heightmap regenerated ({}x{}, scale={:.1f})",
-            noiseDesc.width, noiseDesc.height, desc.heightScale);
-
         return true;
+    }
+
+    // =========================================================================
+    // UpdateLOD
+    // =========================================================================
+    void TerrainSystem::UpdateLOD(const glm::vec3& cameraPosition, uint32_t baseResolution)
+    {
+        if (!m_Ready) return;
+
+        float distance = glm::length(cameraPosition - m_CurrentDesc.position);
+        uint32_t targetResolution = SelectLODResolution(distance, baseResolution, m_CurrentDesc.worldSize);
+
+        if (targetResolution != m_CurrentDesc.resolution)
+        {
+            TerrainDesc desc = m_CurrentDesc;
+            desc.resolution = targetResolution;
+            Regenerate(desc);
+        }
+    }
+
+    uint32_t TerrainSystem::SelectLODResolution(float distance, uint32_t baseResolution, float worldSize) const
+    {
+        uint32_t tier1Res = std::max(baseResolution / 2u, 32u);
+        uint32_t tier2Res = std::max(baseResolution / 4u, 32u);
+        uint32_t tier3Res = 32u;
+
+        float b1 = worldSize * 1.0f;
+        float b2 = worldSize * 2.0f;
+        float b3 = worldSize * 4.0f;
+
+        // Hysteresis: widen the boundary in the direction that keeps us in
+        // our current tier, so hovering near a threshold doesn't flicker.
+        const float kHysteresis = 0.15f;
+        bool inTier0 = (m_CurrentDesc.resolution == baseResolution);
+        bool inTier1 = !inTier0 && (m_CurrentDesc.resolution == tier1Res);
+        bool inTier2 = !inTier0 && !inTier1 && (m_CurrentDesc.resolution == tier2Res);
+
+        auto adjust = [kHysteresis](float boundary, bool currentlyCloser)
+        {
+            return currentlyCloser ? boundary * (1.0f + kHysteresis) : boundary * (1.0f - kHysteresis);
+        };
+
+        float adjB1 = adjust(b1, inTier0);
+        float adjB2 = adjust(b2, inTier0 || inTier1);
+        float adjB3 = adjust(b3, inTier0 || inTier1 || inTier2);
+
+        if (distance < adjB1) return baseResolution;
+        if (distance < adjB2) return tier1Res;
+        if (distance < adjB3) return tier2Res;
+        return tier3Res;
     }
 
     // =========================================================================

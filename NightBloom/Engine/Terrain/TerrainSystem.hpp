@@ -61,10 +61,19 @@ namespace Nightbloom
 
         //----------------------------------------------------------------------
         // Regenerate — safe to call every frame if params changed.
-        // Waits for device idle, destroys old heightmap, generates new one,
-        // updates the descriptor set.
+        // Waits for device idle. Rebuilds the grid mesh if resolution/worldSize
+        // changed; only regenerates the heightmap if noise params changed.
         //----------------------------------------------------------------------
         bool Regenerate(const TerrainDesc& desc);
+
+        //----------------------------------------------------------------------
+        // UpdateLOD — call once per frame before SubmitDraw. Picks a grid
+        // resolution tier based on distance from cameraPosition to the
+        // terrain's center, never exceeding baseResolution (the user-selected
+        // "near" resolution). Triggers a mesh-only Regenerate() if the tier
+        // changes (heightmap is left untouched — see Regenerate()).
+        //----------------------------------------------------------------------
+        void UpdateLOD(const glm::vec3& cameraPosition, uint32_t baseResolution);
 
         //----------------------------------------------------------------------
         // SubmitDraw — add the terrain draw command to the frame draw list.
@@ -86,6 +95,7 @@ namespace Nightbloom
 
     private:
         bool BuildGridMesh(uint32_t resolution, float worldSize);
+        uint32_t SelectLODResolution(float distance, uint32_t baseResolution, float worldSize) const;
         void DestroyHeightmap();
 
         Renderer* m_Renderer = nullptr;

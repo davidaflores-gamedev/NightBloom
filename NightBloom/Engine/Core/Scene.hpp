@@ -9,6 +9,7 @@
 #include "Engine/Renderer/Model.hpp"
 #include "Engine/Renderer/DrawCommandSystem.hpp"
 #include "Engine/Renderer/Light.hpp"
+#include "Engine/Renderer/Frustum.hpp"
 #include <glm/glm.hpp>
 #include <vector>
 #include <string>
@@ -207,20 +208,45 @@ namespace Nightbloom
 			return index < m_Lights.size() ? &m_Lights[index] : nullptr;
 		}
 
-		// Build draw list from all visible objects
-		void BuildDrawList(DrawList& drawList) const
+		// Build draw list from all visible objects.
+		// If a frustum is provided, model-based objects are culled against it
+		// using their world-space AABB. Primitive objects (MeshDrawable) have
+		// no bounds data yet and are always submitted.
+		void BuildDrawList(DrawList& drawList, const Frustum* frustum = nullptr) const
 		{
+			m_LastObjectCount = 0;
+			m_LastCulledCount = 0;
+
 			for (const auto& obj : m_Objects)
 			{
-				if (obj.visible)
+				if (!obj.visible) continue;
+
+				auto* drawable = obj.GetDrawable();
+				if (!drawable) continue;
+
+				m_LastObjectCount++;
+
+				if (frustum && obj.model)
 				{
-					if (auto* drawable = obj.GetDrawable())
+					glm::vec3 worldCenter, worldExtents;
+					TransformAABB(
+						obj.model->GetBoundsMin(), obj.model->GetBoundsMax(),
+						obj.model->GetTransform(),
+						worldCenter, worldExtents);
+
+					if (!frustum->Intersects(worldCenter, worldExtents))
 					{
-						drawList.AddDrawable(drawable);
+						m_LastCulledCount++;
+						continue;
 					}
 				}
+
+				drawList.AddDrawable(drawable);
 			}
 		}
+
+		size_t GetLastObjectCount() const { return m_LastObjectCount; }
+		size_t GetLastCulledCount() const { return m_LastCulledCount; }
 
 		// Build GPU-ready lighting data from all enabled lights
 		SceneLightingData BuildLightingData() const
@@ -298,6 +324,10 @@ namespace Nightbloom
 		int m_SelectedLightIndex = -1;
 		glm::vec3 m_AmbientColor = glm::vec3(0.03f, 0.03f, 0.05f);
 		float m_AmbientIntensity = 1.0f;
+
+		// Stats from the most recent BuildDrawList call (for debug display)
+		mutable size_t m_LastObjectCount = 0;
+		mutable size_t m_LastCulledCount = 0;
 	};
 
 } // namespace Nightbloom

@@ -273,11 +273,16 @@ namespace Nightbloom {
         void OnRender() override
         {
             DrawList drawList;
-            if (m_EditorScene) m_EditorScene->BuildDrawList(drawList);
+            if (m_EditorScene)
+            {
+                glm::mat4 viewProj = m_Camera->GetProjectionMatrix() * m_Camera->GetViewMatrix();
+                Frustum frustum = Frustum::ExtractFromMatrix(viewProj);
+                m_EditorScene->BuildDrawList(drawList, &frustum);
+            }
 
             RenderEditorUI();
             
-            m_TerrainPanel.SubmitTerrainDraw(drawList);
+            m_TerrainPanel.SubmitTerrainDraw(drawList, m_Camera->GetPosition());
             drawList.SortByPipeline();
             GetRenderer()->SubmitDrawList(drawList);
         }
@@ -316,7 +321,7 @@ namespace Nightbloom {
         TerrainPanel            m_TerrainPanel;
 
         // -------------------------------------------------------------------------
-        // RenderEditorUI — builds the EditorContext and calls into each panel
+        // RenderEditorUI ï¿½ builds the EditorContext and calls into each panel
         // -------------------------------------------------------------------------
         void RenderEditorUI()
         {
@@ -373,7 +378,7 @@ namespace Nightbloom {
         }
 
         // -------------------------------------------------------------------------
-        // Main menu bar — only place that controls panel visibility
+        // Main menu bar ï¿½ only place that controls panel visibility
         // -------------------------------------------------------------------------
         void DrawMainMenuBar()
         {
@@ -444,7 +449,7 @@ namespace Nightbloom {
                 ImGui::EndMenu();
             }
 
-            // Right side — play controls
+            // Right side ï¿½ play controls
             float menuWidth = ImGui::GetWindowWidth();
             if (menuWidth > 400)
             {

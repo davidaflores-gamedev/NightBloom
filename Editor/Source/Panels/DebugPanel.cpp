@@ -1,6 +1,7 @@
 // Panels/DebugPanel.cpp
 #include "DebugPanel.hpp"
 #include "Engine/Renderer/Renderer.hpp"
+#include "Engine/Core/Scene.hpp"
 #include <imgui.h>
 
 namespace Nightbloom
@@ -48,6 +49,15 @@ namespace Nightbloom
         ImGui::Separator();
         ImGui::Text("Memory & Performance");
         ImGui::Text("Press F3 to toggle performance overlay");
+        ImGui::Text("FPS: %.1f (%.2f ms)", ImGui::GetIO().Framerate, 1000.0f / ImGui::GetIO().Framerate);
+
+        ImGui::Separator();
+        ImGui::Text("Frustum Culling");
+        if (ctx.scene)
+        {
+            ImGui::Text("Scene objects: %zu / Culled: %zu",
+                ctx.scene->GetLastObjectCount(), ctx.scene->GetLastCulledCount());
+        }
 
         ImGui::End();
     }

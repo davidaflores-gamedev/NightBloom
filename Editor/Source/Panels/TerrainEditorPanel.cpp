@@ -152,11 +152,10 @@ namespace Nightbloom
 
     TerrainDesc TerrainPanel::BuildDesc() const
     {
-        const uint32_t resValues[] = { 32, 64, 128, 256, 512 };
         const uint32_t hmapResValues[] = { 128, 256, 512, 1024 };
 
         TerrainDesc desc;
-        desc.resolution = resValues[m_ResolutionIndex];
+        desc.resolution = ResolutionValues[m_ResolutionIndex];
         desc.worldSize = m_WorldSize;
         desc.heightScale = m_HeightScale;
         desc.position = glm::vec3(m_Position[0], m_Position[1], m_Position[2]);

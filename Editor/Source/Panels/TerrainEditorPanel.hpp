@@ -16,13 +16,20 @@ namespace Nightbloom
         // Call before renderer shuts down (while Vulkan device is still alive)
         void Cleanup();
 
-        void SubmitTerrainDraw(DrawList& drawList) const
+        void SubmitTerrainDraw(DrawList& drawList, const glm::vec3& cameraPosition)
         {
             if (m_TerrainInitialized && m_Terrain.IsReady())
-            m_Terrain.SubmitDraw(drawList);
+            {
+                m_Terrain.UpdateLOD(cameraPosition, ResolutionValues[m_ResolutionIndex]);
+                m_Terrain.SubmitDraw(drawList);
+            }
         }
 
     private:
+        // Shared source of truth for the resolution dropdown, used by both
+        // BuildDesc() and SubmitTerrainDraw()'s LOD base-resolution lookup.
+        static constexpr uint32_t ResolutionValues[5] = { 32, 64, 128, 256, 512 };
+
         // TerrainSystem owned by this panel (holds GPU resources)
         TerrainSystem m_Terrain;
         bool          m_TerrainInitialized = false;
