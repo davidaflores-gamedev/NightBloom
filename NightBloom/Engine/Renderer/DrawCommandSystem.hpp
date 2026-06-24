@@ -51,7 +51,7 @@ namespace Nightbloom
 	// A single draw command
 	struct DrawCommand
 	{
-		PipelineType pipeline = PipelineType::Triangle;
+		PipelineType pipeline = PipelineType::Mesh;
 
 		// Vertex data
 		Buffer* vertexBuffer = nullptr;
