@@ -96,6 +96,27 @@ namespace Nightbloom
 		VkDescriptorSetLayout GetFireflyParamsSetLayout() const { return m_FireflyParamsSetLayout; }
 		VkDescriptorSet GetFireflyParamsDescriptorSet(uint32_t frameIndex) { return m_FireflyParamsDescriptorSets[frameIndex]; }
 
+		// --- Cloud set (compute set 0 in CloudRaymarch.comp): shape sampler
+		//     (0), detail sampler (1), params UBO (2). Double-buffered per
+		//     frame since binding 2 (the UBO) differs per frame, even though
+		//     the two texture bindings don't change frame-to-frame.
+		VkDescriptorSetLayout CreateCloudSetLayout();
+		VkDescriptorSet AllocateCloudSet(uint32_t frameIndex);
+		void UpdateCloudTextureBindings(uint32_t frameIndex, VulkanTexture* shapeTexture, VulkanTexture* detailTexture);
+		void UpdateCloudParamsBinding(uint32_t frameIndex, VkBuffer buffer, VkDeviceSize size);
+		VkDescriptorSetLayout GetCloudSetLayout() const { return m_CloudSetLayout; }
+		VkDescriptorSet GetCloudDescriptorSet(uint32_t frameIndex) { return m_CloudDescriptorSets[frameIndex]; }
+
+		// --- Cloud result sampler (set 1 in the graphics Clouds pass): the
+		//     low-res raymarch output, sampled (with hardware bilinear
+		//     upscale) by the simplified composite fragment shader. Single
+		//     set, not per-frame — recreated whenever the result image is
+		//     recreated (resize or resolution-scale change).
+		VkDescriptorSetLayout CreateCloudResultSetLayout();
+		VkDescriptorSet AllocateCloudResultSet();
+		void UpdateCloudResultSet(VkDescriptorSet set, VulkanTexture* resultTexture);
+		VkDescriptorSetLayout GetCloudResultSetLayout() const { return m_CloudResultSetLayout; }
+
 	private:
 		VulkanDevice* m_Device = nullptr;
 		VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
@@ -110,6 +131,8 @@ namespace Nightbloom
 		VkDescriptorSetLayout m_HeightmapSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_FireflyStorageSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_FireflyParamsSetLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_CloudSetLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_CloudResultSetLayout = VK_NULL_HANDLE;
 
 		// Per-frame descriptor sets
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_TextureDescriptorSets{};
@@ -118,5 +141,6 @@ namespace Nightbloom
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_ShadowDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_ShadowUniformDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_FireflyParamsDescriptorSets{};
+		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_CloudDescriptorSets{};
 	};
 }

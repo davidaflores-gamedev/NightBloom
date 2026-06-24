@@ -1,0 +1,208 @@
+//------------------------------------------------------------------------------
+// CloudRaymarch.comp
+//
+// The cloud raymarch, moved here from Clouds.frag for performance — this
+// dispatches once per frame over a LOW-RESOLUTION output image (see
+// CloudSystem::m_ResolutionScale) instead of running per full-res screen
+// pixel. The graphics Clouds.vert/.frag pass that draws afterward just
+// samples this result (with hardware bilinear upscale) and composites it —
+// occlusion against terrain still happens there, via the same full-res
+// depth test as before, completely unchanged.
+//
+// Logic here is identical to the prior Clouds.frag raymarch (ray
+// reconstruction, slab intersection, distance-fade march cap, additive
+// coverage bias, dithered march start, single-lobe HG + Beer-Lambert) - see
+// .claude/ROADMAP.md Phase 1.4 for the full history of tuning fixes.
+//
+// Descriptor sets:
+//   set 0 - FrameUBO (view, proj, invView, invProj, cameraPos)
+//   set 1 - shape sampler (0), detail sampler (1), CloudParamsUBO (2)
+//   set 2 - SceneLightingData (reused from Mesh/Terrain - the sun)
+//   set 3 - output storage image (writeonly)
+//------------------------------------------------------------------------------
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform FrameUBO {
+    mat4 view;
+    mat4 proj;
+    vec4 time;
+    vec4 cameraPos;
+    mat4 invView;
+    mat4 invProj;
+} frame;
+
+layout(set = 1, binding = 0) uniform sampler3D shapeSampler;
+layout(set = 1, binding = 1) uniform sampler3D detailSampler;
+
+layout(std140, set = 1, binding = 2) uniform CloudParamsUBO {
+    vec4 layerBounds; // x=minY, y=maxY
+    vec4 wind;        // xyz = wind direction*speed, w = totalTime
+    vec4 shape;       // x=shapeScale, y=detailScale, z=detailStrength, w=coverage
+    vec4 density;     // x=densityMultiplier, y=extinctionCoefficient, z=hgAnisotropy(g), w=stepCount
+} params;
+
+struct LightData {
+    vec4 position;
+    vec4 color;
+    vec4 attenuation;
+};
+
+struct ShadowData {
+    mat4 lightSpaceMatrix;
+    vec4 shadowParams;
+};
+
+layout(std140, set = 2, binding = 0) uniform SceneLighting {
+    LightData lights[16];
+    vec4 ambient;
+    int numLights;
+    int _pad1, _pad2, _pad3;
+    ShadowData shadowData;
+} lighting;
+
+layout(set = 3, binding = 0, rgba16f) uniform writeonly image2D outputImage;
+
+float remap(float v, float lo, float hi, float newLo, float newHi)
+{
+    return newLo + clamp((v - lo) / max(hi - lo, 1e-6), 0.0, 1.0) * (newHi - newLo);
+}
+
+float InterleavedGradientNoise(vec2 screenPos)
+{
+    const vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(screenPos, magic.xy)));
+}
+
+float HenyeyGreenstein(float cosTheta, float g)
+{
+    float g2 = g * g;
+    return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(1.0 + g2 - 2.0 * g * cosTheta, 1e-4), 1.5));
+}
+
+float SampleCloudDensity(vec3 worldPos, vec3 windOffset)
+{
+    vec3 scrolledPos = worldPos + windOffset;
+
+    float shapeVal = texture(shapeSampler, scrolledPos * params.shape.x).r;
+    float coverage = params.shape.w;
+
+    // Cheap upper-bound check before paying for the detail sample + lighting
+    // math: detail erosion can only SUBTRACT from density, never add to it,
+    // so if the shape value alone (the zero-erosion best case) already can't
+    // clear the coverage threshold, this step contributes nothing no matter
+    // what detail/height-fade would have done. This matters most for sparse
+    // coverage, where the loop's transmittance early-out in main() rarely
+    // triggers (rays never accumulate enough density to go opaque), so most
+    // steps were paying full price for "obviously empty" samples.
+    float maxPossibleDensity = clamp(shapeVal + (coverage - 0.5) * 1.5, 0.0, 1.0);
+    if (maxPossibleDensity <= 0.001)
+        return 0.0;
+
+    float detailVal = texture(detailSampler, scrolledPos * params.shape.y).r;
+    float eroded = shapeVal - detailVal * params.shape.z;
+    float density = clamp(eroded + (coverage - 0.5) * 1.5, 0.0, 1.0);
+
+    float layerMinY = params.layerBounds.x;
+    float layerMaxY = params.layerBounds.y;
+    float heightFrac = clamp((worldPos.y - layerMinY) / max(layerMaxY - layerMinY, 1e-4), 0.0, 1.0);
+    float heightFade = smoothstep(0.0, 0.15, heightFrac) * smoothstep(0.0, 0.15, 1.0 - heightFrac);
+
+    return density * heightFade;
+}
+
+void main()
+{
+    ivec2 outputSize = imageSize(outputImage);
+    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
+
+    if (pixelCoord.x >= outputSize.x || pixelCoord.y >= outputSize.y)
+        return;
+
+    vec2 ndc = (vec2(pixelCoord) + 0.5) / vec2(outputSize) * 2.0 - 1.0;
+
+    vec4 viewSpacePos = frame.invProj * vec4(ndc, 1.0, 1.0);
+    viewSpacePos /= viewSpacePos.w;
+    vec3 viewDir = normalize(viewSpacePos.xyz);
+    vec3 rayDir = normalize((frame.invView * vec4(viewDir, 0.0)).xyz);
+    vec3 rayOrigin = frame.cameraPos.xyz;
+
+    float layerMinY = params.layerBounds.x;
+    float layerMaxY = params.layerBounds.y;
+
+    if (abs(rayDir.y) < 1e-5)
+    {
+        if (rayOrigin.y < layerMinY || rayOrigin.y > layerMaxY)
+        {
+            imageStore(outputImage, pixelCoord, vec4(0.0));
+            return;
+        }
+    }
+
+    float tMinY = (layerMinY - rayOrigin.y) / rayDir.y;
+    float tMaxY = (layerMaxY - rayOrigin.y) / rayDir.y;
+    float tEnter = max(min(tMinY, tMaxY), 0.0);
+    float tExit = max(tMinY, tMaxY);
+
+    if (tExit <= tEnter)
+    {
+        imageStore(outputImage, pixelCoord, vec4(0.0));
+        return;
+    }
+
+    const float kMaxMarchDistance = 8000.0;
+    float marchRange = tExit - tEnter;
+    float distanceFade = 1.0 - smoothstep(kMaxMarchDistance * 0.7, kMaxMarchDistance, marchRange);
+    tExit = tEnter + min(marchRange, kMaxMarchDistance);
+
+    if (distanceFade <= 0.001)
+    {
+        imageStore(outputImage, pixelCoord, vec4(0.0));
+        return;
+    }
+
+    int stepCount = max(int(params.density.w), 1);
+    float stepSize = (tExit - tEnter) / float(stepCount);
+
+    vec3 sunDir = normalize(-lighting.lights[0].position.xyz);
+    vec3 sunColor = lighting.lights[0].color.rgb * lighting.lights[0].color.a;
+    vec3 ambientColor = lighting.ambient.rgb * lighting.ambient.a;
+
+    float cosTheta = dot(rayDir, sunDir);
+    float hg = HenyeyGreenstein(cosTheta, params.density.z);
+
+    float densityMultiplier = params.density.x;
+    float extinctionCoefficient = params.density.y;
+
+    vec3 accumColor = vec3(0.0);
+    float transmittance = 1.0;
+    float t = tEnter + InterleavedGradientNoise(vec2(pixelCoord)) * stepSize;
+
+    // Constant across every step of this pixel's march - hoisted out of
+    // SampleCloudDensity (and out of the loop) rather than recomputed per step.
+    vec3 windOffset = params.wind.xyz * params.wind.w;
+
+    for (int i = 0; i < stepCount; ++i)
+    {
+        vec3 worldPos = rayOrigin + rayDir * t;
+        float density = SampleCloudDensity(worldPos, windOffset) * densityMultiplier;
+
+        if (density > 0.001)
+        {
+            float extinction = density * extinctionCoefficient * stepSize;
+            float stepTransmittance = exp(-extinction);
+
+            vec3 lightContribution = (sunColor * hg + ambientColor) * density;
+            accumColor += lightContribution * transmittance * stepSize;
+
+            transmittance *= stepTransmittance;
+            if (transmittance < 0.01) break;
+        }
+
+        t += stepSize;
+    }
+
+    float alpha = clamp(1.0 - transmittance, 0.0, 1.0) * distanceFade;
+    imageStore(outputImage, pixelCoord, vec4(accumColor * distanceFade, alpha));
+}

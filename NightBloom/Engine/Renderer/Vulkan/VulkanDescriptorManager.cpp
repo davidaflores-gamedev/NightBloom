@@ -182,6 +182,31 @@ namespace Nightbloom
 			}
 		}
 
+		// Create cloud set layout + per-frame sets
+		m_CloudSetLayout = CreateCloudSetLayout();
+		if (m_CloudSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create cloud descriptor set layout");
+			return false;
+		}
+
+		for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+		{
+			m_CloudDescriptorSets[i] = AllocateCloudSet(i);
+			if (m_CloudDescriptorSets[i] == VK_NULL_HANDLE)
+			{
+				LOG_ERROR("Failed to allocate cloud descriptor set for frame {}", i);
+				return false;
+			}
+		}
+
+		m_CloudResultSetLayout = CreateCloudResultSetLayout();
+		if (m_CloudResultSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create cloud result descriptor set layout");
+			return false;
+		}
+
 		LOG_INFO("VulkanDescriptorManager initialized successfully");
 		return true;
 	}
@@ -260,6 +285,18 @@ namespace Nightbloom
 			m_FireflyParamsSetLayout = VK_NULL_HANDLE;
 		}
 
+		if (m_CloudSetLayout != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorSetLayout(device, m_CloudSetLayout, nullptr);
+			m_CloudSetLayout = VK_NULL_HANDLE;
+		}
+
+		if (m_CloudResultSetLayout != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorSetLayout(device, m_CloudResultSetLayout, nullptr);
+			m_CloudResultSetLayout = VK_NULL_HANDLE;
+		}
+
 		if (m_DescriptorPool != VK_NULL_HANDLE)
 		{
 			vkDestroyDescriptorPool(device, m_DescriptorPool, nullptr);
@@ -300,7 +337,11 @@ namespace Nightbloom
 		uboBinding.binding = 0;
 		uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		uboBinding.descriptorCount = 1;
-		uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+		// COMPUTE included so CloudRaymarch.comp can read view/proj/invView/
+		// invProj/cameraPos for ray reconstruction - existing graphics
+		// pipelines are unaffected by widening this (they just don't use
+		// the extra visibility).
+		uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -322,7 +363,9 @@ namespace Nightbloom
 		lightingBinding.binding = 0;
 		lightingBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		lightingBinding.descriptorCount = 1;
-		lightingBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+		// COMPUTE included so CloudRaymarch.comp can read the sun light -
+		// existing graphics pipelines are unaffected by widening this.
+		lightingBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -988,6 +1031,182 @@ namespace Nightbloom
 		write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		write.descriptorCount = 1;
 		write.pBufferInfo = &bufferInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &write, 0, nullptr);
+	}
+
+	// =====================================================================
+	// Cloud set (set 1 in Clouds pass): shape sampler, detail sampler, params UBO
+	// =====================================================================
+
+	VkDescriptorSetLayout VulkanDescriptorManager::CreateCloudSetLayout()
+	{
+		// Consumed by CloudRaymarch.comp (the raymarch moved to a low-res
+		// compute pass for performance - see .claude/ROADMAP.md Phase 1.4).
+		// The graphics composite pass no longer needs shape/detail/params at
+		// all; it only samples the small raymarch result via CloudResultSetLayout.
+		std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
+
+		bindings[0].binding = 0;
+		bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		bindings[0].descriptorCount = 1;
+		bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		bindings[1].binding = 1;
+		bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		bindings[1].descriptorCount = 1;
+		bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		bindings[2].binding = 2;
+		bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		bindings[2].descriptorCount = 1;
+		bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+		layoutInfo.pBindings = bindings.data();
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create cloud descriptor set layout");
+			return VK_NULL_HANDLE;
+		}
+
+		LOG_INFO("Created cloud descriptor set layout");
+		return layout;
+	}
+
+	VkDescriptorSet VulkanDescriptorManager::AllocateCloudSet(uint32_t frameIndex)
+	{
+		(void)frameIndex;
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_CloudSetLayout;
+
+		VkDescriptorSet set;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &set) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate cloud descriptor set");
+			return VK_NULL_HANDLE;
+		}
+		return set;
+	}
+
+	void VulkanDescriptorManager::UpdateCloudTextureBindings(uint32_t frameIndex, VulkanTexture* shapeTexture, VulkanTexture* detailTexture)
+	{
+		if (!shapeTexture || !detailTexture) return;
+
+		VkDescriptorImageInfo shapeInfo{};
+		shapeInfo.sampler = shapeTexture->GetSampler();
+		shapeInfo.imageView = shapeTexture->GetImageView();
+		shapeInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		VkDescriptorImageInfo detailInfo{};
+		detailInfo.sampler = detailTexture->GetSampler();
+		detailInfo.imageView = detailTexture->GetImageView();
+		detailInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		std::array<VkWriteDescriptorSet, 2> writes{};
+		writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[0].dstSet = m_CloudDescriptorSets[frameIndex];
+		writes[0].dstBinding = 0;
+		writes[0].descriptorCount = 1;
+		writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		writes[0].pImageInfo = &shapeInfo;
+
+		writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[1].dstSet = m_CloudDescriptorSets[frameIndex];
+		writes[1].dstBinding = 1;
+		writes[1].descriptorCount = 1;
+		writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		writes[1].pImageInfo = &detailInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+	}
+
+	void VulkanDescriptorManager::UpdateCloudParamsBinding(uint32_t frameIndex, VkBuffer buffer, VkDeviceSize size)
+	{
+		VkDescriptorBufferInfo bufferInfo{};
+		bufferInfo.buffer = buffer;
+		bufferInfo.offset = 0;
+		bufferInfo.range = size;
+
+		VkWriteDescriptorSet write{};
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = m_CloudDescriptorSets[frameIndex];
+		write.dstBinding = 2;
+		write.descriptorCount = 1;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		write.pBufferInfo = &bufferInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &write, 0, nullptr);
+	}
+
+	// =====================================================================
+	// Cloud result sampler (set 1 in the graphics Clouds composite pass)
+	// =====================================================================
+
+	VkDescriptorSetLayout VulkanDescriptorManager::CreateCloudResultSetLayout()
+	{
+		VkDescriptorSetLayoutBinding binding{};
+		binding.binding = 0;
+		binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		binding.descriptorCount = 1;
+		binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &binding;
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create cloud result descriptor set layout");
+			return VK_NULL_HANDLE;
+		}
+
+		LOG_INFO("Created cloud result descriptor set layout");
+		return layout;
+	}
+
+	VkDescriptorSet VulkanDescriptorManager::AllocateCloudResultSet()
+	{
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_CloudResultSetLayout;
+
+		VkDescriptorSet set;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &set) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate cloud result descriptor set");
+			return VK_NULL_HANDLE;
+		}
+		return set;
+	}
+
+	void VulkanDescriptorManager::UpdateCloudResultSet(VkDescriptorSet set, VulkanTexture* resultTexture)
+	{
+		if (set == VK_NULL_HANDLE || !resultTexture) return;
+
+		VkDescriptorImageInfo imageInfo{};
+		imageInfo.sampler = resultTexture->GetSampler();
+		imageInfo.imageView = resultTexture->GetImageView();
+		imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		VkWriteDescriptorSet write{};
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = set;
+		write.dstBinding = 0;
+		write.descriptorCount = 1;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		write.pImageInfo = &imageInfo;
 
 		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &write, 0, nullptr);
 	}

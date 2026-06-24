@@ -51,7 +51,8 @@ vec3 hash33(vec3 p)
 // Returns approximately [-1, 1] — not clamped, callers should remap.
 // ============================================================================
 
-float perlin(vec3 p)
+// period: see noise.comp's identical function for why this wraps the hash.
+float perlin(vec3 p, float period)
 {
     vec3 i = floor(p);
     vec3 f = fract(p);
@@ -60,14 +61,14 @@ float perlin(vec3 p)
     vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
 
     // Gradient dot products at the 8 corners of the unit cube
-    float n000 = dot(hash33(i + vec3(0.0, 0.0, 0.0)) * 2.0 - 1.0, f - vec3(0.0, 0.0, 0.0));
-    float n100 = dot(hash33(i + vec3(1.0, 0.0, 0.0)) * 2.0 - 1.0, f - vec3(1.0, 0.0, 0.0));
-    float n010 = dot(hash33(i + vec3(0.0, 1.0, 0.0)) * 2.0 - 1.0, f - vec3(0.0, 1.0, 0.0));
-    float n110 = dot(hash33(i + vec3(1.0, 1.0, 0.0)) * 2.0 - 1.0, f - vec3(1.0, 1.0, 0.0));
-    float n001 = dot(hash33(i + vec3(0.0, 0.0, 1.0)) * 2.0 - 1.0, f - vec3(0.0, 0.0, 1.0));
-    float n101 = dot(hash33(i + vec3(1.0, 0.0, 1.0)) * 2.0 - 1.0, f - vec3(1.0, 0.0, 1.0));
-    float n011 = dot(hash33(i + vec3(0.0, 1.0, 1.0)) * 2.0 - 1.0, f - vec3(0.0, 1.0, 1.0));
-    float n111 = dot(hash33(i + vec3(1.0, 1.0, 1.0)) * 2.0 - 1.0, f - vec3(1.0, 1.0, 1.0));
+    float n000 = dot(hash33(mod(i + vec3(0.0, 0.0, 0.0), period)) * 2.0 - 1.0, f - vec3(0.0, 0.0, 0.0));
+    float n100 = dot(hash33(mod(i + vec3(1.0, 0.0, 0.0), period)) * 2.0 - 1.0, f - vec3(1.0, 0.0, 0.0));
+    float n010 = dot(hash33(mod(i + vec3(0.0, 1.0, 0.0), period)) * 2.0 - 1.0, f - vec3(0.0, 1.0, 0.0));
+    float n110 = dot(hash33(mod(i + vec3(1.0, 1.0, 0.0), period)) * 2.0 - 1.0, f - vec3(1.0, 1.0, 0.0));
+    float n001 = dot(hash33(mod(i + vec3(0.0, 0.0, 1.0), period)) * 2.0 - 1.0, f - vec3(0.0, 0.0, 1.0));
+    float n101 = dot(hash33(mod(i + vec3(1.0, 0.0, 1.0), period)) * 2.0 - 1.0, f - vec3(1.0, 0.0, 1.0));
+    float n011 = dot(hash33(mod(i + vec3(0.0, 1.0, 1.0), period)) * 2.0 - 1.0, f - vec3(0.0, 1.0, 1.0));
+    float n111 = dot(hash33(mod(i + vec3(1.0, 1.0, 1.0), period)) * 2.0 - 1.0, f - vec3(1.0, 1.0, 1.0));
 
     return mix(
         mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
@@ -82,7 +83,7 @@ float perlin(vec3 p)
 // Searching 3x3x3 neighborhood guarantees we don't miss the nearest point.
 // ============================================================================
 
-float worley(vec3 p)
+float worley(vec3 p, float period)
 {
     vec3  i       = floor(p);
     float minDist = 1e10;
@@ -92,7 +93,7 @@ float worley(vec3 p)
     for (int x = -1; x <= 1; x++)
     {
         vec3 neighbor  = i + vec3(float(x), float(y), float(z));
-        vec3 cellPoint = neighbor + hash33(neighbor); // random point inside the cell
+        vec3 cellPoint = neighbor + hash33(mod(neighbor, period)); // random point inside the cell
         float d        = length(cellPoint - p);
         minDist        = min(minDist, d);
     }
@@ -124,7 +125,7 @@ float fbm_perlin(vec3 p)
 
     for (uint i = 0u; i < pc.octaves; i++)
     {
-        val      += amp * perlin(p * freq);
+        val      += amp * perlin(p * freq, freq);
         totalAmp += amp;
         freq     *= pc.lacunarity;
         amp      *= pc.persistence;
@@ -149,7 +150,7 @@ float fbm_worley(vec3 p)
 
     for (uint i = 0u; i < pc.octaves; i++)
     {
-        val      += amp * (1.0 - worley(p * freq)); // invert: 0 = far from cell, 1 = at center
+        val      += amp * (1.0 - worley(p * freq, freq)); // invert: 0 = far from cell, 1 = at center
         totalAmp += amp;
         freq     *= pc.lacunarity;
         amp      *= pc.persistence;
@@ -175,7 +176,8 @@ float perlin_worley(vec3 p)
     float perlinVal = fbm_perlin(p);
 
     // Single-octave Worley at 2x base frequency adds midrange erosion detail
-    float worleyVal = 1.0 - worley(p * pc.frequency * 2.0);
+    float worleyFreq = pc.frequency * 2.0;
+    float worleyVal = 1.0 - worley(p * worleyFreq, worleyFreq);
 
     // Remap Perlin using Worley as the lower bound of the input range.
     // When Worley is low, the entire Perlin range maps down toward 0.

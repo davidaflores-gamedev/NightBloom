@@ -230,6 +230,10 @@ namespace Nightbloom
 			cmd.pipeline == PipelineType::Triangle		||
 			cmd.pipeline == PipelineType::Terrain		||
 			cmd.pipeline == PipelineType::Firefly		);
+			// Clouds excluded: the graphics composite pass only samples the
+			// low-res raymarch result (see below) - it needs no FrameUniforms
+			// at all, since the raymarch (and the camera math it needed)
+			// moved to CloudRaymarch.comp.
 
 		if (pipelineUsesUniforms && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
@@ -241,6 +245,26 @@ namespace Nightbloom
 				0,  // set 0 for uniforms
 				1,
 				&uniformSet,
+				0,
+				nullptr
+			);
+		}
+
+		// --- Bind cloud raymarch result (set 0 - Clouds' only descriptor set) ---
+		// Distinct from pipelineUsesTextures below: this is set 0 (the Clouds
+		// composite pipeline has no uniform set ahead of it), and the source
+		// is cmd.textureDescriptorSet (set by CloudSystem::SubmitDraw to its
+		// single, non-per-frame result descriptor set).
+		if (cmd.pipeline == PipelineType::Clouds && m_CurrentPipelineLayout != VK_NULL_HANDLE
+			&& cmd.textureDescriptorSet != VK_NULL_HANDLE)
+		{
+			vkCmdBindDescriptorSets(
+				commandBuffer,
+				VK_PIPELINE_BIND_POINT_GRAPHICS,
+				m_CurrentPipelineLayout,
+				0,  // set 0 - Clouds' only set
+				1,
+				&cmd.textureDescriptorSet,
 				0,
 				nullptr
 			);
@@ -297,6 +321,8 @@ namespace Nightbloom
 		}
 
 		// --- Bind lighting descriptor set (set 2) ---
+		// Clouds excluded: the sun/lighting read now happens in
+		// CloudRaymarch.comp, not the graphics composite pass.
 		bool pipelineUsesLighting = (
 			cmd.pipeline == PipelineType::Mesh			||
 			cmd.pipeline == PipelineType::Transparent	||

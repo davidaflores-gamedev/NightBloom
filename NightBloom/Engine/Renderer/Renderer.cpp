@@ -22,6 +22,7 @@
 #include "Engine/Renderer/Components/ComputeDispatcher.hpp"
 #include "Engine/Renderer/NoiseTextureGenerator.hpp"
 #include "Engine/VFX/FireflySystem.hpp"
+#include "Engine/VFX/CloudSystem.hpp"
 #include "Engine/Renderer/Components/ShadowMapManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Engine/Renderer/Components/UIManager.hpp"
@@ -250,6 +251,11 @@ namespace Nightbloom
 
 		uint32_t frameIndex = m_FrameSync->GetCurrentFrame();
 
+		if (m_CloudSystem)
+		{
+			m_CloudSystem->UpdateParams(frameIndex, m_LastDeltaTime);
+		}
+
 		// =====================================================================
 		// FIX: Compute shadow matrices FIRST so m_ShadowFrameData is populated
 		// before we upload it to the GPU buffer below.
@@ -263,6 +269,8 @@ namespace Nightbloom
 		m_CurrentFrameData.proj = m_ProjectionMatrix;
 		m_CurrentFrameData.time.x = m_TotalTime;
 		m_CurrentFrameData.cameraPos = glm::vec4(m_CameraPosition, 1.0f);
+		m_CurrentFrameData.invView = glm::inverse(m_ViewMatrix);
+		m_CurrentFrameData.invProj = glm::inverse(m_ProjectionMatrix);
 
 		void* mapped = m_FrameUniforms[frameIndex]->GetPersistentMappedPtr();
 		if (mapped)
@@ -619,6 +627,16 @@ namespace Nightbloom
 		if (!m_Resources->LoadShader("firefly_frag", ShaderStage::Fragment, "Firefly.frag"))
 		{
 			LOG_WARN("Failed to load firefly fragment shader - continuing without firefly pipeline");
+		}
+
+		if (!m_Resources->LoadShader("clouds_vert", ShaderStage::Vertex, "Clouds.vert"))
+		{
+			LOG_WARN("Failed to load clouds vertex shader - continuing without clouds pipeline");
+		}
+
+		if (!m_Resources->LoadShader("clouds_frag", ShaderStage::Fragment, "Clouds.frag"))
+		{
+			LOG_WARN("Failed to load clouds fragment shader - continuing without clouds pipeline");
 		}
 
 		LOG_INFO("Shaders loaded successfully");
@@ -1049,6 +1067,59 @@ namespace Nightbloom
 			}
 		}
 
+		// ---- Clouds pipeline --------------------------------------------------------
+		{
+			VulkanShader* cloudsVert = m_Resources->GetShader("clouds_vert");
+			VulkanShader* cloudsFrag = m_Resources->GetShader("clouds_frag");
+
+			if (cloudsVert && cloudsFrag)
+			{
+				PipelineConfig cloudsConfig;
+				cloudsConfig.vertexShader = cloudsVert;
+				cloudsConfig.fragmentShader = cloudsFrag;
+
+				// No vertex/index buffer - Clouds.vert generates a full-screen
+				// triangle procedurally from gl_VertexIndex.
+				cloudsConfig.useVertexInput = false;
+				cloudsConfig.topology = PrimitiveTopology::TriangleList;
+				cloudsConfig.polygonMode = PolygonMode::Fill;
+				cloudsConfig.cullMode = CullMode::None;
+				cloudsConfig.frontFace = FrontFace::CounterClockwise;
+
+				// Depth-tested against the scene (so terrain/mountains occlude
+				// clouds via the normal depth test - see Clouds.vert's fixed
+				// "at infinity" depth output), doesn't write depth.
+				cloudsConfig.depthTestEnable = true;
+				cloudsConfig.depthWriteEnable = false;
+				cloudsConfig.depthCompareOp = CompareOp::GreaterOrEqual;
+
+				// Standard alpha blend (not additive like Firefly's glow) -
+				// clouds composite over the sky/background normally.
+				cloudsConfig.blendEnable = true;
+				cloudsConfig.srcColorBlendFactor = BlendFactor::SrcAlpha;
+				cloudsConfig.dstColorBlendFactor = BlendFactor::OneMinusSrcAlpha;
+
+				// Descriptor sets: 0=cloud raymarch result (only set needed -
+				// the raymarch itself, and the FrameUniforms/lighting data it
+				// needs, moved to CloudRaymarch.comp; this pass just samples
+				// the low-res result and composites it).
+				cloudsConfig.useCloudResult = true;
+
+				if (m_PipelineAdapter->CreatePipeline(PipelineType::Clouds, cloudsConfig))
+				{
+					LOG_INFO("Clouds pipeline created successfully");
+				}
+				else
+				{
+					LOG_WARN("Failed to create clouds pipeline - clouds will not render");
+				}
+			}
+			else
+			{
+				LOG_WARN("Clouds shaders not found - skipping clouds pipeline");
+			}
+		}
+
 		// ---- Firefly pipeline -------------------------------------------------------
 		{
 			VulkanShader* fireflyVert = m_Resources->GetShader("firefly_vert");
@@ -1458,6 +1529,14 @@ namespace Nightbloom
 			m_ComputeDispatcher->ComputeToVertexShaderBarrier(
 				cmd, m_FireflySystem->GetAgentBuffer(), m_FireflySystem->GetAgentBufferSize());
 		}
+
+		if (m_CloudSystem)
+		{
+			m_CloudSystem->DispatchRaymarch(cmd, m_ComputeDispatcher.get(), frameIndex);
+
+			m_ComputeDispatcher->ComputeWriteToFragmentSampleBarrier(
+				cmd, m_CloudSystem->GetRaymarchResultImage());
+		}
 	}
 
 	// =====================================================================
@@ -1636,6 +1715,12 @@ namespace Nightbloom
 		{
 			LOG_ERROR("Failed to recreate framebuffers");
 			return false;
+		}
+
+		// Recreate the cloud raymarch result image at the new scaled resolution
+		if (m_CloudSystem)
+		{
+			m_CloudSystem->ResizeResultImage(newWidth, newHeight);
 		}
 
 		// TODO: Update pipeline viewport/scissor if needed

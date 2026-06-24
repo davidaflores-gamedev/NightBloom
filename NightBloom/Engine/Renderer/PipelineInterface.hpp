@@ -116,6 +116,9 @@ namespace Nightbloom
 		TerrainShadow,
 
 		// VFX
+		Clouds,         // Full-screen raymarched sky volume, drawn after opaque/terrain so the
+		                // normal depth test occludes it correctly; before Firefly so fireflies
+		                // composite on top of clouds, not the reverse.
 		Firefly,        // Instanced billboard quads, additive blend, agent data from a storage buffer
 
 		Count
@@ -175,6 +178,7 @@ namespace Nightbloom
 		bool useShadowMap = false;  // Pipeline samples shadow map (set 3)
 		bool useHeightmap = false;  // Pipeline samples heightmap in vertex stage (set 4)
 		bool useFireflyStorage = false;  // Pipeline reads the firefly agent storage buffer (vertex+compute stages)
+		bool useCloudResult = false;  // Pipeline samples the low-res cloud raymarch result (fragment stage) - the graphics Clouds composite pass's only texture input
 
 		bool hasColorAttachment = true;  // False for depth-only passes (shadow)
 

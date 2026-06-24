@@ -33,6 +33,7 @@
 #include "Panels/LiveShaderTestPanel.hpp"
 #include "Panels/TerrainEditorPanel.hpp"
 #include "Panels/FireflyPanel.hpp"
+#include "Panels/CloudPanel.hpp"
 
 #include <imgui.h>
 #include <glm/glm.hpp>
@@ -67,6 +68,7 @@ namespace Nightbloom {
             m_NoiseDebug.Cleanup();
             m_TerrainPanel.Cleanup();
             m_FireflyPanel.Cleanup();
+            m_CloudPanel.Cleanup();
 
             m_EditorScene.reset();
             SaveEditorSettings();
@@ -286,6 +288,7 @@ namespace Nightbloom {
             
             m_TerrainPanel.SubmitTerrainDraw(drawList, m_Camera->GetPosition());
             m_FireflyPanel.SubmitFireflyDraw(drawList);
+            m_CloudPanel.SubmitCloudDraw(drawList);
             drawList.SortByPipeline();
             GetRenderer()->SubmitDrawList(drawList);
         }
@@ -323,6 +326,7 @@ namespace Nightbloom {
         LiveShaderTestPanel     m_LiveShaderTest;
         TerrainPanel            m_TerrainPanel;
         FireflyPanel            m_FireflyPanel;
+        CloudPanel              m_CloudPanel;
 
         // -------------------------------------------------------------------------
         // RenderEditorUI � builds the EditorContext and calls into each panel
@@ -372,6 +376,7 @@ namespace Nightbloom {
             if (m_Lighting.isOpen)        m_Lighting.Draw(ctx);
             if (m_TerrainPanel.isOpen) m_TerrainPanel.Draw(ctx);
             if (m_FireflyPanel.isOpen) m_FireflyPanel.Draw(ctx);
+            if (m_CloudPanel.isOpen) m_CloudPanel.Draw(ctx);
 
             m_Viewport.isPlayMode = m_Viewport.isPlayMode; // carried from menu bar
             m_Viewport.Draw(ctx);
@@ -432,6 +437,7 @@ namespace Nightbloom {
                 ImGui::MenuItem("Noise Debug", nullptr, &m_NoiseDebug.isOpen);
                 ImGui::MenuItem("Terrain", nullptr, &m_TerrainPanel.isOpen);
                 ImGui::MenuItem("Fireflies", nullptr, &m_FireflyPanel.isOpen);
+                ImGui::MenuItem("Clouds", nullptr, &m_CloudPanel.isOpen);
                 ImGui::MenuItem("Live Shader Test", nullptr, &m_LiveShaderTest.isOpen);
                 ImGui::Separator();
                 ImGui::MenuItem("ImGui Demo", nullptr, &m_ShowDemoWindow);

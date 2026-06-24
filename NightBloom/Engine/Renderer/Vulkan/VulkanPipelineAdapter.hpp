@@ -222,6 +222,22 @@ namespace Nightbloom
 				vkConfig.descriptorSetLayouts.push_back(textureLayout);
 			}
 
+			if (config.useFireflyStorage && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout fireflyStorageLayout = m_DescriptorManager->GetFireflyStorageSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(fireflyStorageLayout);  // becomes set 1 (Firefly has no texture set)
+			}
+
+			// The graphics Clouds composite pass needs nothing but this one
+			// sampler — the raymarch (and the FrameUniforms/lighting data it
+			// needs) moved to CloudRaymarch.comp. No useUniformBuffer/
+			// useLighting set for this pipeline, so this lands at set 0.
+			if (config.useCloudResult && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout cloudResultLayout = m_DescriptorManager->GetCloudResultSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(cloudResultLayout);
+			}
+
 			if (config.useLighting && m_DescriptorManager)
 			{
 				VkDescriptorSetLayout lightingLayout = m_DescriptorManager->GetLightingSetLayout();
@@ -239,13 +255,6 @@ namespace Nightbloom
 				VkDescriptorSetLayout heightmapLayout = m_DescriptorManager->GetHeightmapSetLayout();
 				vkConfig.descriptorSetLayouts.push_back(heightmapLayout);  // becomes set 4
 			}
-
-			if (config.useFireflyStorage && m_DescriptorManager)
-			{
-				VkDescriptorSetLayout fireflyStorageLayout = m_DescriptorManager->GetFireflyStorageSetLayout();
-				vkConfig.descriptorSetLayouts.push_back(fireflyStorageLayout);  // becomes set 1 (Firefly has no texture set)
-			}
-
 
 			LOG_INFO("Creating pipeline with {} descriptor set layouts", vkConfig.descriptorSetLayouts.size());
 			for (size_t i = 0; i < vkConfig.descriptorSetLayouts.size(); ++i)

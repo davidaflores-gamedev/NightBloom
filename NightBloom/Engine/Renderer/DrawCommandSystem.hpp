@@ -46,6 +46,13 @@ namespace Nightbloom
 		glm::mat4 proj;
 		glm::vec4 time;  // x = time, yzw = reserved for new data later
 		glm::vec4 cameraPos;  // For specular calculations later
+		// Computed once per frame on the CPU rather than per-pixel in a
+		// shader (e.g. Clouds.frag's ray reconstruction) — a 4x4 inverse is
+		// identical for every pixel in the frame, so doing it per-pixel is
+		// pure waste. Appended at the end so existing shaders that don't
+		// declare these fields are unaffected (they just don't read them).
+		glm::mat4 invView;
+		glm::mat4 invProj;
 	};
 
 	// A single draw command
