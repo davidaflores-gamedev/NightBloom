@@ -83,6 +83,19 @@ namespace Nightbloom
 		void UpdateHeightmapSet(VkDescriptorSet set, VulkanTexture* texture);
 		VkDescriptorSetLayout GetHeightmapSetLayout() const { return m_HeightmapSetLayout; }
 
+		// --- Firefly agent storage buffer (vertex+compute visible, single set, not per-frame) ---
+		VkDescriptorSetLayout CreateFireflyStorageSetLayout();
+		VkDescriptorSet AllocateFireflyStorageSet();
+		void UpdateFireflyStorageSet(VkDescriptorSet set, VkBuffer buffer, VkDeviceSize size);
+		VkDescriptorSetLayout GetFireflyStorageSetLayout() const { return m_FireflyStorageSetLayout; }
+
+		// --- Firefly params UBO (compute-only, double-buffered like Lighting/Uniform) ---
+		VkDescriptorSetLayout CreateFireflyParamsSetLayout();
+		VkDescriptorSet AllocateFireflyParamsSet(uint32_t frameIndex);
+		void UpdateFireflyParamsSet(uint32_t frameIndex, VkBuffer buffer, VkDeviceSize size);
+		VkDescriptorSetLayout GetFireflyParamsSetLayout() const { return m_FireflyParamsSetLayout; }
+		VkDescriptorSet GetFireflyParamsDescriptorSet(uint32_t frameIndex) { return m_FireflyParamsDescriptorSets[frameIndex]; }
+
 	private:
 		VulkanDevice* m_Device = nullptr;
 		VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
@@ -95,6 +108,8 @@ namespace Nightbloom
 		VkDescriptorSetLayout m_ComputeStorageSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_ComputeImageSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_HeightmapSetLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_FireflyStorageSetLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_FireflyParamsSetLayout = VK_NULL_HANDLE;
 
 		// Per-frame descriptor sets
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_TextureDescriptorSets{};
@@ -102,5 +117,6 @@ namespace Nightbloom
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_LightingDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_ShadowDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_ShadowUniformDescriptorSets{};
+		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_FireflyParamsDescriptorSets{};
 	};
 }

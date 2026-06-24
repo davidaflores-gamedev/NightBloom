@@ -32,6 +32,7 @@
 #include "Panels/ShaderCompilerPanel.hpp"
 #include "Panels/LiveShaderTestPanel.hpp"
 #include "Panels/TerrainEditorPanel.hpp"
+#include "Panels/FireflyPanel.hpp"
 
 #include <imgui.h>
 #include <glm/glm.hpp>
@@ -65,6 +66,7 @@ namespace Nightbloom {
             // Cleanup panels that hold GPU resources before renderer goes away
             m_NoiseDebug.Cleanup();
             m_TerrainPanel.Cleanup();
+            m_FireflyPanel.Cleanup();
 
             m_EditorScene.reset();
             SaveEditorSettings();
@@ -283,6 +285,7 @@ namespace Nightbloom {
             RenderEditorUI();
             
             m_TerrainPanel.SubmitTerrainDraw(drawList, m_Camera->GetPosition());
+            m_FireflyPanel.SubmitFireflyDraw(drawList);
             drawList.SortByPipeline();
             GetRenderer()->SubmitDrawList(drawList);
         }
@@ -319,6 +322,7 @@ namespace Nightbloom {
         ShaderCompilerPanel     m_ShaderCompiler;
         LiveShaderTestPanel     m_LiveShaderTest;
         TerrainPanel            m_TerrainPanel;
+        FireflyPanel            m_FireflyPanel;
 
         // -------------------------------------------------------------------------
         // RenderEditorUI � builds the EditorContext and calls into each panel
@@ -367,6 +371,7 @@ namespace Nightbloom {
             if (m_LiveShaderTest.isOpen)  m_LiveShaderTest.Draw(ctx);
             if (m_Lighting.isOpen)        m_Lighting.Draw(ctx);
             if (m_TerrainPanel.isOpen) m_TerrainPanel.Draw(ctx);
+            if (m_FireflyPanel.isOpen) m_FireflyPanel.Draw(ctx);
 
             m_Viewport.isPlayMode = m_Viewport.isPlayMode; // carried from menu bar
             m_Viewport.Draw(ctx);
@@ -426,6 +431,7 @@ namespace Nightbloom {
                 ImGui::MenuItem("Lighting", nullptr, &m_Lighting.isOpen);
                 ImGui::MenuItem("Noise Debug", nullptr, &m_NoiseDebug.isOpen);
                 ImGui::MenuItem("Terrain", nullptr, &m_TerrainPanel.isOpen);
+                ImGui::MenuItem("Fireflies", nullptr, &m_FireflyPanel.isOpen);
                 ImGui::MenuItem("Live Shader Test", nullptr, &m_LiveShaderTest.isOpen);
                 ImGui::Separator();
                 ImGui::MenuItem("ImGui Demo", nullptr, &m_ShowDemoWindow);

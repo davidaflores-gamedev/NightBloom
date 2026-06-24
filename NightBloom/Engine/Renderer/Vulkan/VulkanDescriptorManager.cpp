@@ -157,6 +157,31 @@ namespace Nightbloom
 			return false;
 		}
 
+		// Create firefly storage + params set layouts
+		m_FireflyStorageSetLayout = CreateFireflyStorageSetLayout();
+		if (m_FireflyStorageSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create firefly storage descriptor set layout");
+			return false;
+		}
+
+		m_FireflyParamsSetLayout = CreateFireflyParamsSetLayout();
+		if (m_FireflyParamsSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create firefly params descriptor set layout");
+			return false;
+		}
+
+		for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+		{
+			m_FireflyParamsDescriptorSets[i] = AllocateFireflyParamsSet(i);
+			if (m_FireflyParamsDescriptorSets[i] == VK_NULL_HANDLE)
+			{
+				LOG_ERROR("Failed to allocate firefly params descriptor set for frame {}", i);
+				return false;
+			}
+		}
+
 		LOG_INFO("VulkanDescriptorManager initialized successfully");
 		return true;
 	}
@@ -221,6 +246,18 @@ namespace Nightbloom
 		{
 			vkDestroyDescriptorSetLayout(device, m_HeightmapSetLayout, nullptr);
 			m_HeightmapSetLayout = VK_NULL_HANDLE;
+		}
+
+		if (m_FireflyStorageSetLayout != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorSetLayout(device, m_FireflyStorageSetLayout, nullptr);
+			m_FireflyStorageSetLayout = VK_NULL_HANDLE;
+		}
+
+		if (m_FireflyParamsSetLayout != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorSetLayout(device, m_FireflyParamsSetLayout, nullptr);
+			m_FireflyParamsSetLayout = VK_NULL_HANDLE;
 		}
 
 		if (m_DescriptorPool != VK_NULL_HANDLE)
@@ -818,6 +855,139 @@ namespace Nightbloom
 		write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		write.descriptorCount = 1;
 		write.pImageInfo = &imageInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &write, 0, nullptr);
+	}
+
+	// =====================================================================
+	// Firefly agent storage buffer (vertex+compute visible, single set)
+	// =====================================================================
+
+	VkDescriptorSetLayout VulkanDescriptorManager::CreateFireflyStorageSetLayout()
+	{
+		VkDescriptorSetLayoutBinding binding{};
+		binding.binding = 0;
+		binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		binding.descriptorCount = 1;
+		binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+		binding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &binding;
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create firefly storage descriptor set layout");
+			return VK_NULL_HANDLE;
+		}
+
+		LOG_INFO("Created firefly storage (vertex+compute) descriptor set layout");
+		return layout;
+	}
+
+	VkDescriptorSet VulkanDescriptorManager::AllocateFireflyStorageSet()
+	{
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_FireflyStorageSetLayout;
+
+		VkDescriptorSet set;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &set) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate firefly storage descriptor set");
+			return VK_NULL_HANDLE;
+		}
+		return set;
+	}
+
+	void VulkanDescriptorManager::UpdateFireflyStorageSet(VkDescriptorSet set, VkBuffer buffer, VkDeviceSize size)
+	{
+		if (set == VK_NULL_HANDLE || buffer == VK_NULL_HANDLE) return;
+
+		VkDescriptorBufferInfo bufferInfo{};
+		bufferInfo.buffer = buffer;
+		bufferInfo.offset = 0;
+		bufferInfo.range = size;
+
+		VkWriteDescriptorSet write{};
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = set;
+		write.dstBinding = 0;
+		write.dstArrayElement = 0;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		write.descriptorCount = 1;
+		write.pBufferInfo = &bufferInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &write, 0, nullptr);
+	}
+
+	// =====================================================================
+	// Firefly params UBO (compute-only, double-buffered)
+	// =====================================================================
+
+	VkDescriptorSetLayout VulkanDescriptorManager::CreateFireflyParamsSetLayout()
+	{
+		VkDescriptorSetLayoutBinding binding{};
+		binding.binding = 0;
+		binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		binding.descriptorCount = 1;
+		binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+		binding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &binding;
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create firefly params descriptor set layout");
+			return VK_NULL_HANDLE;
+		}
+
+		LOG_INFO("Created firefly params (compute) descriptor set layout");
+		return layout;
+	}
+
+	VkDescriptorSet VulkanDescriptorManager::AllocateFireflyParamsSet(uint32_t frameIndex)
+	{
+		(void)frameIndex;
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_FireflyParamsSetLayout;
+
+		VkDescriptorSet set;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &set) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate firefly params descriptor set");
+			return VK_NULL_HANDLE;
+		}
+		return set;
+	}
+
+	void VulkanDescriptorManager::UpdateFireflyParamsSet(uint32_t frameIndex, VkBuffer buffer, VkDeviceSize size)
+	{
+		VkDescriptorBufferInfo bufferInfo{};
+		bufferInfo.buffer = buffer;
+		bufferInfo.offset = 0;
+		bufferInfo.range = size;
+
+		VkWriteDescriptorSet write{};
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = m_FireflyParamsDescriptorSets[frameIndex];
+		write.dstBinding = 0;
+		write.dstArrayElement = 0;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		write.descriptorCount = 1;
+		write.pBufferInfo = &bufferInfo;
 
 		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &write, 0, nullptr);
 	}

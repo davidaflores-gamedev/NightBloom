@@ -115,6 +115,9 @@ namespace Nightbloom
 		Terrain,
 		TerrainShadow,
 
+		// VFX
+		Firefly,        // Instanced billboard quads, additive blend, agent data from a storage buffer
+
 		Count
 	};
 
@@ -171,6 +174,7 @@ namespace Nightbloom
 		bool useLighting = false;	// Pipeline uses scene lighting UBO (set 2)
 		bool useShadowMap = false;  // Pipeline samples shadow map (set 3)
 		bool useHeightmap = false;  // Pipeline samples heightmap in vertex stage (set 4)
+		bool useFireflyStorage = false;  // Pipeline reads the firefly agent storage buffer (vertex+compute stages)
 
 		bool hasColorAttachment = true;  // False for depth-only passes (shadow)
 

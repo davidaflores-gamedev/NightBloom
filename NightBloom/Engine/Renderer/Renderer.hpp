@@ -39,6 +39,7 @@ namespace Nightbloom
 	class NoiseTextureGenerator;
 	struct NoiseTextureDesc;
 	class ShadowMapManager;
+	class FireflySystem;
 
 	//texture include?
 	class VulkanTexture;
@@ -92,9 +93,15 @@ namespace Nightbloom
 
 		// System access
 		RenderDevice* GetDevice() const { return m_Device.get(); }
+		VkDevice GetVkDevice() const; // raw Vulkan device handle, for systems building their own pipelines (e.g. FireflySystem)
 		IPipelineManager* GetPipelineManager() const { return (IPipelineManager*)(m_PipelineAdapter.get()); };
 		ResourceManager* GetResourceManager() const { return m_Resources.get(); }
 		VulkanDescriptorManager* GetDescriptorManager() { return m_DescriptorManager.get(); }
+
+		// FireflySystem dispatches its compute simulation here every frame,
+		// before the main render pass, via RecordComputePass(). Not owned —
+		// caller (e.g. FireflyPanel) manages its lifetime.
+		void SetFireflySystem(FireflySystem* system) { m_FireflySystem = system; }
 
 		// Pipeline operations (temporary - for testing)
 		void TogglePipeline();
@@ -181,6 +188,9 @@ namespace Nightbloom
 		ShadowConfig m_ShadowConfig;
 
 		float m_TotalTime = 0.0f;  // Track time for shaders
+		float m_LastDeltaTime = 0.0f;  // Frame-to-frame delta, for systems like FireflySystem
+
+		FireflySystem* m_FireflySystem = nullptr; // not owned
 
 		// Testing state (temporary)
 		PipelineType m_CurrentPipeline = PipelineType::Mesh;

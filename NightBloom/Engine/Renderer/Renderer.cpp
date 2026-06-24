@@ -21,6 +21,7 @@
 #include "Engine/Renderer/Components/ResourceManager.hpp"
 #include "Engine/Renderer/Components/ComputeDispatcher.hpp"
 #include "Engine/Renderer/NoiseTextureGenerator.hpp"
+#include "Engine/VFX/FireflySystem.hpp"
 #include "Engine/Renderer/Components/ShadowMapManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Engine/Renderer/Components/UIManager.hpp"
@@ -243,7 +244,9 @@ namespace Nightbloom
 		// Track time for shaders
 		static auto startTime = std::chrono::high_resolution_clock::now();
 		auto currentTime = std::chrono::high_resolution_clock::now();
-		m_TotalTime = std::chrono::duration<float>(currentTime - startTime).count();
+		float newTotalTime = std::chrono::duration<float>(currentTime - startTime).count();
+		m_LastDeltaTime = newTotalTime - m_TotalTime;
+		m_TotalTime = newTotalTime;
 
 		uint32_t frameIndex = m_FrameSync->GetCurrentFrame();
 
@@ -608,8 +611,23 @@ namespace Nightbloom
 			LOG_WARN("Failed to load terrain fragment shader - continuing without terrain pipeline");
 		}
 
+		if (!m_Resources->LoadShader("firefly_vert", ShaderStage::Vertex, "Firefly.vert"))
+		{
+			LOG_WARN("Failed to load firefly vertex shader - continuing without firefly pipeline");
+		}
+
+		if (!m_Resources->LoadShader("firefly_frag", ShaderStage::Fragment, "Firefly.frag"))
+		{
+			LOG_WARN("Failed to load firefly fragment shader - continuing without firefly pipeline");
+		}
+
 		LOG_INFO("Shaders loaded successfully");
 		return true;
+	}
+
+	VkDevice Renderer::GetVkDevice() const
+	{
+		return static_cast<VulkanDevice*>(m_Device.get())->GetDevice();
 	}
 
 	void Renderer::TogglePipeline()
@@ -1027,7 +1045,56 @@ namespace Nightbloom
 			}
 			else
 			{
-				LOG_WARN("Terrain shaders not found � skipping terrain pipeline");
+				LOG_WARN("Terrain shaders not found - skipping terrain pipeline");
+			}
+		}
+
+		// ---- Firefly pipeline -------------------------------------------------------
+		{
+			VulkanShader* fireflyVert = m_Resources->GetShader("firefly_vert");
+			VulkanShader* fireflyFrag = m_Resources->GetShader("firefly_frag");
+
+			if (fireflyVert && fireflyFrag)
+			{
+				PipelineConfig fireflyConfig;
+				fireflyConfig.vertexShader = fireflyVert;
+				fireflyConfig.fragmentShader = fireflyFrag;
+
+				// No vertex/index buffer - Firefly.vert generates the billboard
+				// quad procedurally from gl_VertexIndex.
+				fireflyConfig.useVertexInput = false;
+				fireflyConfig.topology = PrimitiveTopology::TriangleList;
+				fireflyConfig.polygonMode = PolygonMode::Fill;
+				fireflyConfig.cullMode = CullMode::None; // billboards always face the camera
+				fireflyConfig.frontFace = FrontFace::CounterClockwise;
+
+				// Depth-tested against the scene, but doesn't write depth -
+				// overlapping glows shouldn't punch holes in the depth buffer.
+				fireflyConfig.depthTestEnable = true;
+				fireflyConfig.depthWriteEnable = false;
+				fireflyConfig.depthCompareOp = CompareOp::GreaterOrEqual;
+
+				// Additive-alpha glow blend
+				fireflyConfig.blendEnable = true;
+				fireflyConfig.srcColorBlendFactor = BlendFactor::SrcAlpha;
+				fireflyConfig.dstColorBlendFactor = BlendFactor::One;
+
+				// Descriptor sets: 0=uniform (camera), 1=firefly agent storage buffer
+				fireflyConfig.useUniformBuffer = true;
+				fireflyConfig.useFireflyStorage = true;
+
+				if (m_PipelineAdapter->CreatePipeline(PipelineType::Firefly, fireflyConfig))
+				{
+					LOG_INFO("Firefly pipeline created successfully");
+				}
+				else
+				{
+					LOG_WARN("Failed to create firefly pipeline - fireflies will not render");
+				}
+			}
+			else
+			{
+				LOG_WARN("Firefly shaders not found - skipping firefly pipeline");
 			}
 		}
 
@@ -1294,7 +1361,7 @@ namespace Nightbloom
 		// =========================================================================
 		// COMPUTE PASS - Runs BEFORE any render passes (outside render pass)
 		// =========================================================================
-		if (m_ComputeEnabled && m_ComputeDispatcher)
+		if ((m_ComputeEnabled || m_FireflySystem) && m_ComputeDispatcher)
 		{
 			RecordComputePass(frameIndex);
 		}
@@ -1342,43 +1409,55 @@ namespace Nightbloom
 
 	void Renderer::RecordComputePass(uint32_t frameIndex)
 	{
-		if (!m_ComputeEnabled || !m_ComputeDispatcher)
+		if (!m_ComputeDispatcher)
 		{
 			return;
 		}
 
 		VkCommandBuffer cmd = m_Commands->GetCommandBuffer(frameIndex);
 
-		// Get compute pipeline and layout
-		VkPipeline computePipeline = m_PipelineAdapter->GetVulkanManager()->GetPipeline(PipelineType::Compute);
-		VkPipelineLayout computeLayout = m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::Compute);
-
-		if (computePipeline == VK_NULL_HANDLE || computeLayout == VK_NULL_HANDLE)
+		if (m_ComputeEnabled)
 		{
-			LOG_WARN("Compute pipeline or layout is null");
-			return;
+			// Get compute pipeline and layout
+			VkPipeline computePipeline = m_PipelineAdapter->GetVulkanManager()->GetPipeline(PipelineType::Compute);
+			VkPipelineLayout computeLayout = m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::Compute);
+
+			if (computePipeline == VK_NULL_HANDLE || computeLayout == VK_NULL_HANDLE)
+			{
+				LOG_WARN("Compute pipeline or layout is null");
+			}
+			else
+			{
+				// Bind compute pipeline
+				m_ComputeDispatcher->BindPipeline(cmd, computePipeline);
+
+				// Bind descriptor set with our storage buffers
+				m_ComputeDispatcher->BindDescriptorSet(cmd, computeLayout, 0, m_ComputeTestDescriptorSet);
+
+				// Set push constants with current time
+				ComputePushConstants pushData;
+				pushData.dataSize = COMPUTE_TEST_ELEMENT_COUNT;
+				pushData.time = m_TotalTime;  // Use the renderer's time value
+
+				m_ComputeDispatcher->PushConstants(cmd, computeLayout, &pushData, sizeof(pushData));
+
+				// Dispatch compute work
+				// With local_size_x = 64, we need 1 workgroup for 64 elements
+				uint32_t groupCountX = ComputeDispatcher::CalculateGroupCount(COMPUTE_TEST_ELEMENT_COUNT, 64);
+				m_ComputeDispatcher->Dispatch(cmd, groupCountX, 1, 1);
+
+				// Barrier: ensure compute writes are visible before any graphics work
+				m_ComputeDispatcher->ComputeToGraphicsGlobalBarrier(cmd);
+			}
 		}
 
-		// Bind compute pipeline
-		m_ComputeDispatcher->BindPipeline(cmd, computePipeline);
+		if (m_FireflySystem)
+		{
+			m_FireflySystem->DispatchCompute(cmd, m_ComputeDispatcher.get(), frameIndex, m_LastDeltaTime);
 
-		// Bind descriptor set with our storage buffers
-		m_ComputeDispatcher->BindDescriptorSet(cmd, computeLayout, 0, m_ComputeTestDescriptorSet);
-
-		// Set push constants with current time
-		ComputePushConstants pushData;
-		pushData.dataSize = COMPUTE_TEST_ELEMENT_COUNT;
-		pushData.time = m_TotalTime;  // Use the renderer's time value
-
-		m_ComputeDispatcher->PushConstants(cmd, computeLayout, &pushData, sizeof(pushData));
-
-		// Dispatch compute work
-		// With local_size_x = 64, we need 1 workgroup for 64 elements
-		uint32_t groupCountX = ComputeDispatcher::CalculateGroupCount(COMPUTE_TEST_ELEMENT_COUNT, 64);
-		m_ComputeDispatcher->Dispatch(cmd, groupCountX, 1, 1);
-
-		// Barrier: ensure compute writes are visible before any graphics work
-		m_ComputeDispatcher->ComputeToGraphicsGlobalBarrier(cmd);
+			m_ComputeDispatcher->ComputeToVertexShaderBarrier(
+				cmd, m_FireflySystem->GetAgentBuffer(), m_FireflySystem->GetAgentBufferSize());
+		}
 	}
 
 	// =====================================================================

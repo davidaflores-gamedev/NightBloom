@@ -240,6 +240,12 @@ namespace Nightbloom
 				vkConfig.descriptorSetLayouts.push_back(heightmapLayout);  // becomes set 4
 			}
 
+			if (config.useFireflyStorage && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout fireflyStorageLayout = m_DescriptorManager->GetFireflyStorageSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(fireflyStorageLayout);  // becomes set 1 (Firefly has no texture set)
+			}
+
 
 			LOG_INFO("Creating pipeline with {} descriptor set layouts", vkConfig.descriptorSetLayouts.size());
 			for (size_t i = 0; i < vkConfig.descriptorSetLayouts.size(); ++i)

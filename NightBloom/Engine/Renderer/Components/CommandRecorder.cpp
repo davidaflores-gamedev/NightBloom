@@ -227,8 +227,9 @@ namespace Nightbloom
 			cmd.pipeline == PipelineType::Mesh			||
 			cmd.pipeline == PipelineType::Transparent	||
 			cmd.pipeline == PipelineType::NodeGenerated ||
-			cmd.pipeline == PipelineType::Triangle		|| 
-			cmd.pipeline == PipelineType::Terrain		);
+			cmd.pipeline == PipelineType::Triangle		||
+			cmd.pipeline == PipelineType::Terrain		||
+			cmd.pipeline == PipelineType::Firefly		);
 
 		if (pipelineUsesUniforms && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
@@ -247,10 +248,11 @@ namespace Nightbloom
 
 		// --- Bind texture descriptor set (set 1) ---
 		bool pipelineUsesTextures = (
-			cmd.pipeline == PipelineType::Mesh			|| 
+			cmd.pipeline == PipelineType::Mesh			||
 			cmd.pipeline == PipelineType::Transparent	||
-			cmd.pipeline == PipelineType::NodeGenerated || 
-			cmd.pipeline == PipelineType::Terrain		);
+			cmd.pipeline == PipelineType::NodeGenerated ||
+			cmd.pipeline == PipelineType::Terrain		||
+			cmd.pipeline == PipelineType::Firefly		);
 
 		if (pipelineUsesTextures && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE )
 		{
