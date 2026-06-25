@@ -32,6 +32,7 @@
 #include "Panels/ShaderCompilerPanel.hpp"
 #include "Panels/LiveShaderTestPanel.hpp"
 #include "Panels/TerrainEditorPanel.hpp"
+#include "Panels/GrassPanel.hpp"
 #include "Panels/FireflyPanel.hpp"
 #include "Panels/CloudPanel.hpp"
 
@@ -67,6 +68,7 @@ namespace Nightbloom {
             // Cleanup panels that hold GPU resources before renderer goes away
             m_NoiseDebug.Cleanup();
             m_TerrainPanel.Cleanup();
+            m_GrassPanel.Cleanup();
             m_FireflyPanel.Cleanup();
             m_CloudPanel.Cleanup();
 
@@ -277,16 +279,18 @@ namespace Nightbloom {
         void OnRender() override
         {
             DrawList drawList;
+            glm::mat4 viewProj = m_Camera->GetProjectionMatrix() * m_Camera->GetViewMatrix();
+            Frustum frustum = Frustum::ExtractFromMatrix(viewProj);
+
             if (m_EditorScene)
             {
-                glm::mat4 viewProj = m_Camera->GetProjectionMatrix() * m_Camera->GetViewMatrix();
-                Frustum frustum = Frustum::ExtractFromMatrix(viewProj);
                 m_EditorScene->BuildDrawList(drawList, &frustum);
             }
 
             RenderEditorUI();
-            
+
             m_TerrainPanel.SubmitTerrainDraw(drawList, m_Camera->GetPosition());
+            m_GrassPanel.SubmitGrassDraw(drawList, frustum, m_TerrainPanel.GetTerrainSystem(), m_Camera->GetPosition());
             m_FireflyPanel.SubmitFireflyDraw(drawList);
             m_CloudPanel.SubmitCloudDraw(drawList);
             drawList.SortByPipeline();
@@ -325,6 +329,7 @@ namespace Nightbloom {
         ShaderCompilerPanel     m_ShaderCompiler;
         LiveShaderTestPanel     m_LiveShaderTest;
         TerrainPanel            m_TerrainPanel;
+        GrassPanel              m_GrassPanel;
         FireflyPanel            m_FireflyPanel;
         CloudPanel              m_CloudPanel;
 
@@ -375,6 +380,7 @@ namespace Nightbloom {
             if (m_LiveShaderTest.isOpen)  m_LiveShaderTest.Draw(ctx);
             if (m_Lighting.isOpen)        m_Lighting.Draw(ctx);
             if (m_TerrainPanel.isOpen) m_TerrainPanel.Draw(ctx);
+            if (m_GrassPanel.isOpen) m_GrassPanel.Draw(ctx, m_TerrainPanel.GetTerrainSystem());
             if (m_FireflyPanel.isOpen) m_FireflyPanel.Draw(ctx);
             if (m_CloudPanel.isOpen) m_CloudPanel.Draw(ctx);
 
@@ -436,6 +442,7 @@ namespace Nightbloom {
                 ImGui::MenuItem("Lighting", nullptr, &m_Lighting.isOpen);
                 ImGui::MenuItem("Noise Debug", nullptr, &m_NoiseDebug.isOpen);
                 ImGui::MenuItem("Terrain", nullptr, &m_TerrainPanel.isOpen);
+                ImGui::MenuItem("Grass", nullptr, &m_GrassPanel.isOpen);
                 ImGui::MenuItem("Fireflies", nullptr, &m_FireflyPanel.isOpen);
                 ImGui::MenuItem("Clouds", nullptr, &m_CloudPanel.isOpen);
                 ImGui::MenuItem("Live Shader Test", nullptr, &m_LiveShaderTest.isOpen);

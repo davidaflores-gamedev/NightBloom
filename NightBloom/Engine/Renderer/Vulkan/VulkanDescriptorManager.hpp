@@ -107,6 +107,14 @@ namespace Nightbloom
 		VkDescriptorSetLayout GetCloudSetLayout() const { return m_CloudSetLayout; }
 		VkDescriptorSet GetCloudDescriptorSet(uint32_t frameIndex) { return m_CloudDescriptorSets[frameIndex]; }
 
+		// --- Foliage instance storage buffer (vertex-only visible, single
+		//     set, not per-frame — one-shot generated like Terrain's heightmap,
+		//     no compute dispatch involved) ---
+		VkDescriptorSetLayout CreateFoliageStorageSetLayout();
+		VkDescriptorSet AllocateFoliageStorageSet();
+		void UpdateFoliageStorageSet(VkDescriptorSet set, VkBuffer buffer, VkDeviceSize size);
+		VkDescriptorSetLayout GetFoliageStorageSetLayout() const { return m_FoliageStorageSetLayout; }
+
 		// --- Cloud result sampler (set 1 in the graphics Clouds pass): the
 		//     low-res raymarch output, sampled (with hardware bilinear
 		//     upscale) by the simplified composite fragment shader. Single
@@ -133,6 +141,7 @@ namespace Nightbloom
 		VkDescriptorSetLayout m_FireflyParamsSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_CloudSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_CloudResultSetLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_FoliageStorageSetLayout = VK_NULL_HANDLE;
 
 		// Per-frame descriptor sets
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_TextureDescriptorSets{};

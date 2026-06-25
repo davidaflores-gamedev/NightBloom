@@ -229,6 +229,7 @@ namespace Nightbloom
 			cmd.pipeline == PipelineType::NodeGenerated ||
 			cmd.pipeline == PipelineType::Triangle		||
 			cmd.pipeline == PipelineType::Terrain		||
+			cmd.pipeline == PipelineType::Foliage		||
 			cmd.pipeline == PipelineType::Firefly		);
 			// Clouds excluded: the graphics composite pass only samples the
 			// low-res raymarch result (see below) - it needs no FrameUniforms
@@ -276,6 +277,7 @@ namespace Nightbloom
 			cmd.pipeline == PipelineType::Transparent	||
 			cmd.pipeline == PipelineType::NodeGenerated ||
 			cmd.pipeline == PipelineType::Terrain		||
+			cmd.pipeline == PipelineType::Foliage		||
 			cmd.pipeline == PipelineType::Firefly		);
 
 		if (pipelineUsesTextures && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE )
@@ -326,7 +328,8 @@ namespace Nightbloom
 		bool pipelineUsesLighting = (
 			cmd.pipeline == PipelineType::Mesh			||
 			cmd.pipeline == PipelineType::Transparent	||
-			cmd.pipeline == PipelineType::Terrain		);
+			cmd.pipeline == PipelineType::Terrain		||
+			cmd.pipeline == PipelineType::Foliage		);
 
 		if (pipelineUsesLighting && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
@@ -345,7 +348,8 @@ namespace Nightbloom
 
 		bool pipelineUsesShadowMap = (
 			cmd.pipeline == PipelineType::Mesh		||
-			cmd.pipeline == PipelineType::Terrain	);
+			cmd.pipeline == PipelineType::Terrain	||
+			cmd.pipeline == PipelineType::Foliage	);
 
 		if (pipelineUsesShadowMap && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
@@ -365,7 +369,9 @@ namespace Nightbloom
 			}
 		}
 
-		bool pipelineUsesHeightmap = (cmd.pipeline == PipelineType::Terrain);
+		bool pipelineUsesHeightmap = (
+			cmd.pipeline == PipelineType::Terrain	||
+			cmd.pipeline == PipelineType::Foliage	);
 
 		if (pipelineUsesHeightmap && cmd.heightmapDescriptorSet != VK_NULL_HANDLE
 			&& m_CurrentPipelineLayout != VK_NULL_HANDLE)

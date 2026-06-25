@@ -8,7 +8,7 @@ namespace Nightbloom
     class LiveShaderTestPanel
     {
     public:
-        bool isOpen = true;
+        bool isOpen = false;
 
         void Update(float deltaTime);   // Call from EditorApp::OnUpdate
         void Draw(EditorContext& ctx);

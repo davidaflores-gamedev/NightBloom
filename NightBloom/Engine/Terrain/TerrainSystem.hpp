@@ -93,6 +93,11 @@ namespace Nightbloom
         VulkanTexture* GetHeightmap() const { return m_Heightmap; }
         const TerrainDesc& GetDesc() const { return m_CurrentDesc; }
 
+        // For GrassSystem — it samples the same heightmap Terrain.vert does
+        // (no CPU height query exists, so this is how foliage placement
+        // shares terrain height/slope data; see GrassSystem::SubmitDraw).
+        VkDescriptorSet GetHeightmapDescriptorSet() const { return m_HeightmapDescriptorSet; }
+
     private:
         bool BuildGridMesh(uint32_t resolution, float worldSize);
         uint32_t SelectLODResolution(float distance, uint32_t baseResolution, float worldSize) const;

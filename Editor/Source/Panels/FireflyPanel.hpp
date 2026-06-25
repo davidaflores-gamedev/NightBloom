@@ -9,7 +9,12 @@ namespace Nightbloom
     class FireflyPanel
     {
     public:
-        bool isOpen = true;
+        // Closed by default — fireflies are a placed swarm, not an always-on
+        // ambient system like Terrain/Clouds. Open the panel from the
+        // Window menu to add/view a swarm. See ROADMAP.md's Deferred
+        // Decisions for the planned move to a proper scene-hierarchy
+        // entry instead of a dedicated panel.
+        bool isOpen = false;
 
         void Draw(EditorContext& ctx);
 

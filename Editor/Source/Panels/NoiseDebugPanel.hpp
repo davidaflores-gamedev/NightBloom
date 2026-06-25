@@ -10,7 +10,7 @@ namespace Nightbloom
     class NoiseDebugPanel
     {
     public:
-        bool isOpen = true;
+        bool isOpen = false;
 
         void Draw(EditorContext& ctx);
 

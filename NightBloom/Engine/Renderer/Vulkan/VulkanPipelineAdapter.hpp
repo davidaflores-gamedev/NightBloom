@@ -228,6 +228,17 @@ namespace Nightbloom
 				vkConfig.descriptorSetLayouts.push_back(fireflyStorageLayout);  // becomes set 1 (Firefly has no texture set)
 			}
 
+			// Foliage has no texture set either, so this also lands at set 1.
+			// NOTE: set index here is positional (depends on which other
+			// useX flags are set above) — Grass.vert/.frag's layout(set=N)
+			// declarations must match whatever order Foliage's PipelineConfig
+			// actually enables. See Renderer.cpp's Foliage pipeline block.
+			if (config.useFoliageStorage && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout foliageStorageLayout = m_DescriptorManager->GetFoliageStorageSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(foliageStorageLayout);
+			}
+
 			// The graphics Clouds composite pass needs nothing but this one
 			// sampler — the raymarch (and the FrameUniforms/lighting data it
 			// needs) moved to CloudRaymarch.comp. No useUniformBuffer/

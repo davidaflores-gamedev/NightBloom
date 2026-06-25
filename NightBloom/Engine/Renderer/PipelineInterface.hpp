@@ -114,6 +114,10 @@ namespace Nightbloom
 		NodeGenerated,
 		Terrain,
 		TerrainShadow,
+		Foliage,        // Instanced grass blades, per-instance data from a storage buffer,
+		                // height/slope sampled from the terrain heightmap in the vertex
+		                // stage. Drawn after Terrain so it sits on the displaced surface,
+		                // before Clouds/Firefly per the existing sort-by-enum-value order.
 
 		// VFX
 		Clouds,         // Full-screen raymarched sky volume, drawn after opaque/terrain so the
@@ -178,6 +182,7 @@ namespace Nightbloom
 		bool useShadowMap = false;  // Pipeline samples shadow map (set 3)
 		bool useHeightmap = false;  // Pipeline samples heightmap in vertex stage (set 4)
 		bool useFireflyStorage = false;  // Pipeline reads the firefly agent storage buffer (vertex+compute stages)
+		bool useFoliageStorage = false;  // Pipeline reads the foliage instance storage buffer (vertex stage only)
 		bool useCloudResult = false;  // Pipeline samples the low-res cloud raymarch result (fragment stage) - the graphics Clouds composite pass's only texture input
 
 		bool hasColorAttachment = true;  // False for depth-only passes (shadow)

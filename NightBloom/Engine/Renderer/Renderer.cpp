@@ -619,6 +619,16 @@ namespace Nightbloom
 			LOG_WARN("Failed to load terrain fragment shader - continuing without terrain pipeline");
 		}
 
+		if (!m_Resources->LoadShader("grass_vert", ShaderStage::Vertex, "Grass.vert"))
+		{
+			LOG_WARN("Failed to load grass vertex shader - continuing without foliage pipeline");
+		}
+
+		if (!m_Resources->LoadShader("grass_frag", ShaderStage::Fragment, "Grass.frag"))
+		{
+			LOG_WARN("Failed to load grass fragment shader - continuing without foliage pipeline");
+		}
+
 		if (!m_Resources->LoadShader("firefly_vert", ShaderStage::Vertex, "Firefly.vert"))
 		{
 			LOG_WARN("Failed to load firefly vertex shader - continuing without firefly pipeline");
@@ -1064,6 +1074,61 @@ namespace Nightbloom
 			else
 			{
 				LOG_WARN("Terrain shaders not found - skipping terrain pipeline");
+			}
+		}
+
+		// ---- Foliage pipeline -------------------------------------------------------
+		{
+			VulkanShader* grassVert = m_Resources->GetShader("grass_vert");
+			VulkanShader* grassFrag = m_Resources->GetShader("grass_frag");
+
+			if (grassVert && grassFrag)
+			{
+				PipelineConfig grassConfig;
+				grassConfig.vertexShader = grassVert;
+				grassConfig.fragmentShader = grassFrag;
+
+				// Real blade mesh (VertexPNT-shaped), instanced via gl_InstanceIndex
+				// reading the foliage storage buffer - not procedural like Firefly.
+				grassConfig.useVertexInput = true;
+				grassConfig.topology = PrimitiveTopology::TriangleList;
+				grassConfig.polygonMode = PolygonMode::Fill;
+				// Blades have no thickness - CullMode::Back would make them
+				// disappear when viewed from behind, same reasoning as Firefly's
+				// billboards (though for a different underlying cause).
+				grassConfig.cullMode = CullMode::None;
+				grassConfig.frontFace = FrontFace::CounterClockwise;
+
+				grassConfig.depthTestEnable = true;
+				grassConfig.depthWriteEnable = true;
+				grassConfig.depthCompareOp = CompareOp::GreaterOrEqual;
+
+				// customData = (slopeThreshold, heightScale, worldSize, windStrength)
+				grassConfig.pushConstantSize = sizeof(PushConstantData);
+				grassConfig.pushConstantStages = ShaderStage::VertexFragment;
+
+				// Descriptor sets: 0=uniform, 1=foliage storage (no texture set,
+				// so this lands at set 1 same as Firefly), 2=lighting, 3=shadow,
+				// 4=heightmap. See VulkanPipelineAdapter::CreatePipeline's
+				// if-chain order and Grass.vert/.frag's layout(set=N) decls.
+				grassConfig.useUniformBuffer = true;
+				grassConfig.useFoliageStorage = true;
+				grassConfig.useLighting = true;
+				grassConfig.useShadowMap = true;
+				grassConfig.useHeightmap = true;
+
+				if (m_PipelineAdapter->CreatePipeline(PipelineType::Foliage, grassConfig))
+				{
+					LOG_INFO("Foliage pipeline created successfully");
+				}
+				else
+				{
+					LOG_WARN("Failed to create foliage pipeline - grass will not render");
+				}
+			}
+			else
+			{
+				LOG_WARN("Grass shaders not found - skipping foliage pipeline");
 			}
 		}
 

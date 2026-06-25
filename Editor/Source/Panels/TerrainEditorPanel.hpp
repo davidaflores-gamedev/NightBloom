@@ -25,6 +25,10 @@ namespace Nightbloom
             }
         }
 
+        // For GrassPanel — foliage placement/height-sampling needs terrain's
+        // world bounds and heightmap descriptor set, see GrassSystem.
+        const TerrainSystem& GetTerrainSystem() const { return m_Terrain; }
+
     private:
         // Shared source of truth for the resolution dropdown, used by both
         // BuildDesc() and SubmitTerrainDraw()'s LOD base-resolution lookup.
