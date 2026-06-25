@@ -162,6 +162,20 @@ namespace Nightbloom
 			m_ShadowRenderPass = shadowRenderPass;
 		}
 
+		void SetPostProcessRenderPass(VkRenderPass postProcessRenderPass)
+		{
+			m_PostProcessRenderPass = postProcessRenderPass;
+		}
+
+		// MSAA sample count of the offscreen scene pass — applied to every
+		// scene-pass pipeline so its rasterizationSamples matches the render
+		// pass. The shadow and post-process passes are single-sample and are
+		// excluded in CreatePipeline below.
+		void SetSampleCount(VkSampleCountFlagBits sampleCount)
+		{
+			m_SampleCount = sampleCount;
+		}
+
 		bool CreatePipeline(PipelineType type, const PipelineConfig& config) override
 		{
 			// Convert generic config to vulkan config
@@ -209,6 +223,20 @@ namespace Nightbloom
 				vkConfig.renderPass = m_ShadowRenderPass;
 			}
 
+			if (type == PipelineType::PostProcess && m_PostProcessRenderPass != VK_NULL_HANDLE)
+			{
+				vkConfig.renderPass = m_PostProcessRenderPass;
+			}
+
+			// MSAA sample count: scene-pass pipelines match the scene render
+			// pass; the shadow and post-process passes are single-sample.
+			const bool singleSamplePass =
+				type == PipelineType::Shadow ||
+				type == PipelineType::TerrainShadow ||
+				type == PipelineType::PostProcess ||
+				type == PipelineType::Compute;
+			vkConfig.rasterizationSamples = singleSamplePass ? VK_SAMPLE_COUNT_1_BIT : m_SampleCount;
+
 			if (config.useUniformBuffer && m_DescriptorManager)
 			{
 				VkDescriptorSetLayout uniformLayout = m_DescriptorManager->GetUniformSetLayout();
@@ -249,6 +277,15 @@ namespace Nightbloom
 				vkConfig.descriptorSetLayouts.push_back(cloudResultLayout);
 			}
 
+			// The PostProcess/FXAA pass needs nothing but this one sampler —
+			// no useUniformBuffer/useLighting set for this pipeline, so this
+			// lands at set 0, same reasoning as useCloudResult above.
+			if (config.usePostProcessInput && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout postProcessInputLayout = m_DescriptorManager->GetPostProcessInputSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(postProcessInputLayout);
+			}
+
 			if (config.useLighting && m_DescriptorManager)
 			{
 				VkDescriptorSetLayout lightingLayout = m_DescriptorManager->GetLightingSetLayout();
@@ -265,6 +302,15 @@ namespace Nightbloom
 			{
 				VkDescriptorSetLayout heightmapLayout = m_DescriptorManager->GetHeightmapSetLayout();
 				vkConfig.descriptorSetLayouts.push_back(heightmapLayout);  // becomes set 4
+			}
+
+			// Reflection input is pushed last so that for the Water pipeline
+			// (uniform + lighting + reflection enabled, nothing else) it lands at
+			// set 2 — see Water.frag's layout(set=2) declaration.
+			if (config.useReflectionInput && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout reflectionLayout = m_DescriptorManager->GetReflectionInputSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(reflectionLayout);
 			}
 
 			LOG_INFO("Creating pipeline with {} descriptor set layouts", vkConfig.descriptorSetLayouts.size());
@@ -341,6 +387,8 @@ namespace Nightbloom
 		VulkanDescriptorManager* m_DescriptorManager = nullptr;
 		VkRenderPass m_DefaultRenderPass = VK_NULL_HANDLE;
 		VkRenderPass m_ShadowRenderPass = VK_NULL_HANDLE;
+		VkRenderPass m_PostProcessRenderPass = VK_NULL_HANDLE;
+		VkSampleCountFlagBits m_SampleCount = VK_SAMPLE_COUNT_1_BIT;
 
 
 		std::unique_ptr<VulkanPipelineManager> m_VulkanManager;

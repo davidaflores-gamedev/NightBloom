@@ -2,8 +2,8 @@
 // Grass.vert
 //
 // Real instanced blade mesh (VertexPNT, see BladeMesh.hpp) — root at origin,
-// local height 0..1, width tapered to a point at the tip. Per-instance world
-// position/rotation/scale/tint/wind-phase comes from the foliage storage
+// local height 0..1, forward-curved with a baked per-row normal. Per-instance
+// world position/rotation/scale/tint/wind-phase comes from the foliage storage
 // buffer (set 1), indexed by gl_InstanceIndex, same raw-vec4-array pattern
 // Firefly.vert uses for its agent buffer.
 //
@@ -15,20 +15,19 @@
 // cliff-avoidance with no hard "wall" at the cutoff, no compute compaction
 // needed).
 //
-// Distance visibility: blades are thin enough to shrink below a pixel and
-// disappear at range, since no real LOD exists yet. As a cheap "fake it"
-// fix (not true LOD — doesn't reduce instance/triangle cost), blade width
-// widens once its apparent size — proj[1][1]/distance, a cheap FOV/distance
-// proxy, not exact device pixels (no viewport resolution is plumbed in) —
-// drops below minApparentWidth, clamped to at most maxWidthBoost times wider.
+// Distance visibility: the old width-boost hack (widening thin distant blades
+// so they wouldn't sub-pixel-vanish) is RETIRED — it ballooned distant blades
+// into fat triangles. MSAA on the scene pass plus higher placement density now
+// keep thin distant blades reading correctly. pc.model[1].y/.z are inert.
 //
 // NOTE: Grass draws its blades at already-computed world positions (baked
 // into the storage buffer at generation time), so it has no use for the
 // push-constant model matrix as an actual transform. Instead `pc.model[0]`
 // is repurposed to carry terrain-bounds data (worldSize, heightScale,
 // terrain position XZ) and `pc.model[1]` carries (slopeFalloffCos,
-// minApparentWidth, maxWidthBoost), so GrassSystem doesn't need to grow the
-// shared PushConstantData struct (which every other pipeline also uses).
+// lodFirstInstance, lodDrawCountF, lodFadeBand) for the continuous distance
+// LOD cross-fade, so GrassSystem doesn't need to grow the shared
+// PushConstantData struct (which every other pipeline also uses).
 // See GrassSystem::SubmitDraw.
 //
 // Descriptor set layout (matches VulkanPipelineAdapter's if-chain order for
@@ -67,7 +66,7 @@ layout(set = 4, binding = 0) uniform sampler2D heightmap;
 layout(push_constant) uniform PushConstants
 {
     mat4 model;       // model[0] repurposed: (terrainWorldSize, terrainHeightScale, terrainPosX, terrainPosZ)
-                      // model[1] repurposed: (slopeFalloffCos, minApparentWidth, maxWidthBoost, unused)
+                      // model[1] repurposed: (slopeFalloffCos, lodFirstInstance, lodDrawCountF, lodFadeBand)
     vec4 customData;  // x = slopeThresholdCos (upper bound), y = windStrength, z = windFrequency, w = windSpeed
 } pc;
 
@@ -107,8 +106,15 @@ void main()
 
     float slopeThresholdCos = pc.customData.x;
     float slopeFalloffCos   = pc.model[1].x;
-    float minApparentWidth  = pc.model[1].y;
-    float maxWidthBoost     = pc.model[1].z;
+    // Continuous distance-LOD cross-fade params (per patch, from
+    // GrassSystem::SubmitDraw): the patch draws ceil(drawCountF) blades; the
+    // top `fadeBand` of them (by instance order, which is a random priority
+    // sort) scale-fade between 0 and 1 so the marginal blade grows/shrinks
+    // smoothly as drawCountF slides with distance — no pop. (This slot used to
+    // hold the retired width-boost hack.)
+    float lodFirstInstance  = pc.model[1].y;
+    float lodDrawCountF     = pc.model[1].z;
+    float lodFadeBand       = pc.model[1].w;
     float windStrength      = pc.customData.y;
     float windFrequency     = pc.customData.z;
     float windSpeed         = pc.customData.w;
@@ -124,9 +130,26 @@ void main()
     vec3  tint   = d1.xyz;
     float windPhase = d1.w;
 
+    // Cross-fade this blade by its position in the drawn prefix.
+    float localIdx = float(gl_InstanceIndex) - lodFirstInstance;
+    float lodFade = 1.0 - smoothstep(lodDrawCountF - lodFadeBand, lodDrawCountF, localIdx);
+    scale *= lodFade;
+
     vec2 uv = (vec2(worldX, worldZ) - terrainPosXZ) / terrainWorldSize + 0.5;
     float terrainY = SampleHeight(uv) * terrainHeightScale;
     vec3 terrainNormal = ComputeTerrainNormal(uv, terrainWorldSize, terrainHeightScale);
+
+    // Don't grow grass underwater. frame.time.y = water surface Y, frame.time.z
+    // = water-enabled flag (set by the Renderer when a WaterSystem is active).
+    // Blades whose root is below the waterline fade out over a short band so the
+    // shoreline isn't a hard ring — same collapse-to-root trick as the slope
+    // cull below (cullFactor folds into the blade offset).
+    float waterCull = 1.0;
+    if (frame.time.z > 0.5)
+    {
+        float waterLevel = frame.time.y;
+        waterCull = smoothstep(waterLevel - 0.2, waterLevel + 0.4, terrainY);
+    }
 
     // Soft cutoff: smoothstep requires edge0 < edge1. slopeThresholdCos is
     // cos() of the steeper (threshold+halfFalloff) angle, so it's the
@@ -136,28 +159,30 @@ void main()
     // between. (Swapped order here once already — caused every blade to
     // collapse to zero scale, i.e. no grass visible at all.)
     float cullFactor = smoothstep(slopeThresholdCos, slopeFalloffCos, terrainNormal.y);
+    cullFactor *= waterCull;
 
-    // Distance width boost — see header comment. Computed from the root
-    // position (before wind/rotation), which is plenty accurate for a
-    // visibility heuristic at the distances where it actually matters.
-    float distance = length(frame.cameraPos.xyz - vec3(worldX, terrainY, worldZ));
-    float apparentWidth = abs(frame.proj[1][1]) / max(distance, 0.001);
-    float widthBoost = 1.0;
-    if (apparentWidth < minApparentWidth && apparentWidth > 0.00001)
-    {
-        widthBoost = clamp(minApparentWidth / apparentWidth, 1.0, maxWidthBoost);
-    }
-
-    // Rotate the flat blade (local z=0 always) around Y so instances face
-    // different directions.
-    float boostedX = inPosition.x * widthBoost;
+    // Y-rotation so instances face different directions. The blade mesh is now
+    // curved (local z is nonzero — see BladeMesh.hpp), so rotate the FULL (x,z)
+    // local position, not just x. (The old width-boost hack that ballooned
+    // distant blades into fat triangles is gone — MSAA + density handle range
+    // now; minApparentWidth/maxWidthBoost are inert, see GrassDesc.)
     float c = cos(rotY);
     float s = sin(rotY);
     vec3 rotated = vec3(
-        boostedX * c,
+        inPosition.x * c + inPosition.z * s,
         inPosition.y,
-        -boostedX * s
+        -inPosition.x * s + inPosition.z * c
     );
+
+    // Rotate the baked blade normal the same way so fragment lighting uses the
+    // blade's own (curve-derived, per-instance-oriented) normal, not the flat
+    // terrain normal the old shader passed through.
+    vec3 nLocal = normalize(inNormal);
+    vec3 bladeNormal = normalize(vec3(
+        nLocal.x * c + nLocal.z * s,
+        nLocal.y,
+        -nLocal.x * s + nLocal.z * c
+    ));
 
     vec3 scaledLocal = rotated * scale;
 
@@ -176,7 +201,7 @@ void main()
     );
 
     outWorldPos = worldPos;
-    outNormal = terrainNormal;
+    outNormal = bladeNormal;
     outHeightFraction = inTexCoord.y;
     outTint = tint;
     outShadowCoord = vec4(worldPos, 1.0);

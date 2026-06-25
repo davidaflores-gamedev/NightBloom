@@ -65,6 +65,11 @@ namespace Nightbloom
 
 		// NEW: Color attachment configuration (false for depth-only passes)
 		bool hasColorAttachment = true;
+
+		// MSAA — must match the sample count of the render pass this pipeline
+		// targets. Scene-pass pipelines get the scene MSAA count; the
+		// post-process and shadow passes stay single-sample.
+		VkSampleCountFlagBits rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 	};
 
 	class VulkanPipelineManager

@@ -36,13 +36,15 @@ namespace Nightbloom
         bool        m_GrassInitialized = false;
         bool        m_PendingDirty = false;
 
-        // Blade shape — width is a sizeable fraction of candidateSpacing
-        // below so neighboring blades visually overlap (continuous cover)
-        // rather than reading as isolated spikes over bare dirt.
-        int   m_Segments = 4;
-        float m_BaseHalfWidth = 0.1f;
+        // Blade shape — thin curved blades placed densely so neighbors overlap
+        // into continuous cover rather than reading as isolated fat spikes over
+        // bare dirt (the old look). MSAA on the scene pass anti-aliases the
+        // resulting thin edges.
+        int   m_Segments = 6;
+        float m_BaseHalfWidth = 0.04f;
         float m_TaperPower = 1.5f;
-        float m_MinTipWidthFraction = 0.18f;
+        float m_MinTipWidthFraction = 0.15f;
+        float m_BendAmount = 0.3f;   // forward rest-pose arc
 
         // Height
         float m_BladeHeight = 0.6f;
@@ -54,8 +56,8 @@ namespace Nightbloom
         // because it read as a uniform grid of separate dots rather than
         // continuous patchy cover — see GrassSystem.hpp's header comment).
         float m_PatchSize = 25.0f;
-        float m_CandidateSpacing = 0.6f;
-        float m_DensityThreshold = 0.5f;
+        float m_CandidateSpacing = 0.4f;
+        float m_DensityThreshold = 0.42f;
         float m_DensityFrequency = 0.06f;
         int   m_DensityOctaves = 2;
         int   m_Seed = 1337;
@@ -70,17 +72,16 @@ namespace Nightbloom
         float m_SlopeFalloffDeg = 10.0f;
         float m_ColorVariation = 0.15f;
 
-        // Distance visibility (fake-it width boost, not true LOD — see
-        // GrassDesc's header comment)
+        // Distance visibility — RETIRED width-boost hack (ballooned distant
+        // blades into fat triangles). Inert now; MSAA + density replace it.
         float m_MinApparentWidth = 0.02f;
-        float m_MaxWidthBoost = 8.0f;
+        float m_MaxWidthBoost = 1.0f;
 
-        // Distance LOD (real instance-count reduction — see GrassSystem.hpp's
-        // header comment)
-        float m_LodMidDistance = 40.0f;
-        float m_LodFarDistance = 90.0f;
-        float m_LodMidFraction = 0.45f;
-        float m_LodFarFraction = 0.15f;
+        // Distance LOD — continuous, pop-free density falloff (see GrassDesc).
+        float m_LodFullDistance = 35.0f;
+        float m_LodFadeDistance = 130.0f;
+        float m_LodFadeBandBlades = 16.0f;
+        float m_MeshLodDistance = 55.0f;
 
         // Cached terrain bounds, to detect terrain changes that should
         // trigger a re-placement even if no grass slider moved.

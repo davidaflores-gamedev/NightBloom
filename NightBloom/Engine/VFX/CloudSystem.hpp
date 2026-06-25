@@ -68,12 +68,14 @@ namespace Nightbloom
 		float densityMultiplier = 1.0f;
 		float extinctionCoefficient = 1.2f;
 		float hgAnisotropy = 0.2f;       // Henyey-Greenstein phase g, forward-scatter bias
-		int   stepCount = 80;
+		int   stepCount = 64;            // was 80 — ~20% fewer raymarch steps; the
+		                                 // dithered start + early-out hide the loss
 
 		// Raymarch result image resolution = swapchain extent * this scale.
-		// 0.5 (quarter the pixel count) is a good starting point; lower for
-		// more speed, higher (up to 1.0) for more detail.
-		float resolutionScale = 0.5f;
+		// 0.45 (~20% of full pixel count) trades a little upscale softness — fine
+		// for soft clouds — for a meaningful raymarch cost cut. Raise toward 1.0
+		// for crisper clouds, lower for more speed.
+		float resolutionScale = 0.45f;
 	};
 
 	// Matches CloudParamsUBO in CloudRaymarch.comp exactly (std140, 4x vec4 = 64 bytes)

@@ -35,6 +35,7 @@
 #include "Panels/GrassPanel.hpp"
 #include "Panels/FireflyPanel.hpp"
 #include "Panels/CloudPanel.hpp"
+#include "Panels/WaterEditorPanel.hpp"
 
 #include <imgui.h>
 #include <glm/glm.hpp>
@@ -71,6 +72,7 @@ namespace Nightbloom {
             m_GrassPanel.Cleanup();
             m_FireflyPanel.Cleanup();
             m_CloudPanel.Cleanup();
+            m_WaterPanel.Cleanup();
 
             m_EditorScene.reset();
             SaveEditorSettings();
@@ -293,6 +295,7 @@ namespace Nightbloom {
             m_GrassPanel.SubmitGrassDraw(drawList, frustum, m_TerrainPanel.GetTerrainSystem(), m_Camera->GetPosition());
             m_FireflyPanel.SubmitFireflyDraw(drawList);
             m_CloudPanel.SubmitCloudDraw(drawList);
+            m_WaterPanel.SubmitWaterDraw(drawList);
             drawList.SortByPipeline();
             GetRenderer()->SubmitDrawList(drawList);
         }
@@ -332,6 +335,7 @@ namespace Nightbloom {
         GrassPanel              m_GrassPanel;
         FireflyPanel            m_FireflyPanel;
         CloudPanel              m_CloudPanel;
+        WaterEditorPanel        m_WaterPanel;
 
         // -------------------------------------------------------------------------
         // RenderEditorUI � builds the EditorContext and calls into each panel
@@ -383,6 +387,7 @@ namespace Nightbloom {
             if (m_GrassPanel.isOpen) m_GrassPanel.Draw(ctx, m_TerrainPanel.GetTerrainSystem());
             if (m_FireflyPanel.isOpen) m_FireflyPanel.Draw(ctx);
             if (m_CloudPanel.isOpen) m_CloudPanel.Draw(ctx);
+            if (m_WaterPanel.isOpen) m_WaterPanel.Draw(ctx);
 
             m_Viewport.isPlayMode = m_Viewport.isPlayMode; // carried from menu bar
             m_Viewport.Draw(ctx);
@@ -445,6 +450,7 @@ namespace Nightbloom {
                 ImGui::MenuItem("Grass", nullptr, &m_GrassPanel.isOpen);
                 ImGui::MenuItem("Fireflies", nullptr, &m_FireflyPanel.isOpen);
                 ImGui::MenuItem("Clouds", nullptr, &m_CloudPanel.isOpen);
+                ImGui::MenuItem("Water", nullptr, &m_WaterPanel.isOpen);
                 ImGui::MenuItem("Live Shader Test", nullptr, &m_LiveShaderTest.isOpen);
                 ImGui::Separator();
                 ImGui::MenuItem("ImGui Demo", nullptr, &m_ShowDemoWindow);

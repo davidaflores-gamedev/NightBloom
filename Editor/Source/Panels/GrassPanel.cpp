@@ -56,6 +56,7 @@ namespace Nightbloom
             if (ImGui::SliderFloat("Base Half-Width", &m_BaseHalfWidth, 0.01f, 0.3f)) changed = true;
             if (ImGui::SliderFloat("Taper Power", &m_TaperPower, 0.5f, 4.0f)) changed = true;
             if (ImGui::SliderFloat("Min Tip Width Fraction", &m_MinTipWidthFraction, 0.0f, 0.6f)) changed = true;
+            if (ImGui::SliderFloat("Bend Amount", &m_BendAmount, 0.0f, 0.8f)) changed = true;
             if (ImGui::SliderFloat("Blade Height", &m_BladeHeight, 0.1f, 2.0f)) changed = true;
             if (ImGui::SliderFloat("Height Jitter", &m_HeightJitter, 0.0f, 1.0f)) changed = true;
         }
@@ -82,10 +83,10 @@ namespace Nightbloom
             if (ImGui::SliderFloat("Wind Frequency", &m_WindFrequency, 0.0f, 2.0f)) changed = true;
         }
 
-        // ---- Distance visibility -------------------------------------------------
-        if (ImGui::CollapsingHeader("Distance Visibility"))
+        // ---- Distance visibility (RETIRED) ---------------------------------------
+        if (ImGui::CollapsingHeader("Distance Visibility (retired)"))
         {
-            ImGui::TextDisabled("Fake-it width boost, not true LOD.");
+            ImGui::TextDisabled("Old width-boost hack — inert. Distant blades now\nanti-alias via MSAA + density instead of ballooning\ninto fat triangles. Left here for reference only.");
             if (ImGui::SliderFloat("Min Apparent Width", &m_MinApparentWidth, 0.001f, 0.1f, "%.4f")) changed = true;
             if (ImGui::SliderFloat("Max Width Boost", &m_MaxWidthBoost, 1.0f, 20.0f)) changed = true;
         }
@@ -93,11 +94,11 @@ namespace Nightbloom
         // ---- Distance LOD ---------------------------------------------------------
         if (ImGui::CollapsingHeader("Distance LOD", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImGui::TextDisabled("Real instance-count reduction at range.");
-            if (ImGui::SliderFloat("Mid Distance", &m_LodMidDistance, 5.0f, 150.0f)) changed = true;
-            if (ImGui::SliderFloat("Far Distance", &m_LodFarDistance, 10.0f, 300.0f)) changed = true;
-            if (ImGui::SliderFloat("Mid Fraction", &m_LodMidFraction, 0.0f, 1.0f)) changed = true;
-            if (ImGui::SliderFloat("Far Fraction", &m_LodFarFraction, 0.0f, 1.0f)) changed = true;
+            ImGui::TextDisabled("Continuous, pop-free density falloff.");
+            if (ImGui::SliderFloat("Full Distance", &m_LodFullDistance, 5.0f, 200.0f)) changed = true;
+            if (ImGui::SliderFloat("Fade Distance", &m_LodFadeDistance, 20.0f, 400.0f)) changed = true;
+            if (ImGui::SliderFloat("Fade Band (blades)", &m_LodFadeBandBlades, 1.0f, 128.0f, "%.0f")) changed = true;
+            if (ImGui::SliderFloat("Mesh LOD Distance", &m_MeshLodDistance, 10.0f, 300.0f)) changed = true;
         }
 
         ImGui::Separator();
@@ -180,6 +181,7 @@ namespace Nightbloom
         desc.bladeBaseHalfWidth = m_BaseHalfWidth;
         desc.taperPower = m_TaperPower;
         desc.minTipWidthFraction = m_MinTipWidthFraction;
+        desc.bendAmount = m_BendAmount;
         desc.bladeHeight = m_BladeHeight;
         desc.heightJitter = m_HeightJitter;
 
@@ -197,10 +199,10 @@ namespace Nightbloom
         desc.slopeFalloffDeg = m_SlopeFalloffDeg;
         desc.minApparentWidth = m_MinApparentWidth;
         desc.maxWidthBoost = m_MaxWidthBoost;
-        desc.lodMidDistance = m_LodMidDistance;
-        desc.lodFarDistance = m_LodFarDistance;
-        desc.lodMidFraction = m_LodMidFraction;
-        desc.lodFarFraction = m_LodFarFraction;
+        desc.lodFullDistance = m_LodFullDistance;
+        desc.lodFadeDistance = m_LodFadeDistance;
+        desc.lodFadeBandBlades = m_LodFadeBandBlades;
+        desc.meshLodDistance = m_MeshLodDistance;
         desc.colorVariation = m_ColorVariation;
         desc.seed = static_cast<uint32_t>(m_Seed);
 

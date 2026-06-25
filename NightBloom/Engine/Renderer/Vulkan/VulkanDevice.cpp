@@ -596,4 +596,26 @@ namespace Nightbloom
 		vkGetPhysicalDeviceProperties(m_PhysicalDevice, &properties);
 		return properties.limits.minUniformBufferOffsetAlignment;
 	}
+
+	VkSampleCountFlagBits VulkanDevice::GetMaxUsableSampleCount(VkSampleCountFlagBits maxCap) const
+	{
+		VkPhysicalDeviceProperties properties;
+		vkGetPhysicalDeviceProperties(m_PhysicalDevice, &properties);
+
+		// Only counts supported by BOTH color and depth framebuffer
+		// attachments are usable for a color+depth render pass.
+		VkSampleCountFlags counts = properties.limits.framebufferColorSampleCounts
+			& properties.limits.framebufferDepthSampleCounts;
+
+		const VkSampleCountFlagBits order[] = {
+			VK_SAMPLE_COUNT_64_BIT, VK_SAMPLE_COUNT_32_BIT, VK_SAMPLE_COUNT_16_BIT,
+			VK_SAMPLE_COUNT_8_BIT,  VK_SAMPLE_COUNT_4_BIT,  VK_SAMPLE_COUNT_2_BIT,
+		};
+		for (VkSampleCountFlagBits bit : order)
+		{
+			if (bit > maxCap) continue;       // respect the requested cap
+			if (counts & bit) return bit;
+		}
+		return VK_SAMPLE_COUNT_1_BIT;
+	}
 }

@@ -205,10 +205,36 @@ namespace Nightbloom
 		}
 	}
 
+	void CommandRecorder::ExecuteReflectionDrawList(uint32_t bufferIndex, const DrawList& drawList,
+		VulkanPipelineAdapter* pipelineManager, VkDescriptorSet reflectionUniformSet)
+	{
+		if (bufferIndex >= m_CommandBuffers.size() || !pipelineManager)
+		{
+			return;
+		}
+
+		for (const auto& cmd : drawList.GetCommands())
+		{
+			// Only opaque world geometry is reflected. Transparent/Water/Clouds/
+			// Firefly are skipped (v1) — water can't reflect itself, and the rest
+			// are deferred follow-ups.
+			if (cmd.pipeline != PipelineType::Mesh &&
+				cmd.pipeline != PipelineType::Terrain &&
+				cmd.pipeline != PipelineType::Foliage)
+			{
+				continue;
+			}
+
+			ExecuteDrawCommand(bufferIndex, cmd, pipelineManager, glm::mat4(1.0f), glm::mat4(1.0f),
+				reflectionUniformSet);
+		}
+	}
+
 	void CommandRecorder::ExecuteDrawCommand(uint32_t bufferIndex, const DrawCommand& cmd,
 		VulkanPipelineAdapter* pipelineManager,
 		const glm::mat4& viewMatrix,
-		const glm::mat4& projectionMatrix)
+		const glm::mat4& projectionMatrix,
+		VkDescriptorSet overrideUniformSet)
 	{
 		VkCommandBuffer commandBuffer = m_CommandBuffers[bufferIndex];
 
@@ -236,9 +262,19 @@ namespace Nightbloom
 			// at all, since the raymarch (and the camera math it needed)
 			// moved to CloudRaymarch.comp.
 
+		// Water also uses a set-0 uniform (the scene camera) — handled in the
+		// dedicated Water block below, not here, since its other sets differ.
+		if (cmd.pipeline == PipelineType::Water)
+		{
+			pipelineUsesUniforms = false;
+		}
+
 		if (pipelineUsesUniforms && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
-			VkDescriptorSet uniformSet = m_DescriptorManager->GetUniformDescriptorSet(bufferIndex);
+			// The reflection pass substitutes the mirror-flipped camera at set 0.
+			VkDescriptorSet uniformSet = (overrideUniformSet != VK_NULL_HANDLE)
+				? overrideUniformSet
+				: m_DescriptorManager->GetUniformDescriptorSet(bufferIndex);
 			vkCmdBindDescriptorSets(
 				commandBuffer,
 				VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -386,6 +422,27 @@ namespace Nightbloom
 				0,
 				nullptr
 			);
+		}
+
+		// --- Water descriptor sets (set 0 = scene uniform, set 1 = lighting,
+		//     set 2 = reflection target). Water's set layout differs from the
+		//     Mesh/Terrain convention (no texture set, lighting at set 1), so it
+		//     gets its own block rather than reusing the generic chain above. ---
+		if (cmd.pipeline == PipelineType::Water && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
+		{
+			VkDescriptorSet uniformSet = m_DescriptorManager->GetUniformDescriptorSet(bufferIndex);
+			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+				m_CurrentPipelineLayout, 0, 1, &uniformSet, 0, nullptr);
+
+			VkDescriptorSet lightingSet = m_DescriptorManager->GetLightingDescriptorSet(bufferIndex);
+			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+				m_CurrentPipelineLayout, 1, 1, &lightingSet, 0, nullptr);
+
+			if (m_ReflectionInputSet != VK_NULL_HANDLE)
+			{
+				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+					m_CurrentPipelineLayout, 2, 1, &m_ReflectionInputSet, 0, nullptr);
+			}
 		}
 
 		// Set push constants if needed

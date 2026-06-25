@@ -49,11 +49,28 @@ namespace Nightbloom
 			const glm::mat4& viewMatrix,
 			const glm::mat4& projectionMatrix);
 
-		// Individual draw command execution
+		// Reflection pass: replays the opaque draws (Mesh/Terrain/Foliage only)
+		// reusing their normal pipelines, but binds reflectionUniformSet at set 0
+		// (the mirror-flipped camera) instead of the scene uniform set. The
+		// winding flip from the mirror is cancelled by a negative-height viewport
+		// set by the caller before this runs.
+		void ExecuteReflectionDrawList(uint32_t bufferIndex, const DrawList& drawList,
+			VulkanPipelineAdapter* pipelineManager,
+			VkDescriptorSet reflectionUniformSet);
+
+		// Individual draw command execution. overrideUniformSet, when non-null,
+		// is bound at set 0 in place of the per-frame scene uniform set (used by
+		// the reflection pass to substitute the mirror-flipped camera).
 		void ExecuteDrawCommand(uint32_t bufferIndex, const DrawCommand& cmd,
 			VulkanPipelineAdapter* pipelineManager,
 			const glm::mat4& viewMatrix,
-			const glm::mat4& projectionMatrix);
+			const glm::mat4& projectionMatrix,
+			VkDescriptorSet overrideUniformSet = VK_NULL_HANDLE);
+
+		// The planar-reflection color target's descriptor set (set 2 in the Water
+		// pipeline). Set once by the Renderer after allocation; rebound per Water
+		// draw. Not owned.
+		void SetReflectionInputSet(VkDescriptorSet set) { m_ReflectionInputSet = set; }
 
 		// Getters
 		VkCommandBuffer GetCommandBuffer(uint32_t index) const
@@ -71,6 +88,9 @@ namespace Nightbloom
 		uint32_t m_CurrentBufferIndex = 0;
 		VkPipeline m_CurrentPipeline = VK_NULL_HANDLE;
 		VkPipelineLayout m_CurrentPipelineLayout = VK_NULL_HANDLE;
+
+		// Planar-reflection color target descriptor set (Water set 2). Not owned.
+		VkDescriptorSet m_ReflectionInputSet = VK_NULL_HANDLE;
 
 		// Helper methods
 		void BindPipelineIfChanged(uint32_t bufferIndex, VkPipeline pipeline);

@@ -52,6 +52,16 @@ namespace Nightbloom
         ImGui::Text("FPS: %.1f (%.2f ms)", ImGui::GetIO().Framerate, 1000.0f / ImGui::GetIO().Framerate);
 
         ImGui::Separator();
+        ImGui::Text("Post-Process");
+        if (ctx.renderer)
+        {
+            bool aaEnabled = ctx.renderer->IsPostProcessAAEnabled();
+            if (ImGui::Checkbox("Anti-Aliasing (FXAA)", &aaEnabled))
+                ctx.renderer->SetPostProcessAAEnabled(aaEnabled);
+            ImGui::TextDisabled("Toggle to compare edge softening in the same view.");
+        }
+
+        ImGui::Separator();
         ImGui::Text("Frustum Culling");
         if (ctx.scene)
         {

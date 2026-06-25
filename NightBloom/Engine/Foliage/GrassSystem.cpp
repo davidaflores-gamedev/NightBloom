@@ -127,11 +127,12 @@ namespace Nightbloom
 			|| desc.segments != m_CurrentDesc.segments
 			|| desc.bladeBaseHalfWidth != m_CurrentDesc.bladeBaseHalfWidth
 			|| desc.taperPower != m_CurrentDesc.taperPower
-			|| desc.minTipWidthFraction != m_CurrentDesc.minTipWidthFraction;
+			|| desc.minTipWidthFraction != m_CurrentDesc.minTipWidthFraction
+			|| desc.bendAmount != m_CurrentDesc.bendAmount;
 
 		if (needsMesh)
 		{
-			if (!BuildBladeMesh(desc.segments, desc.bladeBaseHalfWidth, desc.taperPower, desc.minTipWidthFraction))
+			if (!BuildBladeMesh(desc.segments, desc.bladeBaseHalfWidth, desc.taperPower, desc.minTipWidthFraction, desc.bendAmount))
 			{
 				LOG_ERROR("GrassSystem::Regenerate — failed to build blade mesh");
 				return false;
@@ -169,26 +170,30 @@ namespace Nightbloom
 		float slopeFalloffCos = std::cos(thresholdRad - halfFalloffRad);
 
 		// pc.model is unused as an actual transform (instance positions are
-		// already world-space) — repurposed to carry terrain-bounds data and
-		// the slope falloff bound so GrassSystem doesn't need to grow the
-		// shared PushConstantData struct. See Grass.vert's header comment.
+		// already world-space) — repurposed to carry terrain-bounds data, the
+		// slope falloff bound, and the per-patch continuous-LOD fade params so
+		// GrassSystem doesn't need to grow the shared PushConstantData struct.
+		// See Grass.vert's header comment.
+		//   model[0] = (terrainWorldSize, terrainHeightScale, terrainPosX, terrainPosZ)  [constant]
+		//   model[1] = (slopeFalloffCos, firstInstance, drawCountF, fadeBand)            [per patch]
 		glm::mat4 terrainBounds(1.0f);
 		terrainBounds[0] = glm::vec4(
 			m_CurrentDesc.terrainWorldSize,
 			m_CurrentDesc.terrainHeightScale,
 			m_CurrentDesc.terrainPosition.x,
 			m_CurrentDesc.terrainPosition.z);
-		terrainBounds[1] = glm::vec4(
-			slopeFalloffCos,
-			m_CurrentDesc.minApparentWidth,
-			m_CurrentDesc.maxWidthBoost,
-			0.0f);
 
 		glm::vec4 windParams(
 			slopeThresholdCos,
 			m_CurrentDesc.windStrength,
 			m_CurrentDesc.windFrequency,
 			m_CurrentDesc.windSpeed);
+
+		auto smoothstepf = [](float e0, float e1, float x) -> float
+		{
+			float t = glm::clamp((x - e0) / glm::max(e1 - e0, 1e-4f), 0.0f, 1.0f);
+			return t * t * (3.0f - 2.0f * t);
+		};
 
 		for (size_t i = 0; i < m_Patches.size(); ++i)
 		{
@@ -197,17 +202,39 @@ namespace Nightbloom
 			if (!frustum.Intersects(patch.center, patch.extents)) continue;
 
 			float distance = glm::length(cameraPosition - patch.center);
-			int tier = SelectLODTier(distance, m_PatchTier[i]);
-			m_PatchTier[i] = tier;
 
-			uint32_t drawCount = (tier == 0) ? patch.fullCount : (tier == 1) ? patch.midCount : patch.farCount;
+			// Continuous LOD: the drawn fraction falls smoothly from 1 (within
+			// lodFullDistance) to 0 (at lodFadeDistance). Beyond that the patch
+			// is skipped — but its blades are already cross-faded to nothing in
+			// Grass.vert, so the skip never pops.
+			float drawFrac = 1.0f - smoothstepf(m_CurrentDesc.lodFullDistance, m_CurrentDesc.lodFadeDistance, distance);
+			if (drawFrac <= 0.0f) continue;
+
+			float drawCountF = drawFrac * static_cast<float>(patch.fullCount);
+			uint32_t drawCount = static_cast<uint32_t>(std::ceil(drawCountF));
 			if (drawCount == 0) continue;
+
+			// Cross-fade band (a fixed blade count): the top `fadeBand` blades
+			// of the drawn prefix scale-fade between 0 and 1 in Grass.vert, so
+			// the marginal blade grows/shrinks smoothly as drawCountF slides
+			// instead of popping on/off at an integer boundary.
+			float fadeBand = glm::max(4.0f, m_CurrentDesc.lodFadeBandBlades);
+
+			// Mesh-complexity LOD: cheap low-segment blade beyond meshLodDistance
+			// (curve invisible there, far fewer per-vertex heightmap fetches).
+			const bool useLow = (distance > m_CurrentDesc.meshLodDistance);
+
+			terrainBounds[1] = glm::vec4(
+				slopeFalloffCos,
+				static_cast<float>(patch.firstInstance),
+				drawCountF,
+				fadeBand);
 
 			DrawCommand cmd;
 			cmd.pipeline = PipelineType::Foliage;
-			cmd.vertexBuffer = m_VertexBuffer.get();
-			cmd.indexBuffer = m_IndexBuffer.get();
-			cmd.indexCount = m_IndexCount;
+			cmd.vertexBuffer = useLow ? m_VertexBufferLow.get() : m_VertexBuffer.get();
+			cmd.indexBuffer  = useLow ? m_IndexBufferLow.get()  : m_IndexBuffer.get();
+			cmd.indexCount   = useLow ? m_IndexCountLow : m_IndexCount;
 			cmd.instanceCount = drawCount;
 			cmd.firstInstance = patch.firstInstance;
 
@@ -235,9 +262,11 @@ namespace Nightbloom
 		m_VertexBuffer.reset();
 		m_IndexBuffer.reset();
 		m_IndexCount = 0;
+		m_VertexBufferLow.reset();
+		m_IndexBufferLow.reset();
+		m_IndexCountLow = 0;
 		m_MeshBuilt = false;
 		m_Patches.clear();
-		m_PatchTier.clear();
 		m_ActiveInstanceCount = 0;
 		m_Ready = false;
 
@@ -253,53 +282,60 @@ namespace Nightbloom
 	// Private helpers
 	// =========================================================================
 
-	bool GrassSystem::BuildBladeMesh(uint32_t segments, float baseHalfWidth, float taperPower, float minTipWidthFraction)
+	bool GrassSystem::BuildBladeMesh(uint32_t segments, float baseHalfWidth, float taperPower, float minTipWidthFraction, float bendAmount)
 	{
-		LOG_INFO("GrassSystem: building blade mesh ({} segments, halfWidth={:.3f})",
-			segments, baseHalfWidth);
+		// Cheap mesh-complexity LOD: a far/mid blade with very few segments. The
+		// curve is invisible past the near tier, and each grass vertex does ~5
+		// heightmap fetches in Grass.vert, so fewer verts = a real saving.
+		const uint32_t kLowDetailSegments = 2;
 
-		BladeMeshData data = BladeMesh::Generate(segments, baseHalfWidth, taperPower, minTipWidthFraction);
-		if (data.vertices.empty() || data.indices.empty())
+		LOG_INFO("GrassSystem: building blade meshes (near {} segments / far {} segments, halfWidth={:.3f}, bend={:.3f})",
+			segments, kLowDetailSegments, baseHalfWidth, bendAmount);
+
+		// Upload one BladeMeshData into a fresh vertex+index buffer pair.
+		auto uploadMesh = [&](const char* vbName, const char* ibName, const BladeMeshData& data,
+			std::unique_ptr<VulkanBuffer>& vb, std::unique_ptr<VulkanBuffer>& ib, uint32_t& indexCountOut) -> bool
 		{
-			LOG_ERROR("GrassSystem: BladeMesh::Generate returned empty data");
-			return false;
-		}
+			if (data.vertices.empty() || data.indices.empty())
+			{
+				LOG_ERROR("GrassSystem: BladeMesh::Generate returned empty data");
+				return false;
+			}
 
-		VkDeviceSize vbSize = data.vertices.size() * sizeof(VertexPNT);
-		m_VertexBuffer = m_Resources->CreateVertexBufferUnique("grass_blade_vb", vbSize, false);
-		if (!m_VertexBuffer)
-		{
-			LOG_ERROR("GrassSystem: failed to create blade vertex buffer");
-			return false;
-		}
+			VkDeviceSize vbSize = data.vertices.size() * sizeof(VertexPNT);
+			vb = m_Resources->CreateVertexBufferUnique(vbName, vbSize, false);
+			if (!vb || !vb->UploadData(data.vertices.data(), vbSize, 0, m_Resources->GetTransferCommandPool()))
+			{
+				LOG_ERROR("GrassSystem: failed to create/upload blade vertex buffer '{}'", vbName);
+				vb.reset();
+				return false;
+			}
 
-		if (!m_VertexBuffer->UploadData(data.vertices.data(), vbSize, 0, m_Resources->GetTransferCommandPool()))
-		{
-			LOG_ERROR("GrassSystem: failed to upload blade vertex data");
-			m_VertexBuffer.reset();
-			return false;
-		}
+			VkDeviceSize ibSize = data.indices.size() * sizeof(uint32_t);
+			ib = m_Resources->CreateIndexBufferUnique(ibName, ibSize, false);
+			if (!ib || !ib->UploadData(data.indices.data(), ibSize, 0, m_Resources->GetTransferCommandPool()))
+			{
+				LOG_ERROR("GrassSystem: failed to create/upload blade index buffer '{}'", ibName);
+				ib.reset();
+				return false;
+			}
 
-		VkDeviceSize ibSize = data.indices.size() * sizeof(uint32_t);
-		m_IndexBuffer = m_Resources->CreateIndexBufferUnique("grass_blade_ib", ibSize, false);
-		if (!m_IndexBuffer)
-		{
-			LOG_ERROR("GrassSystem: failed to create blade index buffer");
-			return false;
-		}
+			indexCountOut = data.indexCount();
+			return true;
+		};
 
-		if (!m_IndexBuffer->UploadData(data.indices.data(), ibSize, 0, m_Resources->GetTransferCommandPool()))
-		{
-			LOG_ERROR("GrassSystem: failed to upload blade index data");
-			m_IndexBuffer.reset();
-			return false;
-		}
+		BladeMeshData full = BladeMesh::Generate(segments, baseHalfWidth, taperPower, minTipWidthFraction, bendAmount);
+		BladeMeshData low  = BladeMesh::Generate(kLowDetailSegments, baseHalfWidth, taperPower, minTipWidthFraction, bendAmount);
 
-		m_IndexCount = data.indexCount();
+		if (!uploadMesh("grass_blade_vb", "grass_blade_ib", full, m_VertexBuffer, m_IndexBuffer, m_IndexCount))
+			return false;
+		if (!uploadMesh("grass_blade_low_vb", "grass_blade_low_ib", low, m_VertexBufferLow, m_IndexBufferLow, m_IndexCountLow))
+			return false;
+
 		m_MeshBuilt = true;
 
-		LOG_INFO("GrassSystem: blade mesh built ({} vertices, {} indices)",
-			data.vertexCount(), data.indexCount());
+		LOG_INFO("GrassSystem: blade meshes built (near {} verts/{} idx, far {} verts/{} idx)",
+			full.vertexCount(), full.indexCount(), low.vertexCount(), low.indexCount());
 
 		return true;
 	}
@@ -384,9 +420,6 @@ namespace Nightbloom
 					[](const Candidate& a, const Candidate& b) { return a.priority < b.priority; });
 
 				uint32_t naturalTotal = static_cast<uint32_t>(patchCandidates.size());
-				uint32_t naturalMid = static_cast<uint32_t>(naturalTotal * desc.lodMidFraction);
-				uint32_t naturalFar = static_cast<uint32_t>(naturalTotal * desc.lodFarFraction);
-
 				uint32_t remainingBudget = m_MaxInstanceCount - static_cast<uint32_t>(instanceData.size() / 2);
 				uint32_t pushCount = std::min(naturalTotal, remainingBudget);
 				if (pushCount < naturalTotal)
@@ -413,8 +446,6 @@ namespace Nightbloom
 					actualPatchSize * 0.5f);
 				patch.firstInstance = patchFirst;
 				patch.fullCount = pushCount;
-				patch.midCount = std::min(naturalMid, pushCount);
-				patch.farCount = std::min(naturalFar, pushCount);
 				m_Patches.push_back(patch);
 			}
 		}
@@ -426,7 +457,6 @@ namespace Nightbloom
 		}
 
 		m_ActiveInstanceCount = static_cast<uint32_t>(instanceData.size() / 2);
-		m_PatchTier.assign(m_Patches.size(), 0); // start every patch at full detail
 
 		if (!instanceData.empty() && m_InstanceBuffer)
 		{
@@ -436,30 +466,6 @@ namespace Nightbloom
 				0,
 				m_Resources->GetTransferCommandPool());
 		}
-	}
-
-	// =========================================================================
-	// SelectLODTier — mirrors TerrainSystem::SelectLODResolution's hysteresis
-	// pattern (widen the boundary in the direction that keeps the current
-	// tier, so hovering near a threshold doesn't flicker).
-	// =========================================================================
-	int GrassSystem::SelectLODTier(float distance, int currentTier) const
-	{
-		const float kHysteresis = 0.15f;
-		bool inTier0 = (currentTier == 0);
-		bool inTier1 = !inTier0 && (currentTier == 1);
-
-		auto adjust = [kHysteresis](float boundary, bool currentlyCloser)
-		{
-			return currentlyCloser ? boundary * (1.0f + kHysteresis) : boundary * (1.0f - kHysteresis);
-		};
-
-		float adjMid = adjust(m_CurrentDesc.lodMidDistance, inTier0);
-		float adjFar = adjust(m_CurrentDesc.lodFarDistance, inTier0 || inTier1);
-
-		if (distance < adjMid) return 0;
-		if (distance < adjFar) return 1;
-		return 2;
 	}
 
 } // namespace Nightbloom

@@ -41,6 +41,7 @@ namespace Nightbloom
 	class ShadowMapManager;
 	class FireflySystem;
 	class CloudSystem;
+	class WaterSystem;
 
 	//texture include?
 	class VulkanTexture;
@@ -113,12 +114,20 @@ namespace Nightbloom
 		// manages its lifetime.
 		void SetCloudSystem(CloudSystem* system) { m_CloudSystem = system; }
 
+		// WaterSystem registers here so the reflection pass can mirror the camera
+		// across the water plane's Y and re-render the scene into the reflection
+		// target each frame. Setting null disables the reflection pass. Not owned
+		// — caller (WaterEditorPanel) manages its lifetime.
+		void SetWaterSystem(WaterSystem* system) { m_WaterSystem = system; }
+
 		// Pipeline operations (temporary - for testing)
 		void TogglePipeline();
 		void ReloadShaders();
 
 		// Shadow controls
 		bool IsShadowEnabled() const { return m_ShadowEnabled; }
+		bool IsPostProcessAAEnabled() const { return m_PostProcessAAEnabled; }
+		void SetPostProcessAAEnabled(bool enabled) { m_PostProcessAAEnabled = enabled; }
 		void SetShadowEnabled(bool enabled) { m_ShadowEnabled = enabled; }
 		void SetShadowCenter(const glm::vec3& center) { m_ShadowCenter = center; }
 		void SetShadowConfig(const ShadowConfig& config) { m_ShadowConfig = config; }
@@ -174,6 +183,22 @@ namespace Nightbloom
 		std::array<VulkanBuffer*, 2> m_ShadowUniforms{};
 		FrameUniformData m_ShadowFrameData;
 
+		// Reflection uniform buffers (set 0 in the planar-reflection pass - the
+		// mirror-flipped camera's view/proj). Same double-buffered pattern as the
+		// shadow UBO above.
+		std::array<VulkanBuffer*, 2> m_ReflectionUniforms{};
+		FrameUniformData m_ReflectionFrameData;
+
+		// Reflection target sampler descriptor set (Water set 2). Allocated once
+		// in InitializePipelines; re-pointed in HandleSwapchainResize since the
+		// reflection target is recreated then (like m_PostProcessInputSet).
+		VkDescriptorSet m_ReflectionInputSet = VK_NULL_HANDLE;
+
+		// Post-process (FXAA) — samples the scene-color texture RenderPassManager
+		// owns; set is allocated/updated once in InitializePipelines and
+		// re-updated in HandleSwapchainResize since the texture is recreated then.
+		VkDescriptorSet m_PostProcessInputSet = VK_NULL_HANDLE;
+
 		//Compute support
 		bool m_ComputeEnabled = false;
 		VkDescriptorSet m_ComputeTestDescriptorSet = VK_NULL_HANDLE;
@@ -194,6 +219,7 @@ namespace Nightbloom
 
 		// Shadow state
 		bool m_ShadowEnabled = true;
+		bool m_PostProcessAAEnabled = true;
 		glm::vec3 m_ShadowCenter = glm::vec3(0.0f);
 		ShadowConfig m_ShadowConfig;
 
@@ -202,6 +228,7 @@ namespace Nightbloom
 
 		FireflySystem* m_FireflySystem = nullptr; // not owned
 		CloudSystem* m_CloudSystem = nullptr; // not owned
+		WaterSystem* m_WaterSystem = nullptr; // not owned
 
 		// Testing state (temporary)
 		PipelineType m_CurrentPipeline = PipelineType::Mesh;
@@ -224,6 +251,8 @@ namespace Nightbloom
 		void RecordCommandBuffer(uint32_t frameIndex, uint32_t imageIndex);
 		void RecordComputePass(uint32_t frameIndex);
 		void RecordShadowPass(uint32_t frameIndex);
+		void RecordReflectionPass(uint32_t frameIndex);
+		void RecordPostProcessPass(uint32_t frameIndex, uint32_t imageIndex);
 		void UpdateShadowMatrices();
 		bool HandleSwapchainResize();
 

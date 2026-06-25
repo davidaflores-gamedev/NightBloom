@@ -119,6 +119,12 @@ namespace Nightbloom
 		                // stage. Drawn after Terrain so it sits on the displaced surface,
 		                // before Clouds/Firefly per the existing sort-by-enum-value order.
 
+		Water,          // Horizontal reflective water plane. Drawn after Foliage (sits on/above
+		                // the terrain surface, depth-tests against it) but before Clouds (water
+		                // reflects the sky) and Firefly. Alpha-blended, depth-tested but does
+		                // not write depth. Samples the planar-reflection target rendered from a
+		                // mirror-flipped camera. Sets: uniform=0, lighting=1, reflection=2.
+
 		// VFX
 		Clouds,         // Full-screen raymarched sky volume, drawn after opaque/terrain so the
 		                // normal depth test occludes it correctly; before Firefly so fireflies
@@ -184,6 +190,8 @@ namespace Nightbloom
 		bool useFireflyStorage = false;  // Pipeline reads the firefly agent storage buffer (vertex+compute stages)
 		bool useFoliageStorage = false;  // Pipeline reads the foliage instance storage buffer (vertex stage only)
 		bool useCloudResult = false;  // Pipeline samples the low-res cloud raymarch result (fragment stage) - the graphics Clouds composite pass's only texture input
+		bool usePostProcessInput = false;  // Pipeline samples the scene-color texture (fragment stage) - the PostProcess/FXAA pass's only texture input
+		bool useReflectionInput = false;  // Pipeline samples the planar-reflection target (fragment stage) - the Water pass; lands last so it's set 2 (after uniform=0, lighting=1)
 
 		bool hasColorAttachment = true;  // False for depth-only passes (shadow)
 

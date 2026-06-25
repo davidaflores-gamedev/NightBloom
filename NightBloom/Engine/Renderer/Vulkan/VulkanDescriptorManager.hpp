@@ -63,6 +63,14 @@ namespace Nightbloom
 		void UpdateShadowUniformSet(uint32_t frameIndex, VkBuffer buffer, size_t size);
 		VkDescriptorSet GetShadowUniformDescriptorSet(uint32_t frameIndex) { return m_ShadowUniformDescriptorSets[frameIndex]; }
 
+		// --- Reflection pass uniform (set 0 in the planar-reflection pass) ---
+		//     Same layout as the camera uniform, but points at a UBO holding the
+		//     mirror-flipped camera's view/proj. Exactly mirrors the shadow
+		//     uniform pattern above.
+		VkDescriptorSet AllocateReflectionUniformSet(uint32_t frameIndex);
+		void UpdateReflectionUniformSet(uint32_t frameIndex, VkBuffer buffer, size_t size);
+		VkDescriptorSet GetReflectionUniformDescriptorSet(uint32_t frameIndex) { return m_ReflectionUniformDescriptorSets[frameIndex]; }
+
 		// --- Compute storage buffers ---
 		VkDescriptorSet AllocateComputeStorageSet();
 		void UpdateComputeStorageSet(VkDescriptorSet set, VkBuffer inputBuffer, VkDeviceSize inputSize,
@@ -125,6 +133,27 @@ namespace Nightbloom
 		void UpdateCloudResultSet(VkDescriptorSet set, VulkanTexture* resultTexture);
 		VkDescriptorSetLayout GetCloudResultSetLayout() const { return m_CloudResultSetLayout; }
 
+		// --- Post-process input (set 0 in the PostProcess/FXAA pass): the
+		//     scene-color texture the scene pass rendered into. Single set,
+		//     not per-frame — recreated whenever RenderPassManager recreates
+		//     the scene-color texture (resize). Takes a raw view+sampler
+		//     (not a VulkanTexture*) since RenderPassManager owns that
+		//     texture directly, the same way it owns the depth buffer.
+		VkDescriptorSetLayout CreatePostProcessInputSetLayout();
+		VkDescriptorSet AllocatePostProcessInputSet();
+		void UpdatePostProcessInputSet(VkDescriptorSet set, VkImageView imageView, VkSampler sampler);
+		VkDescriptorSetLayout GetPostProcessInputSetLayout() const { return m_PostProcessInputSetLayout; }
+
+		// --- Reflection input (the planar-reflection color target, sampled by
+		//     the water surface). Single combined-image-sampler, fragment-only —
+		//     identical shape to the post-process input set, just a different
+		//     source image. Single set, recreated on resize. Lands at set 2 in
+		//     the Water pipeline (uniform=0, lighting=1, reflection=2).
+		VkDescriptorSetLayout CreateReflectionInputSetLayout();
+		VkDescriptorSet AllocateReflectionInputSet();
+		void UpdateReflectionInputSet(VkDescriptorSet set, VkImageView imageView, VkSampler sampler);
+		VkDescriptorSetLayout GetReflectionInputSetLayout() const { return m_ReflectionInputSetLayout; }
+
 	private:
 		VulkanDevice* m_Device = nullptr;
 		VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
@@ -142,6 +171,8 @@ namespace Nightbloom
 		VkDescriptorSetLayout m_CloudSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_CloudResultSetLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_FoliageStorageSetLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_PostProcessInputSetLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_ReflectionInputSetLayout = VK_NULL_HANDLE;
 
 		// Per-frame descriptor sets
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_TextureDescriptorSets{};
@@ -149,6 +180,7 @@ namespace Nightbloom
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_LightingDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_ShadowDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_ShadowUniformDescriptorSets{};
+		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_ReflectionUniformDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_FireflyParamsDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_CloudDescriptorSets{};
 	};

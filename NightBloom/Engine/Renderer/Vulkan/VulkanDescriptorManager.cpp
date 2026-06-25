@@ -133,6 +133,19 @@ namespace Nightbloom
 			}
 		}
 
+		// Allocate reflection UNIFORM descriptor sets (set 0 in the planar
+		// reflection pass) — same layout as the camera uniform, points at the
+		// mirror-flipped camera's UBO. Same pattern as the shadow uniform above.
+		for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+		{
+			m_ReflectionUniformDescriptorSets[i] = AllocateReflectionUniformSet(i);
+			if (m_ReflectionUniformDescriptorSets[i] == VK_NULL_HANDLE)
+			{
+				LOG_ERROR("Failed to allocate reflection uniform descriptor set for frame {}", i);
+				return false;
+			}
+		}
+
 		// Create compute storage layout
 		m_ComputeStorageSetLayout = CreateComputeStorageSetLayout();
 		if (m_ComputeStorageSetLayout == VK_NULL_HANDLE)
@@ -212,6 +225,22 @@ namespace Nightbloom
 		if (m_FoliageStorageSetLayout == VK_NULL_HANDLE)
 		{
 			LOG_ERROR("Failed to create foliage storage descriptor set layout");
+			return false;
+		}
+
+		// Create post-process input set layout
+		m_PostProcessInputSetLayout = CreatePostProcessInputSetLayout();
+		if (m_PostProcessInputSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create post-process input descriptor set layout");
+			return false;
+		}
+
+		// Create reflection input set layout (water samples the reflection target)
+		m_ReflectionInputSetLayout = CreateReflectionInputSetLayout();
+		if (m_ReflectionInputSetLayout == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to create reflection input descriptor set layout");
 			return false;
 		}
 
@@ -309,6 +338,18 @@ namespace Nightbloom
 		{
 			vkDestroyDescriptorSetLayout(device, m_FoliageStorageSetLayout, nullptr);
 			m_FoliageStorageSetLayout = VK_NULL_HANDLE;
+		}
+
+		if (m_PostProcessInputSetLayout != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorSetLayout(device, m_PostProcessInputSetLayout, nullptr);
+			m_PostProcessInputSetLayout = VK_NULL_HANDLE;
+		}
+
+		if (m_ReflectionInputSetLayout != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorSetLayout(device, m_ReflectionInputSetLayout, nullptr);
+			m_ReflectionInputSetLayout = VK_NULL_HANDLE;
 		}
 
 		if (m_DescriptorPool != VK_NULL_HANDLE)
@@ -677,6 +718,43 @@ namespace Nightbloom
 		VkWriteDescriptorSet descriptorWrite{};
 		descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		descriptorWrite.dstSet = m_ShadowUniformDescriptorSets[frameIndex];
+		descriptorWrite.dstBinding = 0;
+		descriptorWrite.dstArrayElement = 0;
+		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		descriptorWrite.descriptorCount = 1;
+		descriptorWrite.pBufferInfo = &bufferInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &descriptorWrite, 0, nullptr);
+	}
+
+	VkDescriptorSet VulkanDescriptorManager::AllocateReflectionUniformSet(uint32_t frameIndex)
+	{
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_UniformSetLayout;  // Same layout as camera uniform
+
+		VkDescriptorSet descriptorSet;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &descriptorSet) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate reflection uniform descriptor set for frame {}", frameIndex);
+			return VK_NULL_HANDLE;
+		}
+
+		return descriptorSet;
+	}
+
+	void VulkanDescriptorManager::UpdateReflectionUniformSet(uint32_t frameIndex, VkBuffer buffer, size_t size)
+	{
+		VkDescriptorBufferInfo bufferInfo{};
+		bufferInfo.buffer = buffer;
+		bufferInfo.offset = 0;
+		bufferInfo.range = size;
+
+		VkWriteDescriptorSet descriptorWrite{};
+		descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descriptorWrite.dstSet = m_ReflectionUniformDescriptorSets[frameIndex];
 		descriptorWrite.dstBinding = 0;
 		descriptorWrite.dstArrayElement = 0;
 		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -1289,6 +1367,141 @@ namespace Nightbloom
 		write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		write.descriptorCount = 1;
 		write.pBufferInfo = &bufferInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &write, 0, nullptr);
+	}
+
+	// =====================================================================
+	// Post-process input (set 0 in the PostProcess/FXAA pass)
+	// =====================================================================
+
+	VkDescriptorSetLayout VulkanDescriptorManager::CreatePostProcessInputSetLayout()
+	{
+		VkDescriptorSetLayoutBinding binding{};
+		binding.binding = 0;
+		binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		binding.descriptorCount = 1;
+		binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		binding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &binding;
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create post-process input descriptor set layout");
+			return VK_NULL_HANDLE;
+		}
+
+		LOG_INFO("Created post-process input descriptor set layout");
+		return layout;
+	}
+
+	VkDescriptorSet VulkanDescriptorManager::AllocatePostProcessInputSet()
+	{
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_PostProcessInputSetLayout;
+
+		VkDescriptorSet set;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &set) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate post-process input descriptor set");
+			return VK_NULL_HANDLE;
+		}
+		return set;
+	}
+
+	void VulkanDescriptorManager::UpdatePostProcessInputSet(VkDescriptorSet set, VkImageView imageView, VkSampler sampler)
+	{
+		if (set == VK_NULL_HANDLE || imageView == VK_NULL_HANDLE) return;
+
+		VkDescriptorImageInfo imageInfo{};
+		imageInfo.sampler = sampler;
+		imageInfo.imageView = imageView;
+		imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		VkWriteDescriptorSet write{};
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = set;
+		write.dstBinding = 0;
+		write.dstArrayElement = 0;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		write.descriptorCount = 1;
+		write.pImageInfo = &imageInfo;
+
+		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &write, 0, nullptr);
+	}
+
+	// =====================================================================
+	// Reflection input (set 2 in the Water pass) — the planar-reflection
+	// color target. Same single-sampler shape as the post-process input.
+	// =====================================================================
+
+	VkDescriptorSetLayout VulkanDescriptorManager::CreateReflectionInputSetLayout()
+	{
+		VkDescriptorSetLayoutBinding binding{};
+		binding.binding = 0;
+		binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		binding.descriptorCount = 1;
+		binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		binding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &binding;
+
+		VkDescriptorSetLayout layout;
+		if (vkCreateDescriptorSetLayout(m_Device->GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create reflection input descriptor set layout");
+			return VK_NULL_HANDLE;
+		}
+
+		LOG_INFO("Created reflection input descriptor set layout");
+		return layout;
+	}
+
+	VkDescriptorSet VulkanDescriptorManager::AllocateReflectionInputSet()
+	{
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_DescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &m_ReflectionInputSetLayout;
+
+		VkDescriptorSet set;
+		if (vkAllocateDescriptorSets(m_Device->GetDevice(), &allocInfo, &set) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to allocate reflection input descriptor set");
+			return VK_NULL_HANDLE;
+		}
+		return set;
+	}
+
+	void VulkanDescriptorManager::UpdateReflectionInputSet(VkDescriptorSet set, VkImageView imageView, VkSampler sampler)
+	{
+		if (set == VK_NULL_HANDLE || imageView == VK_NULL_HANDLE) return;
+
+		VkDescriptorImageInfo imageInfo{};
+		imageInfo.sampler = sampler;
+		imageInfo.imageView = imageView;
+		imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		VkWriteDescriptorSet write{};
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = set;
+		write.dstBinding = 0;
+		write.dstArrayElement = 0;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		write.descriptorCount = 1;
+		write.pImageInfo = &imageInfo;
 
 		vkUpdateDescriptorSets(m_Device->GetDevice(), 1, &write, 0, nullptr);
 	}

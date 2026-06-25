@@ -27,16 +27,17 @@
 // patch) so SubmitDraw can frustum-cull whole patches against the existing
 // Frustum::Intersects test and submit one DrawCommand per visible patch.
 //
-// Distance LOD: each patch's candidates are shuffled by an independent
-// random priority (not spatial order — avoids grid/banding artifacts a
-// strided "every Nth" thinning would show) before being appended, so a
-// shorter prefix of the same range is a spatially-representative random
-// subsample of the full set. Three nested tiers (far ⊂ mid ⊂ full) share one
-// firstInstance — SubmitDraw just submits a shorter instanceCount at
-// distance, same range, no second buffer or duplicate data. This actually
-// reduces per-frame instance/vertex cost at range, unlike the visibility-only
-// width boost in Grass.vert. Tier selection has Terrain-style hysteresis
-// (TerrainSystem::SelectLODResolution) to avoid flicker at the boundary.
+// Distance LOD (continuous, pop-free): each patch's candidates are shuffled by
+// an independent random priority (not spatial order — avoids grid/banding a
+// strided "every Nth" thinning would show) before being appended, so any
+// prefix of the range is a spatially-representative random subset. SubmitDraw
+// computes a continuous drawn fraction from the patch's camera distance and
+// submits ceil(drawCountF) instances; Grass.vert cross-fades the marginal
+// blades at the moving cutoff (by scale) so density falls off smoothly with no
+// pop, and beyond lodFadeDistance the patch is skipped (already faded to
+// nothing). A separate cheap low-segment blade mesh is bound past
+// meshLodDistance. This replaced an earlier 3-hard-tier scheme whose threshold
+// crossings popped a chunk of blades in/out at once.
 //
 // Usage:
 //   GrassSystem grass;
@@ -64,13 +65,16 @@ namespace Nightbloom
 	struct GrassDesc
 	{
 		// Blade mesh shape (triggers a mesh rebuild if changed)
-		uint32_t segments = 4;
-		float    bladeBaseHalfWidth = 0.1f;
+		uint32_t segments = 6;
+		float    bladeBaseHalfWidth = 0.04f;
 		float    taperPower = 1.5f;
 		// Tip half-width as a fraction of bladeBaseHalfWidth — kept above 0
 		// so the tip isn't a literal zero-width point (sub-pixel triangles
 		// there alias/shimmer at a distance). See BladeMesh.hpp.
-		float    minTipWidthFraction = 0.18f;
+		float    minTipWidthFraction = 0.15f;
+		// Forward rest-pose arc — straight blades read as geometric spikes,
+		// the curve reads as grass. See BladeMesh.hpp.
+		float    bendAmount = 0.3f;
 
 		// Per-instance height (world units) — actual height is this value
 		// jittered by +/- heightJitter fraction, baked into each instance's
@@ -88,8 +92,8 @@ namespace Nightbloom
 		// a sizeable fraction of the spacing for neighboring blades to read
 		// as overlapping coverage rather than isolated spikes.
 		float    patchSize = 25.0f;
-		float    candidateSpacing = 0.6f;
-		float    densityThreshold = 0.5f;   // candidate kept if noise > this
+		float    candidateSpacing = 0.4f;
+		float    densityThreshold = 0.42f;  // candidate kept if noise > this
 		float    densityFrequency = 0.06f;  // world units per noise cycle (~1/frequency)
 		uint32_t densityOctaves = 2;
 
@@ -106,26 +110,43 @@ namespace Nightbloom
 		float slopeThresholdDeg = 45.0f;
 		float slopeFalloffDeg = 10.0f;
 
-		// Distance visibility — thin blades shrink below a pixel and
-		// disappear at range (no real LOD exists yet). Grass.vert widens a
-		// blade's local width once its apparent size (proj[1][1]/distance,
-		// a cheap FOV/distance proxy, not exact device pixels) drops below
-		// minApparentWidth, clamped to at most maxWidthBoost times wider.
-		// A "fake it" fix, not true LOD — doesn't reduce instance/triangle
-		// cost the way real distance LOD would.
+		// Distance visibility — DEPRECATED width-boost hack. It widened thin
+		// blades at range so they wouldn't sub-pixel-vanish, but that ballooned
+		// distant blades into fat triangles (the worst artifact in the old
+		// look). With MSAA on the scene pass + higher density, thin distant
+		// blades anti-alias/aggregate correctly instead, so the boost is no
+		// longer applied in Grass.vert (default 1.0 = inert). Kept only so the
+		// CPU-side push-constant layout doesn't change.
 		float minApparentWidth = 0.02f;
-		float maxWidthBoost = 8.0f;
+		float maxWidthBoost = 1.0f;
 
-		// Distance LOD — real cost reduction (fewer instances actually
-		// drawn), complementary to the visibility-only width boost above.
-		// Patches closer than lodMidDistance draw all instances; beyond
-		// lodFarDistance only lodFarFraction of them; lodMidFraction in
-		// between. See this file's header comment for how the tiers share
-		// one contiguous range with no duplicate data.
-		float lodMidDistance = 40.0f;
-		float lodFarDistance = 90.0f;
-		float lodMidFraction = 0.45f;
-		float lodFarFraction = 0.15f;
+		// Distance LOD — CONTINUOUS and pop-free (replaces the old 3 hard
+		// count-tiers, whose threshold crossings popped a chunk of blades in/out
+		// at once). Each patch draws a fraction of its blades that falls
+		// smoothly from 1.0 (within lodFullDistance) to 0.0 (at lodFadeDistance,
+		// beyond which the patch is skipped — its blades are already faded to
+		// nothing, so the skip is invisible). The marginal blades at the moving
+		// cutoff are cross-faded by scale in Grass.vert over a band of
+		// lodFadeBandFraction of the patch's blades, so they grow/shrink
+		// smoothly instead of popping. Blades are priority-sorted at generation,
+		// so a shorter prefix is a spatially-representative random subset and the
+		// thinning looks natural rather than spatial.
+		float lodFullDistance = 35.0f;
+		float lodFadeDistance = 130.0f;
+		// Cross-fade width at the moving cutoff, in BLADES (a fixed count, not a
+		// fraction of the patch — a fraction would scale with fullCount and, for
+		// a distant patch whose drawn count is small, swallow the whole patch
+		// into a uniform shrink). The top ~this-many drawn blades fade; for a
+		// full-density near patch that's a negligible handful, for a sparse
+		// distant patch it's a clean soft edge that also eases the patch to
+		// nothing as it approaches lodFadeDistance.
+		float lodFadeBandBlades = 16.0f;
+
+		// Beyond this distance a patch draws the cheap low-segment blade mesh
+		// (the curve is invisible there). Per-patch binary swap; raise it high
+		// to disable if you ever notice the swap. Kept comfortably far so the
+		// swapped blades are small enough that it isn't visible.
+		float meshLodDistance = 55.0f;
 
 		// Per-instance color tint jitter, multiplicative around 1.0
 		float colorVariation = 0.15f;
@@ -157,7 +178,7 @@ namespace Nightbloom
 		// set (avoids the per-regenerate descriptor-set leak TerrainSystem's
 		// heightmap path has — see CLAUDE.md/ROADMAP.md notes on that).
 		//----------------------------------------------------------------------
-		bool Initialize(Renderer* renderer, uint32_t maxInstanceCount = 98304);
+		bool Initialize(Renderer* renderer, uint32_t maxInstanceCount = 200000);
 
 		//----------------------------------------------------------------------
 		// Regenerate — rebuilds the blade mesh only if shape params changed,
@@ -195,25 +216,29 @@ namespace Nightbloom
 			glm::vec3 center;
 			glm::vec3 extents;
 			uint32_t  firstInstance;
-			// Nested tiers sharing firstInstance — see this file's header
-			// comment. farCount <= midCount <= fullCount by construction.
-			uint32_t  farCount;
-			uint32_t  midCount;
-			uint32_t  fullCount;
+			uint32_t  fullCount;   // total blades in this patch (priority-sorted)
 		};
 
-		bool BuildBladeMesh(uint32_t segments, float baseHalfWidth, float taperPower, float minTipWidthFraction);
+		bool BuildBladeMesh(uint32_t segments, float baseHalfWidth, float taperPower, float minTipWidthFraction, float bendAmount);
 		void GenerateInstances(const GrassDesc& desc);
-		int SelectLODTier(float distance, int currentTier) const;
 
 		Renderer* m_Renderer = nullptr;
 		ResourceManager* m_Resources = nullptr;
 		VulkanDescriptorManager* m_DescriptorManager = nullptr;
 
-		// Blade mesh — shared by every instance
+		// Blade mesh — shared by every instance. Two detail levels: the full
+		// mesh (desc.segments, curved) for the near LOD tier, and a cheap
+		// 2-segment mesh for the mid/far tiers. Each grass vertex does ~5
+		// heightmap texture fetches in Grass.vert, so cutting vertex count on
+		// the ~88% of blades beyond the near tier is a real vertex-shader win,
+		// and the curve is invisible at those distances anyway.
 		std::unique_ptr<VulkanBuffer> m_VertexBuffer;
 		std::unique_ptr<VulkanBuffer> m_IndexBuffer;
 		uint32_t m_IndexCount = 0;
+
+		std::unique_ptr<VulkanBuffer> m_VertexBufferLow;
+		std::unique_ptr<VulkanBuffer> m_IndexBufferLow;
+		uint32_t m_IndexCountLow = 0;
 
 		// Per-instance storage buffer — sized once for m_MaxInstanceCount
 		VulkanBuffer* m_InstanceBuffer = nullptr; // owned by ResourceManager's named buffer cache
@@ -222,10 +247,6 @@ namespace Nightbloom
 		uint32_t m_ActiveInstanceCount = 0;
 
 		std::vector<GrassPatch> m_Patches;
-		// Per-patch last-selected LOD tier (0=full,1=mid,2=far), for the
-		// hysteresis in SelectLODTier — mutated from the const SubmitDraw,
-		// same convention as TerrainSystem's mutable m_SkipNextDraw.
-		mutable std::vector<int> m_PatchTier;
 
 		GrassDesc m_CurrentDesc;
 		bool m_Ready = false;

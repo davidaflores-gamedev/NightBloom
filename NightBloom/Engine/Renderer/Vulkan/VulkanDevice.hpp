@@ -55,6 +55,11 @@ namespace Nightbloom
 		// Capabilities query
 		size_t GetMinUniformBufferAlignment() const override;
 
+		// Highest MSAA sample count supported by both color and depth
+		// framebuffer attachments, capped at maxCap (default 8). Used to pick a
+		// safe MSAA level for the offscreen scene pass.
+		VkSampleCountFlagBits GetMaxUsableSampleCount(VkSampleCountFlagBits maxCap = VK_SAMPLE_COUNT_8_BIT) const;
+
 		// Getters for Vulkan-specific properties
 		VkInstance GetInstance() const { return m_Instance; }
 		VkPhysicalDevice GetPhysicalDevice() const { return m_PhysicalDevice; }

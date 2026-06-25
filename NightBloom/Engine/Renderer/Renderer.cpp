@@ -23,6 +23,7 @@
 #include "Engine/Renderer/NoiseTextureGenerator.hpp"
 #include "Engine/VFX/FireflySystem.hpp"
 #include "Engine/VFX/CloudSystem.hpp"
+#include "Engine/Hydro/WaterSystem.hpp"
 #include "Engine/Renderer/Components/ShadowMapManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Engine/Renderer/Components/UIManager.hpp"
@@ -264,10 +265,19 @@ namespace Nightbloom
 		// =====================================================================
 		UpdateShadowMatrices();
 
+		// Water level fed to shaders via the reserved time.yz slots: time.y =
+		// water surface Y, time.z = water-enabled flag. Grass.vert reads these to
+		// cull blades that would otherwise grow underwater (the grass system is
+		// independent of water, so it can't know the waterline on its own).
+		const float waterLevel = m_WaterSystem ? m_WaterSystem->GetWaterY() : 0.0f;
+		const float waterEnabled = m_WaterSystem ? 1.0f : 0.0f;
+
 		// Update camera uniform buffer (set 0 in main pass)
 		m_CurrentFrameData.view = m_ViewMatrix;
 		m_CurrentFrameData.proj = m_ProjectionMatrix;
 		m_CurrentFrameData.time.x = m_TotalTime;
+		m_CurrentFrameData.time.y = waterLevel;
+		m_CurrentFrameData.time.z = waterEnabled;
 		m_CurrentFrameData.cameraPos = glm::vec4(m_CameraPosition, 1.0f);
 		m_CurrentFrameData.invView = glm::inverse(m_ViewMatrix);
 		m_CurrentFrameData.invProj = glm::inverse(m_ProjectionMatrix);
@@ -294,6 +304,42 @@ namespace Nightbloom
 		{
 			memcpy(lightMapped, &m_CurrentLightingData, sizeof(SceneLightingData));
 			m_LightingUniforms[frameIndex]->Flush();
+		}
+
+		// Upload reflection UBO (set 0 in the reflection pass). The camera is
+		// mirrored across the water plane (y = waterY); the projection is left
+		// as-is (no oblique clip plane in v1 — below-water geometry that pierces
+		// the surface can leak into the reflection; logged as a follow-up).
+		if (m_WaterSystem)
+		{
+			const float waterY = m_WaterSystem->GetWaterY();
+
+			// Reflect world-space positions across plane y = waterY:
+			//   (x, y, z) -> (x, 2*waterY - y, z)
+			glm::mat4 mirror(1.0f);
+			mirror[1][1] = -1.0f;          // negate Y
+			mirror[3][1] = 2.0f * waterY;  // translate Y by 2*waterY
+
+			m_ReflectionFrameData.view = m_ViewMatrix * mirror;
+			m_ReflectionFrameData.proj = m_ProjectionMatrix;
+			m_ReflectionFrameData.time.x = m_TotalTime;
+			// Cull reflected grass at the waterline too (otherwise underwater
+			// blades, mirrored, would appear floating above the surface).
+			m_ReflectionFrameData.time.y = waterY;
+			m_ReflectionFrameData.time.z = 1.0f;
+
+			glm::vec3 mirroredCam = m_CameraPosition;
+			mirroredCam.y = 2.0f * waterY - mirroredCam.y;
+			m_ReflectionFrameData.cameraPos = glm::vec4(mirroredCam, 1.0f);
+			m_ReflectionFrameData.invView = glm::inverse(m_ReflectionFrameData.view);
+			m_ReflectionFrameData.invProj = glm::inverse(m_ReflectionFrameData.proj);
+
+			void* reflMapped = m_ReflectionUniforms[frameIndex]->GetPersistentMappedPtr();
+			if (reflMapped)
+			{
+				memcpy(reflMapped, &m_ReflectionFrameData, sizeof(FrameUniformData));
+				m_ReflectionUniforms[frameIndex]->Flush();
+			}
 		}
 
 		// Clear draw list for new frame
@@ -649,6 +695,28 @@ namespace Nightbloom
 			LOG_WARN("Failed to load clouds fragment shader - continuing without clouds pipeline");
 		}
 
+		if (!m_Resources->LoadShader("postprocess_vert", ShaderStage::Vertex, "PostProcess.vert"))
+		{
+			LOG_ERROR("Failed to load post-process vertex shader");
+			return false;
+		}
+
+		if (!m_Resources->LoadShader("postprocess_frag", ShaderStage::Fragment, "PostProcess.frag"))
+		{
+			LOG_ERROR("Failed to load post-process fragment shader");
+			return false;
+		}
+
+		if (!m_Resources->LoadShader("water_vert", ShaderStage::Vertex, "Water.vert"))
+		{
+			LOG_WARN("Failed to load water vertex shader - continuing without water pipeline");
+		}
+
+		if (!m_Resources->LoadShader("water_frag", ShaderStage::Fragment, "Water.frag"))
+		{
+			LOG_WARN("Failed to load water fragment shader - continuing without water pipeline");
+		}
+
 		LOG_INFO("Shaders loaded successfully");
 		return true;
 	}
@@ -773,13 +841,20 @@ namespace Nightbloom
 			return false;
 		}
 
-		// Initialize render passes
+		// Initialize render passes — request 2x MSAA on the offscreen scene
+		// pass, clamped to what the device's color+depth attachments support.
+		// 2x is a deliberate cost/quality balance: on these clean edges it's
+		// nearly indistinguishable from 4x but roughly halves the MSAA
+		// bandwidth/resolve cost. Bump the cap to VK_SAMPLE_COUNT_4_BIT here if
+		// you want maximum edge quality and can spare the fill cost.
+		VkSampleCountFlagBits sceneSamples = vkDevice->GetMaxUsableSampleCount(VK_SAMPLE_COUNT_2_BIT);
 		m_RenderPasses = std::make_unique<RenderPassManager>();
-		if (!m_RenderPasses->Initialize(vkDevice->GetDevice(), m_Swapchain.get(), m_MemoryManager.get()))
+		if (!m_RenderPasses->Initialize(vkDevice->GetDevice(), m_Swapchain.get(), m_MemoryManager.get(), sceneSamples))
 		{
 			LOG_ERROR("Failed to initialize render passes");
 			return false;
 		}
+		LOG_INFO("Scene pass MSAA: {}x", static_cast<int>(sceneSamples));
 
 		// Initialize resources
 		m_Resources = std::make_unique<ResourceManager>();
@@ -871,6 +946,29 @@ namespace Nightbloom
 		}
 		LOG_INFO("Shadow uniform buffers created");
 
+		// =================================================================
+		// Reflection uniform buffers (set 0 in the planar-reflection pass —
+		// the mirror-flipped camera's view/proj). Same pattern as shadow.
+		// =================================================================
+		LOG_INFO("Creating reflection uniform buffers");
+		for (uint32_t i = 0; i < 2; ++i)
+		{
+			std::string bufferName = "ReflectionUniform_" + std::to_string(i);
+			m_ReflectionUniforms[i] = m_Resources->CreateUniformBuffer(
+				bufferName, sizeof(FrameUniformData));
+
+			if (!m_ReflectionUniforms[i])
+			{
+				LOG_ERROR("Failed to create reflection uniform buffer for frame {}", i);
+				return false;
+			}
+
+			m_DescriptorManager->UpdateReflectionUniformSet(i,
+				m_ReflectionUniforms[i]->GetBuffer(),
+				sizeof(FrameUniformData));
+		}
+		LOG_INFO("Reflection uniform buffers created");
+
 		// Create test geometry
 		if (!m_Resources->CreateTestCube())
 		{
@@ -899,10 +997,15 @@ namespace Nightbloom
 			return false;
 		}
 
-		// Initialize UI (optional)
+		// Initialize UI (optional) — targets the post-process render pass,
+		// not the scene one: UI now draws after the AA composite, directly
+		// onto the swapchain target, so panel text doesn't get blurred by
+		// the filter. ImGui's Vulkan backend builds its own pipeline against
+		// whatever render pass it's given here, so this must match wherever
+		// m_UI->Render() actually gets called (see RecordPostProcessPass).
 		m_UI = std::make_unique<UIManager>();
 		if (!m_UI->Initialize(vkDevice, m_WindowHandle,
-			m_RenderPasses->GetMainRenderPass(),
+			m_RenderPasses->GetPostProcessRenderPass(),
 			m_Swapchain->GetImageCount()))
 		{
 			LOG_WARN("Failed to initialize UI manager - continuing without UI");
@@ -920,13 +1023,18 @@ namespace Nightbloom
 		m_PipelineAdapter = std::make_unique<VulkanPipelineAdapter>();
 
 		if (!m_PipelineAdapter->Initialize(vkDevice->GetDevice(),
-			m_RenderPasses->GetMainRenderPass(),
+			m_RenderPasses->GetSceneRenderPass(),
 			m_Swapchain->GetExtent(),
 			m_DescriptorManager.get()))
 		{
 			LOG_ERROR("Failed to initialize pipeline adapter");
 			return false;
 		}
+
+		// All scene-pass pipelines must be created with the scene MSAA sample
+		// count (the shadow/post-process passes stay single-sample — handled
+		// per-type inside the adapter). Must be set before any pipeline is created.
+		m_PipelineAdapter->SetSampleCount(m_RenderPasses->GetSampleCount());
 
 		// LOAD SHADERS FIRST!
 		if (!LoadShaders())
@@ -1185,6 +1293,64 @@ namespace Nightbloom
 			}
 		}
 
+		// ---- Water pipeline ---------------------------------------------------------
+		{
+			VulkanShader* waterVert = m_Resources->GetShader("water_vert");
+			VulkanShader* waterFrag = m_Resources->GetShader("water_frag");
+
+			if (waterVert && waterFrag)
+			{
+				PipelineConfig waterConfig;
+				waterConfig.vertexShader = waterVert;
+				waterConfig.fragmentShader = waterFrag;
+
+				// Flat VertexPNT plane (reuses the terrain grid generator). Same
+				// CCW winding as the terrain mesh, so standard back-face cull.
+				waterConfig.useVertexInput = true;
+				waterConfig.topology = PrimitiveTopology::TriangleList;
+				waterConfig.polygonMode = PolygonMode::Fill;
+				waterConfig.cullMode = CullMode::Back;
+				waterConfig.frontFace = FrontFace::CounterClockwise;
+
+				// Depth-tested against terrain/foliage, but does NOT write depth —
+				// water is a translucent surface that composites over the scene
+				// (drawn after opaque geometry via the PipelineType sort order).
+				waterConfig.depthTestEnable = true;
+				waterConfig.depthWriteEnable = false;
+				waterConfig.depthCompareOp = CompareOp::GreaterOrEqual;
+
+				waterConfig.blendEnable = true;
+				waterConfig.srcColorBlendFactor = BlendFactor::SrcAlpha;
+				waterConfig.dstColorBlendFactor = BlendFactor::OneMinusSrcAlpha;
+
+				// customData = (waveAmplitude, waveSpeed, fresnelPower, alpha).
+				waterConfig.pushConstantSize = sizeof(PushConstantData);
+				waterConfig.pushConstantStages = ShaderStage::VertexFragment;
+
+				// Descriptor sets: 0=uniform (scene camera), 1=lighting (sun for
+				// Fresnel/specular), 2=reflection target. useReflectionInput is
+				// pushed last in the adapter's layout chain so, with only these
+				// three flags set, it lands at set 2 — see Water.frag's
+				// layout(set=N) decls and CommandRecorder's Water binding block.
+				waterConfig.useUniformBuffer = true;
+				waterConfig.useLighting = true;
+				waterConfig.useReflectionInput = true;
+
+				if (m_PipelineAdapter->CreatePipeline(PipelineType::Water, waterConfig))
+				{
+					LOG_INFO("Water pipeline created successfully");
+				}
+				else
+				{
+					LOG_WARN("Failed to create water pipeline - water will not render");
+				}
+			}
+			else
+			{
+				LOG_WARN("Water shaders not found - skipping water pipeline");
+			}
+		}
+
 		// ---- Firefly pipeline -------------------------------------------------------
 		{
 			VulkanShader* fireflyVert = m_Resources->GetShader("firefly_vert");
@@ -1233,6 +1399,92 @@ namespace Nightbloom
 				LOG_WARN("Firefly shaders not found - skipping firefly pipeline");
 			}
 		}
+
+		// ---- PostProcess pipeline (FXAA composite) -----------------------------------
+		// Targets a dedicated render pass (writes the actual swapchain image,
+		// not the offscreen scene-color texture every other pipeline above
+		// targets), so it needs the same SetXRenderPass override Shadow/
+		// TerrainShadow already use - set before CreatePipeline, mirroring
+		// InitializeShadowMapping()'s SetShadowRenderPass() call.
+		{
+			VulkanShader* postProcessVert = m_Resources->GetShader("postprocess_vert");
+			VulkanShader* postProcessFrag = m_Resources->GetShader("postprocess_frag");
+
+			if (postProcessVert && postProcessFrag)
+			{
+				m_PipelineAdapter->SetPostProcessRenderPass(m_RenderPasses->GetPostProcessRenderPass());
+
+				PipelineConfig postProcessConfig;
+				postProcessConfig.vertexShader = postProcessVert;
+				postProcessConfig.fragmentShader = postProcessFrag;
+
+				// No vertex/index buffer - PostProcess.vert generates the
+				// full-screen triangle procedurally from gl_VertexIndex.
+				postProcessConfig.useVertexInput = false;
+				postProcessConfig.topology = PrimitiveTopology::TriangleList;
+				postProcessConfig.polygonMode = PolygonMode::Fill;
+				postProcessConfig.cullMode = CullMode::None;
+				postProcessConfig.frontFace = FrontFace::CounterClockwise;
+
+				// No depth attachment in this pass at all (see
+				// RenderPassManager::CreatePostProcessRenderPass) - the
+				// full-screen triangle overwrites every pixel unconditionally.
+				postProcessConfig.depthTestEnable = false;
+				postProcessConfig.depthWriteEnable = false;
+				postProcessConfig.blendEnable = false;
+
+				// Descriptor sets: 0=scene-color sampler (only input this pass needs)
+				postProcessConfig.usePostProcessInput = true;
+
+				// AA on/off toggle (Debug Panel) — bypasses this entirely
+				// independent of CommandRecorder's shared PushConstantData,
+				// since this pass is recorded directly (see RecordPostProcessPass),
+				// not through the normal per-draw-command path.
+				postProcessConfig.pushConstantSize = sizeof(int);
+				postProcessConfig.pushConstantStages = ShaderStage::Fragment;
+
+				if (m_PipelineAdapter->CreatePipeline(PipelineType::PostProcess, postProcessConfig))
+				{
+					LOG_INFO("PostProcess pipeline created successfully");
+				}
+				else
+				{
+					LOG_ERROR("Failed to create post-process pipeline - nothing will reach the screen");
+					return false;
+				}
+
+				// Allocate + point the descriptor set at the scene-color
+				// texture RenderPassManager owns. Re-updated in
+				// HandleSwapchainResize since that texture gets recreated then.
+				m_PostProcessInputSet = m_DescriptorManager->AllocatePostProcessInputSet();
+				if (m_PostProcessInputSet == VK_NULL_HANDLE)
+				{
+					LOG_ERROR("Failed to allocate post-process input descriptor set");
+					return false;
+				}
+				m_DescriptorManager->UpdatePostProcessInputSet(m_PostProcessInputSet,
+					m_RenderPasses->GetSceneColorImageView(), m_RenderPasses->GetSceneColorSampler());
+			}
+			else
+			{
+				LOG_ERROR("PostProcess shaders not found - nothing will reach the screen");
+				return false;
+			}
+		}
+
+		// ---- Reflection input set (Water set 2: the reflection target sampler).
+		// Allocated once and pointed at the reflection target; re-pointed in
+		// HandleSwapchainResize since the target is recreated then. Handed to the
+		// CommandRecorder, which binds it for every Water draw.
+		m_ReflectionInputSet = m_DescriptorManager->AllocateReflectionInputSet();
+		if (m_ReflectionInputSet == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("Failed to allocate reflection input descriptor set");
+			return false;
+		}
+		m_DescriptorManager->UpdateReflectionInputSet(m_ReflectionInputSet,
+			m_RenderPasses->GetReflectionColorImageView(), m_RenderPasses->GetReflectionColorSampler());
+		m_Commands->SetReflectionInputSet(m_ReflectionInputSet);
 
 		LOG_INFO("=== Pipeline Manager Initialized Successfully ===");
 		return true;
@@ -1510,19 +1762,36 @@ namespace Nightbloom
 			RecordShadowPass(frameIndex);
 		}
 
+		// =========================================================================
+		// REFLECTION PASS - re-render opaque geometry from the mirror-flipped
+		// camera into the reflection target, which the water surface samples in
+		// the scene pass below. Only runs when a WaterSystem is registered.
+		// =========================================================================
+		if (m_WaterSystem)
+		{
+			RecordReflectionPass(frameIndex);
+		}
+
+		// =========================================================================
+		// SCENE PASS - all normal geometry, into the offscreen scene-color
+		// texture (not the swapchain) so the post-process pass can sample it.
+		// =========================================================================
 		// Build clear values array
 		// Index 0: Color attachment - clear to background color
 		// Index 1: Depth attachment - clear to 0.0 for reverse-Z (near=1.0, far=0.0)
-		std::array<VkClearValue, 2> clearValues{};
+		// With MSAA the scene pass has a third (resolve) attachment; its clear
+		// value is unused (LOAD_OP_DONT_CARE) but the count must cover it.
+		std::array<VkClearValue, 3> clearValues{};
 		clearValues[0].color = { {m_ClearColor.r, m_ClearColor.g, m_ClearColor.b, m_ClearColor.a} };
 		clearValues[1].depthStencil = { 0.0f, 0 };  // depth = 0.0 (far plane in reverse-Z), stencil = 0
+		uint32_t clearValueCount = (m_RenderPasses->GetSampleCount() != VK_SAMPLE_COUNT_1_BIT) ? 3u : 2u;
 
 		m_Commands->BeginRenderPass(frameIndex,
-			m_RenderPasses->GetMainRenderPass(),
-			m_RenderPasses->GetFramebuffer(imageIndex),
+			m_RenderPasses->GetSceneRenderPass(),
+			m_RenderPasses->GetSceneFramebuffer(),
 			m_Swapchain->GetExtent(),
 			clearValues.data(),
-			static_cast<uint32_t>(clearValues.size()));
+			clearValueCount);
 
 		// Execute draw list
 		if (!m_FrameDrawList.GetCommands().empty())
@@ -1532,14 +1801,15 @@ namespace Nightbloom
 				m_ViewMatrix, m_ProjectionMatrix);
 		}
 
-		// Render UI on top
-		if (m_UI)
-		{
-			m_UI->Render(m_Commands->GetCommandBuffer(frameIndex));
-		}
-
-		// End render pass and command buffer
 		m_Commands->EndRenderPass(frameIndex);
+
+		// =========================================================================
+		// POST-PROCESS PASS - samples the scene-color texture, runs FXAA, and
+		// writes the actual swapchain image. UI renders after this, directly
+		// on the swapchain target, so it isn't blurred by the AA filter.
+		// =========================================================================
+		RecordPostProcessPass(frameIndex, imageIndex);
+
 		m_Commands->EndCommandBuffer(frameIndex);
 	}
 
@@ -1734,6 +2004,130 @@ namespace Nightbloom
 		// No UBO restore needed � each pass has its own dedicated buffer
 	}
 
+	// =====================================================================
+	// RecordReflectionPass — re-renders the opaque world (Mesh/Terrain/
+	// Foliage) from the mirror-flipped camera into the reflection target,
+	// which the water surface samples in the scene pass. Reuses the scene's
+	// pipelines (the reflection render pass is format/sample-count compatible
+	// with the scene pass); the mirror flips triangle winding, which is
+	// cancelled by a negative-height viewport so back-face culling stays
+	// correct. The water shader undoes the resulting vertical image flip when
+	// it samples (sample at v -> 1 - v).
+	// =====================================================================
+	void Renderer::RecordReflectionPass(uint32_t frameIndex)
+	{
+		if (!m_WaterSystem || !m_RenderPasses)
+		{
+			return;
+		}
+
+		VkExtent2D extent = m_RenderPasses->GetReflectionExtent();
+		if (extent.width == 0 || extent.height == 0)
+		{
+			return;
+		}
+
+		// Clear color (sky/background behind the reflected geometry) + depth.
+		// With MSAA the pass has a third (resolve) attachment whose clear value
+		// is unused but must be covered by the count.
+		std::array<VkClearValue, 3> clearValues{};
+		clearValues[0].color = { {m_ClearColor.r, m_ClearColor.g, m_ClearColor.b, m_ClearColor.a} };
+		clearValues[1].depthStencil = { 0.0f, 0 };  // reverse-Z far plane
+		uint32_t clearValueCount = (m_RenderPasses->GetSampleCount() != VK_SAMPLE_COUNT_1_BIT) ? 3u : 2u;
+
+		m_Commands->BeginRenderPass(frameIndex,
+			m_RenderPasses->GetReflectionRenderPass(),
+			m_RenderPasses->GetReflectionFramebuffer(),
+			extent,
+			clearValues.data(),
+			clearValueCount);
+
+		// Negative-height viewport flips rasterized winding to cancel the mirror
+		// matrix's winding flip — so the scene pipelines' back-face culling stays
+		// correct without dedicated reflected-winding pipeline variants. The image
+		// is stored vertically flipped as a side effect; the water shader samples
+		// with v -> 1 - v to compensate.
+		VkCommandBuffer cmd = m_Commands->GetCommandBuffer(frameIndex);
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = static_cast<float>(extent.height);
+		viewport.width = static_cast<float>(extent.width);
+		viewport.height = -static_cast<float>(extent.height);
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+		VkDescriptorSet reflectionUniformSet = m_DescriptorManager->GetReflectionUniformDescriptorSet(frameIndex);
+		m_Commands->ExecuteReflectionDrawList(frameIndex, m_FrameDrawList,
+			m_PipelineAdapter.get(), reflectionUniformSet);
+
+		m_Commands->EndRenderPass(frameIndex);
+	}
+
+	// =====================================================================
+	// RecordPostProcessPass — samples the scene-color texture rendered by
+	// the scene pass, runs FXAA, and writes the swapchain image. A single
+	// fixed full-screen draw, not a DrawList entry, so this is recorded
+	// directly here rather than through CommandRecorder's per-pipeline-type
+	// binding lists — same precedent as RecordShadowPass/RecordComputePass.
+	// UI renders last, in this same pass, directly on the swapchain target.
+	// =====================================================================
+	void Renderer::RecordPostProcessPass(uint32_t frameIndex, uint32_t imageIndex)
+	{
+		VkCommandBuffer cmd = m_Commands->GetCommandBuffer(frameIndex);
+
+		VkClearValue clearValue{};
+		clearValue.color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+
+		VkRenderPassBeginInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		renderPassInfo.renderPass = m_RenderPasses->GetPostProcessRenderPass();
+		renderPassInfo.framebuffer = m_RenderPasses->GetPostProcessFramebuffer(imageIndex);
+		renderPassInfo.renderArea.offset = { 0, 0 };
+		renderPassInfo.renderArea.extent = m_Swapchain->GetExtent();
+		renderPassInfo.clearValueCount = 1;
+		renderPassInfo.pClearValues = &clearValue;
+
+		vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		VkExtent2D extent = m_Swapchain->GetExtent();
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = static_cast<float>(extent.width);
+		viewport.height = static_cast<float>(extent.height);
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 };
+		scissor.extent = extent;
+		vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+		if (m_PostProcessInputSet != VK_NULL_HANDLE)
+		{
+			m_PipelineAdapter->BindPipeline(cmd, PipelineType::PostProcess);
+
+			VkPipelineLayout layout = m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::PostProcess);
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
+				0, 1, &m_PostProcessInputSet, 0, nullptr);
+
+			int aaEnabled = m_PostProcessAAEnabled ? 1 : 0;
+			vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(int), &aaEnabled);
+
+			vkCmdDraw(cmd, 3, 1, 0, 0);
+		}
+
+		// Render UI on top — after AA, directly on the swapchain target.
+		if (m_UI)
+		{
+			m_UI->Render(cmd);
+		}
+
+		vkCmdEndRenderPass(cmd);
+	}
+
 	bool Renderer::HandleSwapchainResize()
 	{
 		LOG_INFO("Handling swapchain resize");
@@ -1775,11 +2169,26 @@ namespace Nightbloom
 			return false;
 		}
 
-		// Recreate framebuffers
+		// Recreate framebuffers (also recreates the offscreen scene-color
+		// texture the post-process pass samples — its view/sampler handles
+		// change, so the descriptor set pointing at them must be re-updated)
 		if (!m_RenderPasses->RecreateFramebuffers(vkDevice->GetDevice(), m_Swapchain.get()))
 		{
 			LOG_ERROR("Failed to recreate framebuffers");
 			return false;
+		}
+
+		if (m_PostProcessInputSet != VK_NULL_HANDLE)
+		{
+			m_DescriptorManager->UpdatePostProcessInputSet(m_PostProcessInputSet,
+				m_RenderPasses->GetSceneColorImageView(), m_RenderPasses->GetSceneColorSampler());
+		}
+
+		// Reflection target was recreated too — re-point the water's sampler set.
+		if (m_ReflectionInputSet != VK_NULL_HANDLE)
+		{
+			m_DescriptorManager->UpdateReflectionInputSet(m_ReflectionInputSet,
+				m_RenderPasses->GetReflectionColorImageView(), m_RenderPasses->GetReflectionColorSampler());
 		}
 
 		// Recreate the cloud raymarch result image at the new scaled resolution
