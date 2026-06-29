@@ -285,6 +285,7 @@ namespace Nightbloom
 		m_CurrentFrameData.time.x = m_TotalTime;
 		m_CurrentFrameData.time.y = waterLevel;
 		m_CurrentFrameData.time.z = waterEnabled;
+		m_CurrentFrameData.time.w = 0.0f;  // main pass: no reflection below-water clip
 		m_CurrentFrameData.cameraPos = glm::vec4(m_CameraPosition, 1.0f);
 		m_CurrentFrameData.invView = glm::inverse(m_ViewMatrix);
 		m_CurrentFrameData.invProj = glm::inverse(m_ProjectionMatrix);
@@ -337,6 +338,7 @@ namespace Nightbloom
 			// blades, mirrored, would appear floating above the surface).
 			m_ReflectionFrameData.time.y = waterY;
 			m_ReflectionFrameData.time.z = 1.0f;
+			m_ReflectionFrameData.time.w = 1.0f;  // reflection pass: clip geometry below the water plane
 
 			glm::vec3 mirroredCam = m_CameraPosition;
 			mirroredCam.y = 2.0f * waterY - mirroredCam.y;

@@ -31,6 +31,8 @@ layout(location = 0) out vec4 outColor;
 
 void main()
 {
+    ClipReflection(inWorldPos);  // drop below-water blades in the reflection pass
+
     const vec3 kRootColor = vec3(0.08, 0.22, 0.05);
     const vec3 kTipColor  = vec3(0.46, 0.62, 0.20);
 

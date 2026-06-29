@@ -52,4 +52,16 @@ layout(std140, set = 2, binding = 0) uniform SceneLighting {
     ShadowData shadowData;
 } lighting;
 
+// ---- Planar-reflection below-water clip ----
+// The reflection pass re-renders the world from a mirror-flipped camera. Geometry that sits
+// BELOW the water surface in the real world (e.g. terrain dipping under the lake) would still
+// be rasterized and leak into the reflection as dark mirrored patches. frame.time.w is 1.0 ONLY
+// during the reflection pass (0 in the main/shadow passes), and frame.time.y is the water
+// surface Y — so clip anything below it. discard-from-a-helper is valid GLSL.
+void ClipReflection(vec3 worldPos)
+{
+    if (frame.time.w > 0.5 && worldPos.y < frame.time.y)
+        discard;
+}
+
 #endif // NB_SCENE_COMMON_GLSL

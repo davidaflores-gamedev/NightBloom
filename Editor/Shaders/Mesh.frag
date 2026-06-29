@@ -47,6 +47,8 @@ vec3 CalcBlinnPhong(vec3 N, vec3 V, vec3 lightDir, vec3 lightColor, float lightI
 // ============================================================================
 void main()
 {
+    ClipReflection(fragWorldPos);  // drop below-water geometry in the reflection pass
+
     vec4 texColor = texture(texSampler, fragTexCoord);
     bool isMaterialDriven = (push.customData.w > 0.01);
     vec4 albedo = isMaterialDriven ? push.customData : texColor;

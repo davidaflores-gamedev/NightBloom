@@ -114,6 +114,8 @@ vec3 SampleTerrainAlbedo(vec3 worldPos, vec3 worldNormal)
 // ---------------------------------------------------------------------------
 void main()
 {
+    ClipReflection(inWorldPos);  // drop below-water terrain in the reflection pass
+
     vec3 N = normalize(inNormal);
     vec3 V = normalize(frame.cameraPos.xyz - inWorldPos);
 
