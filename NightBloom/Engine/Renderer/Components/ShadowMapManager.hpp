@@ -12,6 +12,7 @@
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include <cstdint>
+#include "Engine/Renderer/Light.hpp"  // canonical NUM_CASCADES
 
 namespace Nightbloom
 {
@@ -37,6 +38,8 @@ namespace Nightbloom
 	class ShadowMapManager
 	{
 	public:
+		// Cascaded shadow maps: the shadow map is a depth 2D array, one layer per cascade
+		// (NUM_CASCADES from Light.hpp). See .claude/CSM_DESIGN.md.
 		ShadowMapManager() = default;
 		~ShadowMapManager() = default;
 
@@ -47,11 +50,14 @@ namespace Nightbloom
 
 		// Accessors
 		VkRenderPass GetShadowRenderPass() const { return m_ShadowRenderPass; }
-		VkFramebuffer GetShadowFramebuffer() const { return m_ShadowFramebuffer; }
+		// Per-cascade framebuffer (each targets one array layer). Defaults to cascade 0
+		// so existing single-cascade call sites are unaffected.
+		VkFramebuffer GetShadowFramebuffer(uint32_t cascade = 0) const { return m_ShadowFramebuffers[cascade]; }
 		VkExtent2D GetShadowExtent() const { return { m_Config.resolution, m_Config.resolution }; }
 
 		VkImage GetShadowMapImage() const { return m_ShadowMapImage; }
-		VkImageView GetShadowMapView() const { return m_ShadowMapView; }
+		// Sampling view spanning all cascade layers (sampler2DArrayShadow). Bound to set 3.
+		VkImageView GetShadowMapView() const { return m_ShadowMapArrayView; }
 		VkSampler GetShadowSampler() const { return m_ShadowSampler; }
 
 		VkDescriptorSet GetShadowMapDescriptorSet(uint32_t frameIndex) const;
@@ -82,14 +88,15 @@ namespace Nightbloom
 
 		ShadowMapConfig m_Config;
 
-		// Shadow map texture
+		// Shadow map texture (depth 2D array, NUM_CASCADES layers)
 		VkImage m_ShadowMapImage = VK_NULL_HANDLE;
-		VkImageView m_ShadowMapView = VK_NULL_HANDLE;
+		VkImageView m_ShadowMapArrayView = VK_NULL_HANDLE;            // 2D array view, all layers — for sampling (set 3)
+		VkImageView m_ShadowMapLayerViews[NUM_CASCADES] = {};         // single-layer views — for framebuffer attachments
 		void* m_ShadowMapAllocation = nullptr;  // VMA allocation handle
 
-		// Shadow render pass and framebuffer
+		// Shadow render pass and per-cascade framebuffers
 		VkRenderPass m_ShadowRenderPass = VK_NULL_HANDLE;
-		VkFramebuffer m_ShadowFramebuffer = VK_NULL_HANDLE;
+		VkFramebuffer m_ShadowFramebuffers[NUM_CASCADES] = {};
 
 		// Shadow sampler (with depth comparison for PCF)
 		VkSampler m_ShadowSampler = VK_NULL_HANDLE;

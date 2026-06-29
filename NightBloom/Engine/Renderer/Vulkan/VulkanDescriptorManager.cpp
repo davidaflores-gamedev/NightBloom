@@ -120,16 +120,19 @@ namespace Nightbloom
 			}
 		}
 
-		// Allocate shadow UNIFORM descriptor sets
+		// Allocate shadow UNIFORM descriptor sets (one per frame, per cascade)
 		// These use the same layout as the camera uniform (m_UniformSetLayout)
 		// but will point at a different buffer containing the light's view/proj
 		for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
 		{
-			m_ShadowUniformDescriptorSets[i] = AllocateShadowUniformSet(i);
-			if (m_ShadowUniformDescriptorSets[i] == VK_NULL_HANDLE)
+			for (uint32_t c = 0; c < NUM_CASCADES; ++c)
 			{
-				LOG_ERROR("Failed to allocate shadow uniform descriptor set for frame {}", i);
-				return false;
+				m_ShadowUniformDescriptorSets[i][c] = AllocateShadowUniformSet(i);
+				if (m_ShadowUniformDescriptorSets[i][c] == VK_NULL_HANDLE)
+				{
+					LOG_ERROR("Failed to allocate shadow uniform descriptor set for frame {} cascade {}", i, c);
+					return false;
+				}
 			}
 		}
 
@@ -708,7 +711,7 @@ namespace Nightbloom
 		return descriptorSet;
 	}
 
-	void VulkanDescriptorManager::UpdateShadowUniformSet(uint32_t frameIndex, VkBuffer buffer, size_t size)
+	void VulkanDescriptorManager::UpdateShadowUniformSet(uint32_t frameIndex, uint32_t cascade, VkBuffer buffer, size_t size)
 	{
 		VkDescriptorBufferInfo bufferInfo{};
 		bufferInfo.buffer = buffer;
@@ -717,7 +720,7 @@ namespace Nightbloom
 
 		VkWriteDescriptorSet descriptorWrite{};
 		descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		descriptorWrite.dstSet = m_ShadowUniformDescriptorSets[frameIndex];
+		descriptorWrite.dstSet = m_ShadowUniformDescriptorSets[frameIndex][cascade];
 		descriptorWrite.dstBinding = 0;
 		descriptorWrite.dstArrayElement = 0;
 		descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;

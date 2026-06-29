@@ -25,6 +25,7 @@
 #include "Engine/VFX/CloudSystem.hpp"
 #include "Engine/Hydro/WaterSystem.hpp"
 #include "Engine/Renderer/Components/ShadowMapManager.hpp"
+#include "Engine/Renderer/Components/GpuProfiler.hpp"
 #include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Engine/Renderer/Components/UIManager.hpp"
 #include "Engine/Renderer/AssetManager.hpp"
@@ -137,6 +138,12 @@ namespace Nightbloom
 		VulkanDevice* vkDevice = static_cast<VulkanDevice*>(m_Device.get());
 
 		CleanupCompute();
+
+		if (m_GpuProfiler)
+		{
+			m_GpuProfiler->Cleanup();
+			m_GpuProfiler.reset();
+		}
 
 		if (m_ShadowManager)
 		{
@@ -289,13 +296,16 @@ namespace Nightbloom
 			m_FrameUniforms[frameIndex]->Flush();
 		}
 
-		// Upload shadow uniform buffer (set 0 in shadow pass - light's view/proj)
+		// Upload shadow uniform buffers (set 0 in shadow pass - each cascade's light view/proj)
 		// Now happens AFTER UpdateShadowMatrices has populated m_ShadowFrameData
-		void* shadowMapped = m_ShadowUniforms[frameIndex]->GetPersistentMappedPtr();
-		if (shadowMapped)
+		for (uint32_t c = 0; c < NUM_CASCADES; ++c)
 		{
-			memcpy(shadowMapped, &m_ShadowFrameData, sizeof(FrameUniformData));
-			m_ShadowUniforms[frameIndex]->Flush();
+			void* shadowMapped = m_ShadowUniforms[frameIndex][c]->GetPersistentMappedPtr();
+			if (shadowMapped)
+			{
+				memcpy(shadowMapped, &m_ShadowFrameData[c], sizeof(FrameUniformData));
+				m_ShadowUniforms[frameIndex][c]->Flush();
+			}
 		}
 
 		// Upload lighting UBO (set 2)
@@ -929,20 +939,23 @@ namespace Nightbloom
 		LOG_INFO("Creating shadow uniform buffers");
 		for (uint32_t i = 0; i < 2; ++i)
 		{
-			std::string bufferName = "ShadowUniform_" + std::to_string(i);
-			m_ShadowUniforms[i] = m_Resources->CreateUniformBuffer(
-				bufferName, sizeof(FrameUniformData));
-
-			if (!m_ShadowUniforms[i])
+			for (uint32_t c = 0; c < NUM_CASCADES; ++c)
 			{
-				LOG_ERROR("Failed to create shadow uniform buffer for frame {}", i);
-				return false;
-			}
+				std::string bufferName = "ShadowUniform_f" + std::to_string(i) + "_c" + std::to_string(c);
+				m_ShadowUniforms[i][c] = m_Resources->CreateUniformBuffer(
+					bufferName, sizeof(FrameUniformData));
 
-			// Point the shadow uniform descriptor set at this buffer
-			m_DescriptorManager->UpdateShadowUniformSet(i,
-				m_ShadowUniforms[i]->GetBuffer(),
-				sizeof(FrameUniformData));
+				if (!m_ShadowUniforms[i][c])
+				{
+					LOG_ERROR("Failed to create shadow uniform buffer for frame {} cascade {}", i, c);
+					return false;
+				}
+
+				// Point the shadow uniform descriptor set at this buffer
+				m_DescriptorManager->UpdateShadowUniformSet(i, c,
+					m_ShadowUniforms[i][c]->GetBuffer(),
+					sizeof(FrameUniformData));
+			}
 		}
 		LOG_INFO("Shadow uniform buffers created");
 
@@ -996,6 +1009,10 @@ namespace Nightbloom
 			LOG_ERROR("Failed to initialize command recorder");
 			return false;
 		}
+
+		// GPU profiler (timestamp queries). Non-fatal if unsupported.
+		m_GpuProfiler = std::make_unique<GpuProfiler>();
+		m_GpuProfiler->Initialize(vkDevice);
 
 		// Initialize UI (optional) — targets the post-process render pass,
 		// not the scene one: UI now draws after the AA composite, directly
@@ -1677,7 +1694,11 @@ namespace Nightbloom
 			shadowPipelineConfig.topology = PrimitiveTopology::TriangleList;
 			shadowPipelineConfig.polygonMode = PolygonMode::Fill;
 
-			// Use front-face culling to reduce shadow acne (Peter Panning)
+			// MUST STAY CullMode::Back. Front-face culling is the textbook acne fix
+			// (store back-face depth so lit front faces never self-shadow), but in THIS
+			// engine it caused a drastic FPS drop (confirmed 2026-06-26, ~1500fps -> tanked)
+			// and was reverted. Acne here is a BIAS-TUNING problem, not a culling one —
+			// use the Lighting panel Bias / Normal Bias sliders instead.
 			shadowPipelineConfig.cullMode = CullMode::Back;
 			shadowPipelineConfig.frontFace = FrontFace::CounterClockwise;
 
@@ -1746,12 +1767,17 @@ namespace Nightbloom
 		m_Commands->ResetCommandBuffer(frameIndex);
 		m_Commands->BeginCommandBuffer(frameIndex);
 
+		VkCommandBuffer profCmd = m_Commands->GetCommandBuffer(frameIndex);
+		if (m_GpuProfiler) m_GpuProfiler->BeginFrame(profCmd, frameIndex);
+
 		// =========================================================================
 		// COMPUTE PASS - Runs BEFORE any render passes (outside render pass)
 		// =========================================================================
 		if ((m_ComputeEnabled || m_FireflySystem) && m_ComputeDispatcher)
 		{
+			uint32_t s = m_GpuProfiler ? m_GpuProfiler->BeginScope(profCmd, "Compute") : UINT32_MAX;
 			RecordComputePass(frameIndex);
+			if (m_GpuProfiler) m_GpuProfiler->EndScope(profCmd, s);
 		}
 
 		// =========================================================================
@@ -1759,7 +1785,9 @@ namespace Nightbloom
 		// =========================================================================
 		if (m_ShadowEnabled && m_ShadowManager)
 		{
+			uint32_t s = m_GpuProfiler ? m_GpuProfiler->BeginScope(profCmd, "Shadow (CSM)") : UINT32_MAX;
 			RecordShadowPass(frameIndex);
+			if (m_GpuProfiler) m_GpuProfiler->EndScope(profCmd, s);
 		}
 
 		// =========================================================================
@@ -1769,7 +1797,9 @@ namespace Nightbloom
 		// =========================================================================
 		if (m_WaterSystem)
 		{
+			uint32_t s = m_GpuProfiler ? m_GpuProfiler->BeginScope(profCmd, "Reflection") : UINT32_MAX;
 			RecordReflectionPass(frameIndex);
+			if (m_GpuProfiler) m_GpuProfiler->EndScope(profCmd, s);
 		}
 
 		// =========================================================================
@@ -1785,6 +1815,8 @@ namespace Nightbloom
 		clearValues[0].color = { {m_ClearColor.r, m_ClearColor.g, m_ClearColor.b, m_ClearColor.a} };
 		clearValues[1].depthStencil = { 0.0f, 0 };  // depth = 0.0 (far plane in reverse-Z), stencil = 0
 		uint32_t clearValueCount = (m_RenderPasses->GetSampleCount() != VK_SAMPLE_COUNT_1_BIT) ? 3u : 2u;
+
+		uint32_t sceneScope = m_GpuProfiler ? m_GpuProfiler->BeginScope(profCmd, "Scene") : UINT32_MAX;
 
 		m_Commands->BeginRenderPass(frameIndex,
 			m_RenderPasses->GetSceneRenderPass(),
@@ -1802,13 +1834,18 @@ namespace Nightbloom
 		}
 
 		m_Commands->EndRenderPass(frameIndex);
+		if (m_GpuProfiler) m_GpuProfiler->EndScope(profCmd, sceneScope);
 
 		// =========================================================================
 		// POST-PROCESS PASS - samples the scene-color texture, runs FXAA, and
 		// writes the actual swapchain image. UI renders after this, directly
 		// on the swapchain target, so it isn't blurred by the AA filter.
 		// =========================================================================
+		uint32_t ppScope = m_GpuProfiler ? m_GpuProfiler->BeginScope(profCmd, "PostProcess+UI") : UINT32_MAX;
 		RecordPostProcessPass(frameIndex, imageIndex);
+		if (m_GpuProfiler) m_GpuProfiler->EndScope(profCmd, ppScope);
+
+		if (m_GpuProfiler) m_GpuProfiler->EndFrame(frameIndex);
 
 		m_Commands->EndCommandBuffer(frameIndex);
 	}
@@ -1894,22 +1931,6 @@ namespace Nightbloom
 
 		VkCommandBuffer cmd = m_Commands->GetCommandBuffer(frameIndex);
 
-		// Begin shadow render pass
-		VkClearValue depthClear{};
-		depthClear.depthStencil = { 1.0f, 0 };  // Standard depth (not reverse-Z)
-
-		VkRenderPassBeginInfo renderPassInfo{};
-		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-		renderPassInfo.renderPass = m_ShadowManager->GetShadowRenderPass();
-		renderPassInfo.framebuffer = m_ShadowManager->GetShadowFramebuffer();
-		renderPassInfo.renderArea.offset = { 0, 0 };
-		renderPassInfo.renderArea.extent = m_ShadowManager->GetShadowExtent();
-		renderPassInfo.clearValueCount = 1;
-		renderPassInfo.pClearValues = &depthClear;
-
-		vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-		// Set viewport and scissor to shadow map size
 		VkExtent2D shadowExtent = m_ShadowManager->GetShadowExtent();
 
 		VkViewport viewport{};
@@ -1919,88 +1940,112 @@ namespace Nightbloom
 		viewport.height = static_cast<float>(shadowExtent.height);
 		viewport.minDepth = 0.0f;
 		viewport.maxDepth = 1.0f;
-		vkCmdSetViewport(cmd, 0, 1, &viewport);
 
 		VkRect2D scissor{};
 		scissor.offset = { 0, 0 };
 		scissor.extent = shadowExtent;
-		vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-		// Bind shadow pipeline
-		m_PipelineAdapter->BindPipeline(cmd, PipelineType::Shadow);
+		VkClearValue depthClear{};
+		depthClear.depthStencil = { 1.0f, 0 };  // Standard depth (not reverse-Z)
 
-		// Render all shadow-casting geometry from the draw list
-		for (const auto& drawCmd : m_FrameDrawList.GetCommands())
+		// STEP 3: render every cascade into its own array layer. Each cascade has its own
+		// framebuffer (one array layer) and its own set-0 UBO (that cascade's light VP).
+		// This is ~NUM_CASCADES x the depth-pass draws — watch FPS; per-cascade culling is
+		// the step-5 mitigation if it stings.
+		for (uint32_t cascade = 0; cascade < NUM_CASCADES; ++cascade)
 		{
-			// Skip transparent objects and non-mesh pipelines
-			if (drawCmd.pipeline == PipelineType::Transparent)
+			VkRenderPassBeginInfo renderPassInfo{};
+			renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+			renderPassInfo.renderPass = m_ShadowManager->GetShadowRenderPass();
+			renderPassInfo.framebuffer = m_ShadowManager->GetShadowFramebuffer(cascade);
+			renderPassInfo.renderArea.offset = { 0, 0 };
+			renderPassInfo.renderArea.extent = shadowExtent;
+			renderPassInfo.clearValueCount = 1;
+			renderPassInfo.pClearValues = &depthClear;
+
+			vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+			vkCmdSetViewport(cmd, 0, 1, &viewport);
+			vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+			// Bind shadow pipeline
+			m_PipelineAdapter->BindPipeline(cmd, PipelineType::Shadow);
+
+			// This cascade's light view/proj (set 0)
+			VkDescriptorSet shadowUniformSet = m_DescriptorManager->GetShadowUniformDescriptorSet(frameIndex, cascade);
+
+			// Render all shadow-casting geometry from the draw list
+			for (const auto& drawCmd : m_FrameDrawList.GetCommands())
 			{
-				continue;
-			}
-
-			// Skip if no vertex buffer
-			if (!drawCmd.vertexBuffer)
-			{
-				continue;
-			}
-
-			bool isTerrain = (drawCmd.pipeline == PipelineType::Terrain);
-
-			// Bind appropriate shadow pipeline
-			VkPipeline shadowPipeline = isTerrain
-				? m_PipelineAdapter->GetVulkanManager()->GetPipeline(PipelineType::TerrainShadow)
-				: m_PipelineAdapter->GetVulkanManager()->GetPipeline(PipelineType::Shadow);
-			VkPipelineLayout shadowLayout = isTerrain
-				? m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::TerrainShadow)
-				: m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::Shadow);
-
-			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline);
-
-			// Bind shadow uniform (set 0) � same for both
-			VkDescriptorSet shadowUniformSet = m_DescriptorManager->GetShadowUniformDescriptorSet(frameIndex);
-			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-				shadowLayout, 0, 1, &shadowUniformSet, 0, nullptr);
-
-			// For terrain: also bind heightmap at set 1
-			if (isTerrain)
-			{
-				if (drawCmd.heightmapDescriptorSet == VK_NULL_HANDLE)
+				// Skip transparent objects and non-mesh pipelines
+				if (drawCmd.pipeline == PipelineType::Transparent)
 				{
-					LOG_WARN("TerrainShadow: heightmapDescriptorSet is null, skipping draw");
 					continue;
 				}
 
+				// Skip if no vertex buffer
+				if (!drawCmd.vertexBuffer)
+				{
+					continue;
+				}
+
+				bool isTerrain = (drawCmd.pipeline == PipelineType::Terrain);
+
+				// Bind appropriate shadow pipeline
+				VkPipeline shadowPipeline = isTerrain
+					? m_PipelineAdapter->GetVulkanManager()->GetPipeline(PipelineType::TerrainShadow)
+					: m_PipelineAdapter->GetVulkanManager()->GetPipeline(PipelineType::Shadow);
+				VkPipelineLayout shadowLayout = isTerrain
+					? m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::TerrainShadow)
+					: m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::Shadow);
+
+				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline);
+
+				// Bind this cascade's shadow uniform (set 0) - same for both
 				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-					shadowLayout, 1, 1, &drawCmd.heightmapDescriptorSet, 0, nullptr);
-			}	
+					shadowLayout, 0, 1, &shadowUniformSet, 0, nullptr);
 
-			// Set push constants (model matrix)
-			if (drawCmd.hasPushConstants)
-			{
-				vkCmdPushConstants(cmd, shadowLayout, VK_SHADER_STAGE_VERTEX_BIT,
-					0, sizeof(PushConstantData), &drawCmd.pushConstants);
+				// For terrain: also bind heightmap at set 1
+				if (isTerrain)
+				{
+					if (drawCmd.heightmapDescriptorSet == VK_NULL_HANDLE)
+					{
+						LOG_WARN("TerrainShadow: heightmapDescriptorSet is null, skipping draw");
+						continue;
+					}
+
+					vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+						shadowLayout, 1, 1, &drawCmd.heightmapDescriptorSet, 0, nullptr);
+				}
+
+				// Set push constants (model matrix)
+				if (drawCmd.hasPushConstants)
+				{
+					vkCmdPushConstants(cmd, shadowLayout, VK_SHADER_STAGE_VERTEX_BIT,
+						0, sizeof(PushConstantData), &drawCmd.pushConstants);
+				}
+
+				// Bind vertex buffer
+				VulkanBuffer* vkBuffer = static_cast<VulkanBuffer*>(drawCmd.vertexBuffer);
+				VkBuffer vertexBuffers[] = { vkBuffer->GetBuffer() };
+				VkDeviceSize offsets[] = { 0 };
+				vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+
+				// Draw
+				if (drawCmd.indexBuffer && drawCmd.indexCount > 0)
+				{
+					VulkanBuffer* vkIndexBuffer = static_cast<VulkanBuffer*>(drawCmd.indexBuffer);
+					vkCmdBindIndexBuffer(cmd, vkIndexBuffer->GetBuffer(), 0, VK_INDEX_TYPE_UINT32);
+					vkCmdDrawIndexed(cmd, drawCmd.indexCount, drawCmd.instanceCount, 0, 0, drawCmd.firstInstance);
+				}
+				else if (drawCmd.vertexCount > 0)
+				{
+					vkCmdDraw(cmd, drawCmd.vertexCount, drawCmd.instanceCount, 0, drawCmd.firstInstance);
+				}
 			}
 
-			// Bind vertex buffer
-			VulkanBuffer* vkBuffer = static_cast<VulkanBuffer*>(drawCmd.vertexBuffer);
-			VkBuffer vertexBuffers[] = { vkBuffer->GetBuffer() };
-			VkDeviceSize offsets[] = { 0 };
-			vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
-
-			// Draw
-			if (drawCmd.indexBuffer && drawCmd.indexCount > 0)
-			{
-				VulkanBuffer* vkIndexBuffer = static_cast<VulkanBuffer*>(drawCmd.indexBuffer);
-				vkCmdBindIndexBuffer(cmd, vkIndexBuffer->GetBuffer(), 0, VK_INDEX_TYPE_UINT32);
-				vkCmdDrawIndexed(cmd, drawCmd.indexCount, drawCmd.instanceCount, 0, 0, drawCmd.firstInstance);
-			}
-			else if (drawCmd.vertexCount > 0)
-			{
-				vkCmdDraw(cmd, drawCmd.vertexCount, drawCmd.instanceCount, 0, drawCmd.firstInstance);
-			}
+			vkCmdEndRenderPass(cmd);
 		}
-
-		vkCmdEndRenderPass(cmd);
 		// No UBO restore needed � each pass has its own dedicated buffer
 	}
 
@@ -2244,6 +2289,34 @@ namespace Nightbloom
 		LOG_INFO("Compute resources cleaned up");
 	}
 
+	void Renderer::SetShadowResolution(uint32_t resolution)
+	{
+		if (!m_ShadowManager || !m_DescriptorManager) return;
+		if (resolution == m_ShadowManager->GetConfig().resolution) return;
+
+		if (!m_ShadowManager->Resize(resolution))  // waits idle + recreates texture/views/framebuffers
+		{
+			LOG_ERROR("Failed to resize shadow map to {}", resolution);
+			return;
+		}
+
+		// Resize only refreshed ShadowMapManager's own descriptor copies; repoint the
+		// descriptor-manager sets the main pass actually binds at the recreated array view.
+		for (uint32_t i = 0; i < FrameSyncManager::MAX_FRAMES_IN_FLIGHT; ++i)
+		{
+			m_DescriptorManager->UpdateShadowSet(
+				i,
+				m_ShadowManager->GetShadowMapView(),
+				m_ShadowManager->GetShadowSampler());
+		}
+		LOG_INFO("Shadow map resolution set to {}x{}", resolution, resolution);
+	}
+
+	uint32_t Renderer::GetShadowResolution() const
+	{
+		return m_ShadowManager ? m_ShadowManager->GetConfig().resolution : 0;
+	}
+
 	void Renderer::UpdateShadowMatrices()
 	{
 		if (!m_ShadowEnabled || m_CurrentLightingData.numLights == 0)
@@ -2260,82 +2333,119 @@ namespace Nightbloom
 			return;
 		}
 
-		float orthoSize = m_ShadowConfig.orthoSize;
-		float nearPlane = m_ShadowConfig.nearPlane;
-		float farPlane = m_ShadowConfig.farPlane;
-		float bias = m_ShadowConfig.bias;
-		float depthRange = farPlane - nearPlane;
-		float ndcBias = (depthRange > 0.0f) ? (bias / depthRange) : bias;
+		const float bias       = m_ShadowConfig.bias;
+		const float normalBias = m_ShadowConfig.normalBias;
+		const float shadowDist = m_ShadowConfig.shadowDistance;
+		const float lambda     = m_ShadowConfig.splitLambda;
+		const float extrude    = m_ShadowConfig.casterExtrude;
+		const float resolution = static_cast<float>(m_ShadowManager->GetConfig().resolution);
 
-		float normalBias = m_ShadowConfig.normalBias;
+		// Light basis: position.xyz = direction the light is SHINING (e.g. (0,-1,0) = down).
+		glm::vec3 lightDir = glm::normalize(glm::vec3(primaryLight.position));
+		glm::vec3 upRef = glm::vec3(0.0f, 1.0f, 0.0f);
+		if (std::abs(glm::dot(lightDir, upRef)) > 0.99f)
+			upRef = glm::vec3(0.0f, 0.0f, 1.0f);
 
-		m_ShadowCenter = glm::vec3(m_CameraPosition.x, 0.0f, m_CameraPosition.z);
+		// Recover camera basis + projection params from the matrices the app fed us, so the
+		// shadow system needs no extra plumbing. Projection is infinite reverse-Z (Camera.cpp):
+		//   proj[1][1] = -1/tan(fovY/2)  (Vulkan Y-flip baked in),  proj[3][2] = near.
+		glm::mat4 invView  = glm::inverse(m_ViewMatrix);
+		glm::vec3 camPos   = glm::vec3(invView[3]);
+		glm::vec3 camRight = glm::normalize(glm::vec3(invView[0]));
+		glm::vec3 camUp    = glm::normalize(glm::vec3(invView[1]));
+		glm::vec3 camFwd   = glm::normalize(-glm::vec3(invView[2]));
 
-		// Get light direction from the light data
-		// primaryLight.position.xyz = direction light is SHINING (e.g., (0,-1,0) = down)
-		glm::vec3 lightShineDir = glm::normalize(glm::vec3(primaryLight.position));
+		float tanHalfFovY = -1.0f / m_ProjectionMatrix[1][1];
+		float aspect      = -m_ProjectionMatrix[1][1] / m_ProjectionMatrix[0][0];
+		float camNear     = m_ProjectionMatrix[3][2];
+		if (camNear <= 0.0f) camNear = 0.1f;
 
-		// Up vector (handle edge case of looking straight up/down)
-		glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
-		if (std::abs(glm::dot(lightShineDir, up)) > 0.99f)
+		m_ShadowCenter = camPos;  // keep member meaningful for diagnostics
+
+		// --- Practical (PSSM) split distances over [camNear, shadowDist], view-space ---
+		float splitFar[NUM_CASCADES];
+		float ratio = shadowDist / camNear;
+		for (uint32_t c = 0; c < NUM_CASCADES; ++c)
 		{
-			up = glm::vec3(0.0f, 0.0f, 1.0f);
+			float p = static_cast<float>(c + 1) / static_cast<float>(NUM_CASCADES);
+			float logSplit = camNear * std::pow(ratio, p);
+			float uniSplit = camNear + (shadowDist - camNear) * p;
+			splitFar[c] = lambda * logSplit + (1.0f - lambda) * uniSplit;
 		}
 
-		// Texel snapping: the camera moves continuously, but the shadow map
-		// only has finite texel resolution. Recentering the ortho frustum on
-		// the exact camera position every frame shifts the texel grid by a
-		// sub-texel amount each frame, which makes shadow edges shimmer as
-		// the camera moves. Snap the center to the light's own texel grid so
-		// the same world point always lands on the same texel center.
-		glm::vec3 lightRight = glm::normalize(glm::cross(lightShineDir, up));
-		glm::vec3 lightUp = glm::normalize(glm::cross(lightRight, lightShineDir));
+		for (uint32_t c = 0; c < NUM_CASCADES; ++c)
+		{
+			float sliceNear = (c == 0) ? camNear : splitFar[c - 1];
+			float sliceFar  = splitFar[c];
 
-		float shadowMapResolution = static_cast<float>(m_ShadowManager->GetConfig().resolution);
-		float texelWorldSize = (2.0f * orthoSize) / shadowMapResolution;
+			// 8 world-space corners of this frustum slice.
+			glm::vec3 corners[8];
+			int idx = 0;
+			for (int fi = 0; fi < 2; ++fi)
+			{
+				float d = (fi == 0) ? sliceNear : sliceFar;
+				float halfH = d * tanHalfFovY;
+				float halfW = halfH * aspect;
+				glm::vec3 cc = camPos + camFwd * d;
+				corners[idx++] = cc - camRight * halfW - camUp * halfH;
+				corners[idx++] = cc + camRight * halfW - camUp * halfH;
+				corners[idx++] = cc - camRight * halfW + camUp * halfH;
+				corners[idx++] = cc + camRight * halfW + camUp * halfH;
+			}
 
-		float centerRight = glm::dot(m_ShadowCenter, lightRight);
-		float centerUp = glm::dot(m_ShadowCenter, lightUp);
-		centerRight = std::floor(centerRight / texelWorldSize) * texelWorldSize;
-		centerUp = std::floor(centerUp / texelWorldSize) * texelWorldSize;
+			// Bounding sphere of the slice — rotation-invariant, so the ortho size is constant
+			// as the camera turns. That stability is what makes the texel snap below kill the
+			// edge shimmer instead of merely reducing it.
+			glm::vec3 center(0.0f);
+			for (int i = 0; i < 8; ++i) center += corners[i];
+			center /= 8.0f;
+			float radius = 0.0f;
+			for (int i = 0; i < 8; ++i)
+				radius = std::max(radius, glm::length(corners[i] - center));
+			radius = std::ceil(radius * 16.0f) / 16.0f;
 
-		float centerForward = glm::dot(m_ShadowCenter, lightShineDir);
-		m_ShadowCenter = lightRight * centerRight + lightUp * centerUp + lightShineDir * centerForward;
+			// Light view aimed at the sphere centre, pulled back so off-frustum occluders
+			// toward the light still cast (casterExtrude = pancaking margin).
+			glm::vec3 eye = center - lightDir * (radius + extrude);
+			glm::mat4 lightView = glm::lookAt(eye, center, upRef);
 
-		// Position camera along the direction vector
-		glm::vec3 lightPos = m_ShadowCenter - lightShineDir * (farPlane * 0.5f);
+			float zFar = 2.0f * radius + extrude;
+			glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius, 0.0f, zFar);
+			lightProj[1][1] *= -1.0f;                              // Vulkan Y-flip
+			lightProj[2][2] *= 0.5f;                               // GL [-1,1] -> VK [0,1] depth
+			lightProj[3][2] = lightProj[3][2] * 0.5f + 0.5f;
 
-		glm::mat4 lightView = glm::lookAt(lightPos, m_ShadowCenter, up);
+			// Texel-snap in NDC: round the projected world origin to the shadow-map grid so
+			// the sampled texels don't crawl as the camera translates.
+			glm::mat4 shadowMatrix = lightProj * lightView;
+			glm::vec2 origin  = glm::vec2(shadowMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)) * (resolution * 0.5f);
+			glm::vec2 rounded = glm::round(origin);
+			glm::vec2 offset  = (rounded - origin) * (2.0f / resolution);
+			lightProj[3][0] += offset.x;
+			lightProj[3][1] += offset.y;
 
-		glm::mat4 lightProjection = glm::ortho(
-			-orthoSize, orthoSize,
-			-orthoSize, orthoSize,
-			nearPlane, farPlane
-		);
+			glm::mat4 lightVP = lightProj * lightView;
 
-		// Standard Vulkan Y-flip
-		lightProjection[1][1] *= -1.0f;
+			m_CurrentLightingData.shadowData.lightSpaceMatrix[c] = lightVP;
+			m_CurrentLightingData.shadowData.cascadeSplits[c] = sliceFar;  // view-depth split (shader selection)
+			m_CurrentLightingData.shadowData.cascadeRadii[c]  = radius;    // ortho half-size (shader bias scaling)
 
-		lightProjection[2][2] *= 0.5f;
-		lightProjection[3][2] = lightProjection[3][2] * 0.5f + 0.5f;
+			m_ShadowFrameData[c].view = lightView;
+			m_ShadowFrameData[c].proj = lightProj;
+			m_ShadowFrameData[c].time = glm::vec4(m_TotalTime, 0.0f, 0.0f, 0.0f);
+			m_ShadowFrameData[c].cameraPos = glm::vec4(eye, 1.0f);
 
-		glm::mat4 lightSpaceMatrix = lightProjection * lightView;
-
-		// Fragment shader data
-		m_CurrentLightingData.shadowData.lightSpaceMatrix = lightSpaceMatrix;
-		m_CurrentLightingData.shadowData.shadowParams = glm::vec4(
-			ndcBias, normalBias, 0.0f, 1.0f
-		);
-
-		// Shadow pass data
-		m_ShadowFrameData.view = lightView;
-		m_ShadowFrameData.proj = lightProjection;
-		m_ShadowFrameData.time = glm::vec4(m_TotalTime, 0.0f, 0.0f, 0.0f);
-		m_ShadowFrameData.cameraPos = glm::vec4(lightPos, 1.0f);
-
-		// DEBUG: Log the light position to verify it's on the correct side
-		//LOG_INFO("Shadow camera pos: ({:.2f}, {:.2f}, {:.2f})", lightPos.x, lightPos.y, lightPos.z);
-		//LOG_INFO("Light shine dir: ({:.2f}, {:.2f}, {:.2f})", lightShineDir.x, lightShineDir.y, lightShineDir.z);
+			if (c == 0)
+			{
+				// Base bias expressed in cascade 0's NDC depth range; the shader scales it per
+				// cascade by cascadeRadii ratio (coarser far cascades need proportionally more).
+				float ndcBias = (zFar > 0.0f) ? (bias / zFar) : bias;
+				m_CurrentLightingData.shadowData.shadowParams = glm::vec4(
+					ndcBias, normalBias, m_DebugCascadeTint ? 1.0f : 0.0f, 1.0f);
+				m_CurrentLightingData.shadowData.extraParams = glm::vec4(
+					m_ShadowConfig.cascadeBlend, 0.0f, 0.0f, 0.0f);
+			}
+		}
 	}
 
 } // namespace Nightbloom

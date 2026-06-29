@@ -201,6 +201,12 @@ namespace Nightbloom
 		// Process each draw command
 		for (const auto& cmd : drawList.GetCommands())
 		{
+			// Skip objects culled against the camera frustum. They remain in the list for the
+			// shadow/reflection passes (which ignore this flag); only the visible color pass
+			// honors it, so camera-frustum culling still saves main-pass work.
+			if (!cmd.cameraVisible)
+				continue;
+
 			ExecuteDrawCommand(bufferIndex, cmd, pipelineManager, viewMatrix, projectionMatrix);
 		}
 	}

@@ -5,6 +5,7 @@
 #include <vector>
 #include <array>
 #include <unordered_map>
+#include "Engine/Renderer/Light.hpp"  // canonical NUM_CASCADES
 
 namespace Nightbloom
 {
@@ -60,8 +61,8 @@ namespace Nightbloom
 		// --- Shadow pass uniform (set 0 in shadow pass) ---
 		//     Same layout as camera uniform, but points at the light's UBO
 		VkDescriptorSet AllocateShadowUniformSet(uint32_t frameIndex);
-		void UpdateShadowUniformSet(uint32_t frameIndex, VkBuffer buffer, size_t size);
-		VkDescriptorSet GetShadowUniformDescriptorSet(uint32_t frameIndex) { return m_ShadowUniformDescriptorSets[frameIndex]; }
+		void UpdateShadowUniformSet(uint32_t frameIndex, uint32_t cascade, VkBuffer buffer, size_t size);
+		VkDescriptorSet GetShadowUniformDescriptorSet(uint32_t frameIndex, uint32_t cascade) { return m_ShadowUniformDescriptorSets[frameIndex][cascade]; }
 
 		// --- Reflection pass uniform (set 0 in the planar-reflection pass) ---
 		//     Same layout as the camera uniform, but points at a UBO holding the
@@ -179,7 +180,7 @@ namespace Nightbloom
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_UniformDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_LightingDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_ShadowDescriptorSets{};
-		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_ShadowUniformDescriptorSets{};
+		std::array<std::array<VkDescriptorSet, NUM_CASCADES>, MAX_FRAMES_IN_FLIGHT> m_ShadowUniformDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_ReflectionUniformDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_FireflyParamsDescriptorSets{};
 		std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_CloudDescriptorSets{};

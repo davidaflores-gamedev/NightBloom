@@ -32,21 +32,20 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
 } frame;
 
 // ---- Set 1: Scene Lighting ----
+// Water only needs the sun (lights[0]) + ambient. The trailing shadowData block
+// member is intentionally omitted: std140 matches by offset, and everything Water
+// reads sits before shadowData, so dropping it keeps this in sync automatically as
+// the CSM ShadowData layout evolves (it has changed twice — cascadeRadii, extraParams).
 struct LightData {
     vec4 position;
     vec4 color;
     vec4 attenuation;
-};
-struct ShadowData {
-    mat4 lightSpaceMatrix;
-    vec4 shadowParams;
 };
 layout(std140, set = 1, binding = 0) uniform SceneLighting {
     LightData lights[16];
     vec4 ambient;
     int numLights;
     int _pad1, _pad2, _pad3;
-    ShadowData shadowData;
 } lighting;
 
 // ---- Set 2: Planar reflection target ----

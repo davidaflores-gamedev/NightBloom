@@ -164,29 +164,57 @@ namespace Nightbloom
             }
 
             // -----------------------------------------------------------------
-            // Frustum
+            // Cascades (frustum-fit CSM). Ortho Size / Near / Far no longer apply:
+            // each cascade is auto-fit to a slice of the camera view frustum.
             // -----------------------------------------------------------------
             ImGui::Spacing();
-            ImGui::TextUnformatted("Frustum");
+            ImGui::TextUnformatted("Cascades");
             ImGui::Separator();
 
-            if (ImGui::SliderFloat("Ortho Size", &cfg.orthoSize, 0.5f, 200.0f, "%.2f"))
+            if (ImGui::SliderFloat("Shadow Distance", &cfg.shadowDistance, 20.0f, 500.0f, "%.0f"))
                 changed = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(
-                    "Half-extent of the orthographic shadow frustum.\n"
-                    "Smaller = more texel density on nearby geometry.\n"
-                    "Larger  = more scene coverage but softer / blockier shadows.\n"
-                    "Match to the rough radius of the content you want shadowed.");
+                    "Max view distance shadows are fit to (outermost cascade far plane).\n"
+                    "Smaller = cascades pack closer = crisper, but shadows end nearer.");
 
-            if (ImGui::SliderFloat("Near Plane", &cfg.nearPlane, 0.001f, 50.0f, "%.3f"))
+            if (ImGui::SliderFloat("Split Distribution", &cfg.splitLambda, 0.0f, 1.0f, "%.2f"))
                 changed = true;
-            if (ImGui::SliderFloat("Far Plane", &cfg.farPlane, 1.0f, 500.0f, "%.1f"))
-                changed = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Cascade split blend: 0 = uniform slices, 1 = logarithmic.\n"
+                    "Higher shrinks the near cascades -> much sharper shadows up close.\n"
+                    "*** This is the main knob for close-up shadow quality. ***");
 
-            // Guard against degenerate frustum
-            if (cfg.nearPlane >= cfg.farPlane)
-                cfg.nearPlane = cfg.farPlane * 0.01f;
+            if (ImGui::SliderFloat("Caster Extrude", &cfg.casterExtrude, 0.0f, 200.0f, "%.0f"))
+                changed = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Extra depth pulled toward the light so tall occluders just outside a\n"
+                    "cascade still cast into it. Raise if edge shadows pop in/out.");
+
+            if (ImGui::SliderFloat("Cascade Blend", &cfg.cascadeBlend, 0.0f, 0.5f, "%.2f"))
+                changed = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Cross-fade width between cascades (fraction of each cascade's depth).\n"
+                    "0 = hard cuts (visible seam where an object spans two cascades).\n"
+                    "Raise until the half-and-half shadow split disappears.");
+
+            // Shadow map resolution — the direct lever for far-cascade quality. Not part of
+            // ShadowConfig (it's a GPU resource size), so applied immediately, not via `changed`.
+            {
+                static const int   kResValues[] = { 1024, 2048, 4096 };
+                static const char* kResLabels[] = { "1024 (12 MB)", "2048 (48 MB)", "4096 (192 MB)" };
+                uint32_t curRes = ctx.renderer->GetShadowResolution();
+                int resIdx = (curRes <= 1024) ? 0 : (curRes >= 4096) ? 2 : 1;
+                if (ImGui::Combo("Shadow Resolution", &resIdx, kResLabels, 3))
+                    ctx.renderer->SetShadowResolution(static_cast<uint32_t>(kResValues[resIdx]));
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "Texels per cascade layer. The most direct fix for a blurry far\n"
+                        "cascade at long Shadow Distance. Memory shown is for all cascades.");
+            }
 
             // -----------------------------------------------------------------
             // Bias
@@ -195,11 +223,11 @@ namespace Nightbloom
             ImGui::TextUnformatted("Bias");
             ImGui::Separator();
 
-            // DragFloat lets you reach very small values without fighting a slider range.
-            // Ctrl+Click to type an exact value.
-            if (ImGui::DragFloat("Bias##shadow",
-                &cfg.bias, 0.000001f, 0.0f, 0.01f, "%.7f",
-                ImGuiSliderFlags_AlwaysClamp))
+            // Logarithmic sliders: fine control near zero AND full reach to the max
+            // in one drag (bias values span orders of magnitude). Ctrl+Click to type.
+            if (ImGui::SliderFloat("Bias##shadow",
+                &cfg.bias, 0.0f, 0.01f, "%.5f",
+                ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp))
                 changed = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(
@@ -208,9 +236,9 @@ namespace Nightbloom
                     "Too high -> Peter Panning (shadow detaches from caster).\n\n"
                     "Ctrl+Click to type an exact value.");
 
-            if (ImGui::DragFloat("Normal Bias",
-                &cfg.normalBias, 0.000001f, 0.0f, 0.1f, "%.7f",
-                ImGuiSliderFlags_AlwaysClamp))
+            if (ImGui::SliderFloat("Normal Bias",
+                &cfg.normalBias, 0.0f, 0.1f, "%.4f",
+                ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp))
                 changed = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(
@@ -219,65 +247,64 @@ namespace Nightbloom
                     "Too high -> shadow creeps away from the caster along edges.");
 
             // -----------------------------------------------------------------
-            // Frustum center
-            // -----------------------------------------------------------------
-            ImGui::Spacing();
-            ImGui::TextUnformatted("Frustum Center");
-            ImGui::Separator();
-
-            if (ImGui::DragFloat3("Center##shadowCenter",
-                &m_ShadowCenter.x, 0.01f, -200.0f, 200.0f, "%.2f"))
-                ctx.renderer->SetShadowCenter(m_ShadowCenter);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(
-                    "World-space point the shadow frustum is centered on.\n"
-                    "Aim at your primary geometry for the best coverage.");
-
-            // -----------------------------------------------------------------
             // Presets
             // -----------------------------------------------------------------
             ImGui::Spacing();
 
             if (ImGui::Button("Reset to Scene Defaults"))
             {
-                cfg.orthoSize = 50.0f;
-                cfg.nearPlane = 10.0f;
-                cfg.farPlane = 70.0f;
-                cfg.bias = 0.0006f;
-                cfg.normalBias = 0.004f;
-                m_ShadowCenter = glm::vec3(0.0f);
-                ctx.renderer->SetShadowCenter(m_ShadowCenter);
+                cfg.shadowDistance = 200.0f;
+                cfg.splitLambda    = 0.85f;
+                cfg.casterExtrude  = 50.0f;
+                cfg.cascadeBlend   = 0.25f;
+                cfg.bias = 0.0015f;
+                cfg.normalBias = 0.03f;
                 changed = true;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Tight (small object)"))
+            if (ImGui::Button("Crisp (near detail)"))
             {
-                cfg.orthoSize = 2.0f;
-                cfg.nearPlane = 0.01f;
-                cfg.farPlane = 10.0f;
-                cfg.bias = 0.00001f;
-                cfg.normalBias = 0.0001f;
+                cfg.shadowDistance = 100.0f;
+                cfg.splitLambda    = 0.95f;
+                cfg.casterExtrude  = 40.0f;
+                cfg.cascadeBlend   = 0.30f;
+                cfg.bias = 0.0015f;
+                cfg.normalBias = 0.03f;
                 changed = true;
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Good starting point for small / close-up geometry.");
+                ImGui::SetTooltip("Packs cascades close for maximum sharpness near the camera.");
 
             ImGui::SameLine();
-            if (ImGui::Button("Wide (terrain)"))
+            if (ImGui::Button("Far (big landscape)"))
             {
-                cfg.orthoSize = 100.0f;
-                cfg.nearPlane = 1.0f;
-                cfg.farPlane = 300.0f;
-                cfg.bias = 0.005f;
+                cfg.shadowDistance = 400.0f;
+                cfg.splitLambda    = 0.80f;
+                cfg.casterExtrude  = 80.0f;
+                cfg.cascadeBlend   = 0.20f;
+                cfg.bias = 0.003f;
                 cfg.normalBias = 0.02f;
                 changed = true;
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Good starting point for large terrain / landscape scenes.");
+                ImGui::SetTooltip("Long shadow reach for terrain; softer near the camera.");
 
             // Push to renderer on any change
             if (changed)
                 ctx.renderer->SetShadowConfig(cfg);
+
+            // -----------------------------------------------------------------
+            // CSM debug
+            // -----------------------------------------------------------------
+            ImGui::Spacing();
+            bool cascadeTint = ctx.renderer->GetDebugCascadeTint();
+            if (ImGui::Checkbox("Debug Cascades", &cascadeTint))
+                ctx.renderer->SetDebugCascadeTint(cascadeTint);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Tint surfaces by which shadow cascade they sample.\n"
+                    "Cascade 0 = red (nearest, sharpest), 1 = green, 2 = blue (farthest).\n"
+                    "The colored rings should track the camera as you move.");
 
             // -----------------------------------------------------------------
             // Diagnostics
@@ -296,9 +323,9 @@ namespace Nightbloom
                 ImGui::Text("normalBias:  %.8f", live.normalBias);
 
                 ImGui::Spacing();
-                ImGui::TextDisabled("Coverage (2048 shadow map):");
+                ImGui::TextDisabled("Coverage (4096 shadow map):");
 
-                float texelsPerUnit = 2048.0f / (live.orthoSize * 2.0f);
+                float texelsPerUnit = 4096.0f / (live.orthoSize * 2.0f);
                 float unitsPerTexel = 1.0f / texelsPerUnit;
                 ImGui::Text("%.2f texels / unit", texelsPerUnit);
                 ImGui::Text("%.6f units / texel", unitsPerTexel);

@@ -106,17 +106,25 @@ namespace Nightbloom
 		VkDevice device = m_Device->GetDevice();
 
 		// Keep render pass (format hasn't changed)
-		// Destroy framebuffer and texture
-		if (m_ShadowFramebuffer != VK_NULL_HANDLE)
+		// Destroy per-cascade framebuffers, all views, and the texture
+		for (uint32_t i = 0; i < NUM_CASCADES; ++i)
 		{
-			vkDestroyFramebuffer(device, m_ShadowFramebuffer, nullptr);
-			m_ShadowFramebuffer = VK_NULL_HANDLE;
+			if (m_ShadowFramebuffers[i] != VK_NULL_HANDLE)
+			{
+				vkDestroyFramebuffer(device, m_ShadowFramebuffers[i], nullptr);
+				m_ShadowFramebuffers[i] = VK_NULL_HANDLE;
+			}
+			if (m_ShadowMapLayerViews[i] != VK_NULL_HANDLE)
+			{
+				vkDestroyImageView(device, m_ShadowMapLayerViews[i], nullptr);
+				m_ShadowMapLayerViews[i] = VK_NULL_HANDLE;
+			}
 		}
 
-		if (m_ShadowMapView != VK_NULL_HANDLE)
+		if (m_ShadowMapArrayView != VK_NULL_HANDLE)
 		{
-			vkDestroyImageView(device, m_ShadowMapView, nullptr);
-			m_ShadowMapView = VK_NULL_HANDLE;
+			vkDestroyImageView(device, m_ShadowMapArrayView, nullptr);
+			m_ShadowMapArrayView = VK_NULL_HANDLE;
 		}
 
 		if (m_ShadowMapAllocation && m_MemoryManager)
@@ -140,12 +148,12 @@ namespace Nightbloom
 			return false;
 		}
 
-		// Update descriptor sets with new image view
+		// Update descriptor sets with new image view (array view, all cascades)
 		for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
 		{
 			VkDescriptorImageInfo imageInfo{};
 			imageInfo.sampler = m_ShadowSampler;
-			imageInfo.imageView = m_ShadowMapView;
+			imageInfo.imageView = m_ShadowMapArrayView;
 			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 			VkWriteDescriptorSet descriptorWrite{};
@@ -171,7 +179,7 @@ namespace Nightbloom
 		imageInfo.height = m_Config.resolution;
 		imageInfo.depth = 1;
 		imageInfo.mipLevels = 1;
-		imageInfo.arrayLayers = 1;
+		imageInfo.arrayLayers = NUM_CASCADES;  // one layer per cascade
 		imageInfo.format = m_Config.depthFormat;
 		imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
 		imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -188,26 +196,49 @@ namespace Nightbloom
 		m_ShadowMapAllocation = allocation;
 		m_ShadowMapImage = allocation->image;
 
-		// Create image view
-		VkImageViewCreateInfo viewInfo{};
-		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		viewInfo.image = m_ShadowMapImage;
-		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		viewInfo.format = m_Config.depthFormat;
-		viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-		viewInfo.subresourceRange.baseMipLevel = 0;
-		viewInfo.subresourceRange.levelCount = 1;
-		viewInfo.subresourceRange.baseArrayLayer = 0;
-		viewInfo.subresourceRange.layerCount = 1;
+		// Array view used for sampling (sampler2DArrayShadow, set 3), spanning all cascades.
+		// All NUM_CASCADES layers are rendered every frame (RecordShadowPass loops over
+		// cascades), so every layer is in SHADER_READ_ONLY_OPTIMAL when sampled.
+		VkImageViewCreateInfo arrayViewInfo{};
+		arrayViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		arrayViewInfo.image = m_ShadowMapImage;
+		arrayViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+		arrayViewInfo.format = m_Config.depthFormat;
+		arrayViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+		arrayViewInfo.subresourceRange.baseMipLevel = 0;
+		arrayViewInfo.subresourceRange.levelCount = 1;
+		arrayViewInfo.subresourceRange.baseArrayLayer = 0;
+		arrayViewInfo.subresourceRange.layerCount = NUM_CASCADES;
 
-		if (vkCreateImageView(m_Device->GetDevice(), &viewInfo, nullptr, &m_ShadowMapView) != VK_SUCCESS)
+		if (vkCreateImageView(m_Device->GetDevice(), &arrayViewInfo, nullptr, &m_ShadowMapArrayView) != VK_SUCCESS)
 		{
-			LOG_ERROR("Failed to create shadow map image view");
+			LOG_ERROR("Failed to create shadow map array image view");
 			return false;
 		}
 
-		LOG_INFO("Shadow map texture created: {}x{}, format={}",
-			m_Config.resolution, m_Config.resolution, static_cast<int>(m_Config.depthFormat));
+		// Single-layer views — each cascade's framebuffer renders into one of these
+		for (uint32_t i = 0; i < NUM_CASCADES; ++i)
+		{
+			VkImageViewCreateInfo layerViewInfo{};
+			layerViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			layerViewInfo.image = m_ShadowMapImage;
+			layerViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			layerViewInfo.format = m_Config.depthFormat;
+			layerViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+			layerViewInfo.subresourceRange.baseMipLevel = 0;
+			layerViewInfo.subresourceRange.levelCount = 1;
+			layerViewInfo.subresourceRange.baseArrayLayer = i;
+			layerViewInfo.subresourceRange.layerCount = 1;
+
+			if (vkCreateImageView(m_Device->GetDevice(), &layerViewInfo, nullptr, &m_ShadowMapLayerViews[i]) != VK_SUCCESS)
+			{
+				LOG_ERROR("Failed to create shadow map layer image view {}", i);
+				return false;
+			}
+		}
+
+		LOG_INFO("Shadow map texture created: {}x{} x{} layers, format={}",
+			m_Config.resolution, m_Config.resolution, NUM_CASCADES, static_cast<int>(m_Config.depthFormat));
 		return true;
 	}
 
@@ -277,22 +308,26 @@ namespace Nightbloom
 
 	bool Nightbloom::ShadowMapManager::CreateShadowFramebuffer()
 	{
-		VkFramebufferCreateInfo framebufferInfo{};
-		framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-		framebufferInfo.renderPass = m_ShadowRenderPass;
-		framebufferInfo.attachmentCount = 1;
-		framebufferInfo.pAttachments = &m_ShadowMapView;
-		framebufferInfo.width = m_Config.resolution;
-		framebufferInfo.height = m_Config.resolution;
-		framebufferInfo.layers = 1;
-
-		if (vkCreateFramebuffer(m_Device->GetDevice(), &framebufferInfo, nullptr, &m_ShadowFramebuffer) != VK_SUCCESS)
+		// One framebuffer per cascade, each attaching that cascade's single-layer view.
+		for (uint32_t i = 0; i < NUM_CASCADES; ++i)
 		{
-			LOG_ERROR("Failed to create shadow framebuffer");
-			return false;
+			VkFramebufferCreateInfo framebufferInfo{};
+			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			framebufferInfo.renderPass = m_ShadowRenderPass;
+			framebufferInfo.attachmentCount = 1;
+			framebufferInfo.pAttachments = &m_ShadowMapLayerViews[i];
+			framebufferInfo.width = m_Config.resolution;
+			framebufferInfo.height = m_Config.resolution;
+			framebufferInfo.layers = 1;
+
+			if (vkCreateFramebuffer(m_Device->GetDevice(), &framebufferInfo, nullptr, &m_ShadowFramebuffers[i]) != VK_SUCCESS)
+			{
+				LOG_ERROR("Failed to create shadow framebuffer for cascade {}", i);
+				return false;
+			}
 		}
 
-		LOG_INFO("Shadow framebuffer created: {}x{}", m_Config.resolution, m_Config.resolution);
+		LOG_INFO("Shadow framebuffers created: {} x {}x{}", NUM_CASCADES, m_Config.resolution, m_Config.resolution);
 		return true;
 	}
 
@@ -362,10 +397,10 @@ namespace Nightbloom
 				return false;
 			}
 
-			// Update the descriptor set with our shadow map
+			// Update the descriptor set with our shadow map (array view, all cascades)
 			VkDescriptorImageInfo imageInfo{};
 			imageInfo.sampler = m_ShadowSampler;
-			imageInfo.imageView = m_ShadowMapView;
+			imageInfo.imageView = m_ShadowMapArrayView;
 			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 			VkWriteDescriptorSet descriptorWrite{};
@@ -397,10 +432,18 @@ namespace Nightbloom
 			m_ShadowSampler = VK_NULL_HANDLE;
 		}
 
-		if (m_ShadowFramebuffer != VK_NULL_HANDLE)
+		for (uint32_t i = 0; i < NUM_CASCADES; ++i)
 		{
-			vkDestroyFramebuffer(device, m_ShadowFramebuffer, nullptr);
-			m_ShadowFramebuffer = VK_NULL_HANDLE;
+			if (m_ShadowFramebuffers[i] != VK_NULL_HANDLE)
+			{
+				vkDestroyFramebuffer(device, m_ShadowFramebuffers[i], nullptr);
+				m_ShadowFramebuffers[i] = VK_NULL_HANDLE;
+			}
+			if (m_ShadowMapLayerViews[i] != VK_NULL_HANDLE)
+			{
+				vkDestroyImageView(device, m_ShadowMapLayerViews[i], nullptr);
+				m_ShadowMapLayerViews[i] = VK_NULL_HANDLE;
+			}
 		}
 
 		if (m_ShadowRenderPass != VK_NULL_HANDLE)
@@ -409,10 +452,10 @@ namespace Nightbloom
 			m_ShadowRenderPass = VK_NULL_HANDLE;
 		}
 
-		if (m_ShadowMapView != VK_NULL_HANDLE)
+		if (m_ShadowMapArrayView != VK_NULL_HANDLE)
 		{
-			vkDestroyImageView(device, m_ShadowMapView, nullptr);
-			m_ShadowMapView = VK_NULL_HANDLE;
+			vkDestroyImageView(device, m_ShadowMapArrayView, nullptr);
+			m_ShadowMapArrayView = VK_NULL_HANDLE;
 		}
 
 		if (m_ShadowMapAllocation && m_MemoryManager)

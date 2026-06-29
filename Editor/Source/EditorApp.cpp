@@ -173,11 +173,17 @@ namespace Nightbloom {
             moonlight->intensity = 0.8f;
 
             moonlight->shadowConfig.castsShadows = true;
-            moonlight->shadowConfig.orthoSize = 50.0f;
-            moonlight->shadowConfig.nearPlane = 10.f;
-            moonlight->shadowConfig.farPlane = 70.0f;
-            moonlight->shadowConfig.bias = 0.0006f;
-            moonlight->shadowConfig.normalBias = 0.004f;
+            // CSM (frustum-fit): cascades are auto-sized to the camera view frustum, so
+            // orthoSize/near/far no longer apply. The two knobs that matter:
+            //   shadowDistance - how far shadows reach (outermost cascade far)
+            //   splitLambda    - 0=uniform..1=logarithmic; higher = sharper up close
+            // Tune both live in the Lighting panel (Shadow Mapping > Cascades).
+            moonlight->shadowConfig.shadowDistance = 200.0f;
+            moonlight->shadowConfig.splitLambda    = 0.90f;
+            moonlight->shadowConfig.casterExtrude  = 50.0f;
+            // Acne-safe starting bias; normalBias is the primary acne lever. Tune live.
+            moonlight->shadowConfig.bias = 0.0015f;
+            moonlight->shadowConfig.normalBias = 0.03f;
 
             GetRenderer()->SetShadowConfig(moonlight->shadowConfig);
             if (m_EditorScene->GetObjectCount() > 0)

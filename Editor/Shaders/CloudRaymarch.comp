@@ -49,17 +49,14 @@ struct LightData {
     vec4 attenuation;
 };
 
-struct ShadowData {
-    mat4 lightSpaceMatrix;
-    vec4 shadowParams;
-};
-
+// Clouds only need the sun (lights[0]) + ambient. The trailing shadowData block
+// member is intentionally omitted: std140 matches by offset and everything read
+// here sits before it, so this stays in sync as the CSM ShadowData layout evolves.
 layout(std140, set = 2, binding = 0) uniform SceneLighting {
     LightData lights[16];
     vec4 ambient;
     int numLights;
     int _pad1, _pad2, _pad3;
-    ShadowData shadowData;
 } lighting;
 
 layout(set = 3, binding = 0, rgba16f) uniform writeonly image2D outputImage;

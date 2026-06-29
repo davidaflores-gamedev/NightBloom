@@ -70,6 +70,13 @@ namespace Nightbloom
 		uint32_t instanceCount = 1;
 		uint32_t firstInstance = 0;
 
+		// Camera-frustum visibility. Set false by Scene::BuildDrawList for objects culled
+		// against the CAMERA frustum. The main color pass skips these; the SHADOW and
+		// REFLECTION passes ignore the flag and still draw them, because a caster off-screen
+		// (behind/beside the camera) can still cast a shadow into view or appear in the water
+		// reflection. Culling shadow casters by the camera frustum is the classic CSM bug.
+		bool cameraVisible = true;
+
 		// Push constants (optional)
 		bool hasPushConstants = false;
 		PushConstantData pushConstants;
@@ -283,12 +290,16 @@ namespace Nightbloom
 			m_Commands.push_back(cmd);
 		}
 
-		// Add commands from a drawable
-		void AddDrawable(const IDrawable* drawable)
+		// Add commands from a drawable. cameraVisible=false keeps the commands in the list
+		// (so shadow/reflection passes still draw them) but flags them so the main color pass
+		// can skip them — used for objects culled against the camera frustum.
+		void AddDrawable(const IDrawable* drawable, bool cameraVisible = true)
 		{
 			if (drawable && drawable->IsVisible())
 			{
 				auto commands = drawable->GetDrawCommands();
+				for (auto& cmd : commands)
+					cmd.cameraVisible = cameraVisible;
 				m_Commands.insert(m_Commands.end(), commands.begin(), commands.end());
 			}
 		}

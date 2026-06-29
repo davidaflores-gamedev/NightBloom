@@ -226,6 +226,11 @@ namespace Nightbloom
 
 				m_LastObjectCount++;
 
+				// Camera-frustum cull. We do NOT drop culled objects from the list — they're
+				// still submitted (marked cameraVisible=false) so the shadow and reflection
+				// passes draw them. A caster behind/beside the camera still casts a shadow into
+				// view; dropping it here is what made off-screen objects' shadows vanish.
+				bool cameraVisible = true;
 				if (frustum && obj.model)
 				{
 					glm::vec3 worldCenter, worldExtents;
@@ -237,11 +242,11 @@ namespace Nightbloom
 					if (!frustum->Intersects(worldCenter, worldExtents))
 					{
 						m_LastCulledCount++;
-						continue;
+						cameraVisible = false;
 					}
 				}
 
-				drawList.AddDrawable(drawable);
+				drawList.AddDrawable(drawable, cameraVisible);
 			}
 		}
 

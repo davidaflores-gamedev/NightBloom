@@ -1,48 +1,21 @@
 //------------------------------------------------------------------------------
-// Mesh.frag - WITH DEBUG VISUALIZATION
+// Mesh.frag
 //
-// Uncomment the debug sections to visualize what's happening
+// Opaque / glass mesh shading + cascaded shadows. Frame/lighting/shadow
+// descriptor blocks and all CSM logic come from the shared includes
+// (Shaders/Include/scene_common.glsl + shadows.glsl).
 //------------------------------------------------------------------------------
 #version 450
 
-// ---- Descriptor Set 0: Frame Uniforms ----
-layout(set = 0, binding = 0) uniform FrameUniforms {
-    mat4 view;
-    mat4 proj;
-    vec4 time;
-    vec4 cameraPos;
-} frame;
+#include "shadows.glsl"   // set 0 frame, set 2 lighting, set 3 shadowMap + CSM functions
 
-// ---- Descriptor Set 1: Textures ----
+// ---- Descriptor Set 1: Albedo texture ----
 layout(set = 1, binding = 0) uniform sampler2D texSampler;
-
-// ---- Descriptor Set 2: Scene Lighting ----
-struct LightData {
-    vec4 position;
-    vec4 color;
-    vec4 attenuation;
-};
-
-struct ShadowData {
-    mat4 lightSpaceMatrix;
-    vec4 shadowParams; // x = bias, y = normalBias, z = unused, w = enabled
-};
-
-layout(std140, set = 2, binding = 0) uniform SceneLighting {
-    LightData lights[16];
-    vec4 ambient;
-    int numLights;
-    int _pad1, _pad2, _pad3;
-    ShadowData shadowData;
-} lighting;
-
-// ---- Descriptor Set 3: Shadow Map ----
-layout(set = 3, binding = 0) uniform sampler2DShadow shadowMap;
 
 // ---- Push Constants ----
 layout(push_constant) uniform PushConstants {
     mat4 model;
-    vec4 customData;
+    vec4 customData;   // w > 0.01 => material-driven color (glass); xyz=tint, w=alpha
 } push;
 
 // ---- Fragment Inputs ----
@@ -52,57 +25,6 @@ layout(location = 2) in vec3 fragWorldPos;
 
 // ---- Output ----
 layout(location = 0) out vec4 outColor;
-
-// ============================================================================
-// Shadow calculation with debug options
-// ============================================================================
-float CalculateShadow(vec3 worldPos, vec3 normal)
-{
-    if (lighting.shadowData.shadowParams.w < 0.5)
-        return 1.0;
-
-    float bias       = lighting.shadowData.shadowParams.x;
-    float normalBias = lighting.shadowData.shadowParams.y;
-
-    // Normal bias — offset world pos before projection
-    vec3 lightDir    = normalize(-lighting.lights[0].position.xyz);
-    float cosTheta   = clamp(dot(normal, lightDir), 0.0, 1.0);
-    float slopeScale = clamp(1.0 - cosTheta, 0.0, 1.0);
-    vec3 biasedWorldPos = worldPos + normal * (normalBias * slopeScale);
-
-    // Project biasedWorldPos (was incorrectly using worldPos before)
-    vec4 lightSpacePos = lighting.shadowData.lightSpaceMatrix * vec4(biasedWorldPos, 1.0);
-    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
-    projCoords.xy = projCoords.xy * 0.5 + 0.5;
-
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
-        projCoords.y < 0.0 || projCoords.y > 1.0 ||
-        projCoords.z < 0.0 || projCoords.z > 1.0)
-        return 1.0;
-
-    // Declare texelSize before anything that uses it
-    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
-
-    // Receiver plane bias — adapts to surface slope automatically
-    float dzdx = dFdx(projCoords.z);
-    float dzdy = dFdy(projCoords.z);
-    float receiverBias = abs(dzdx) * texelSize.x + abs(dzdy) * texelSize.y;
-    receiverBias = clamp(receiverBias, 0.0, 0.005);
-
-    float currentDepth = projCoords.z - bias - receiverBias;
-
-    float shadow = 0.0;
-    for (int x = -1; x <= 1; ++x)
-    {
-        for (int y = -1; y <= 1; ++y)
-        {
-            vec2 offset = vec2(float(x), float(y)) * texelSize;
-            shadow += texture(shadowMap, vec3(projCoords.xy + offset, currentDepth));
-        }
-    }
-
-    return shadow / 9.0;
-}
 
 // ============================================================================
 // Blinn-Phong lighting
@@ -132,43 +54,12 @@ void main()
     vec3 N = normalize(fragNormal);
     vec3 V = normalize(frame.cameraPos.xyz - fragWorldPos);
 
-    // =========================================================================
-    // DEBUG MODE 1: Visualize shadow factor only
-    // Uncomment to see: white = lit, black = shadow
-    // =========================================================================
-    
-    //float shadowDebug = CalculateShadow(fragWorldPos, N);
-    //outColor = vec4(vec3(shadowDebug), 1.0);
-    //return;
-    
-
-    // =========================================================================
-    // DEBUG MODE 2: Visualize light-space UV coordinates
-    // Uncomment to see the shadow map UV mapping (red=U, green=V)
-    // =========================================================================
-    /*
-    vec4 lightSpacePos = lighting.shadowData.lightSpaceMatrix * vec4(fragWorldPos, 1.0);
-    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
-    projCoords = projCoords * 0.5 + 0.5;
-    outColor = vec4(projCoords.xy, 0.0, 1.0);
-    return;
-    */
-
-    // =========================================================================
-    // DEBUG MODE 3: Visualize light-space depth
-    // Uncomment to see depth gradient (black = near, white = far)
-    // =========================================================================
-    /*
-    vec4 lightSpacePos = lighting.shadowData.lightSpaceMatrix * vec4(fragWorldPos, 1.0);
-    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
-    projCoords = projCoords * 0.5 + 0.5;
-    outColor = vec4(vec3(projCoords.z), 1.0);
-    return;
-    */
-
-    // Normal rendering with shadows
     vec3 totalLight = lighting.ambient.rgb * lighting.ambient.a;
-    float shadowFactor = CalculateShadow(fragWorldPos, N);
+
+    // Cascaded shadow factor for the primary directional light (lights[0]).
+    int cascade;
+    vec3 sunDir = normalize(-lighting.lights[0].position.xyz);
+    float shadowFactor = SampleShadow(fragWorldPos, N, sunDir, 1.0, 0.005, cascade);
 
     for (int i = 0; i < lighting.numLights; ++i)
     {
@@ -213,9 +104,9 @@ void main()
         vec3 reflectionColor = vec3(1.0);
         float reflectStrength = 0.15 + 0.85 * fresnel;
         vec3 glassRgb = mix(tint * totalLight, reflectionColor, reflectStrength);
-        outColor = vec4(glassRgb, albedo.a);
+        outColor = vec4(ApplyCascadeDebug(glassRgb, cascade), albedo.a);
         return;
     }
 
-    outColor = vec4(albedo.rgb * totalLight, albedo.a);
+    outColor = vec4(ApplyCascadeDebug(albedo.rgb * totalLight, cascade), albedo.a);
 }

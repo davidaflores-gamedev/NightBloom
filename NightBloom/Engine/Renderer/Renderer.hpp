@@ -39,6 +39,7 @@ namespace Nightbloom
 	class NoiseTextureGenerator;
 	struct NoiseTextureDesc;
 	class ShadowMapManager;
+	class GpuProfiler;
 	class FireflySystem;
 	class CloudSystem;
 	class WaterSystem;
@@ -132,6 +133,17 @@ namespace Nightbloom
 		void SetShadowCenter(const glm::vec3& center) { m_ShadowCenter = center; }
 		void SetShadowConfig(const ShadowConfig& config) { m_ShadowConfig = config; }
 		const ShadowConfig& GetShadowConfig() const { return m_ShadowConfig; }
+		// Debug: tint surfaces by which shadow cascade they sample (CSM diagnostic).
+		void SetDebugCascadeTint(bool enabled) { m_DebugCascadeTint = enabled; }
+		bool GetDebugCascadeTint() const { return m_DebugCascadeTint; }
+
+		// Per-pass GPU timings (timestamp queries). May be null if unsupported.
+		GpuProfiler* GetGpuProfiler() const { return m_GpuProfiler.get(); }
+
+		// Shadow map resolution (per cascade layer). Resizes the array texture + repoints
+		// the bound descriptor sets. Waits for GPU idle internally — call outside a frame.
+		void     SetShadowResolution(uint32_t resolution);
+		uint32_t GetShadowResolution() const;
 
 		// Status
 		bool IsInitialized() const { return m_Initialized; }
@@ -162,6 +174,7 @@ namespace Nightbloom
 		std::unique_ptr<ComputeDispatcher> m_ComputeDispatcher;
 		std::unique_ptr<NoiseTextureGenerator> m_NoiseGenerator;
 		std::unique_ptr<ShadowMapManager> m_ShadowManager;
+		std::unique_ptr<GpuProfiler> m_GpuProfiler;
 
 		// Frame state
 		DrawList m_FrameDrawList;
@@ -179,9 +192,10 @@ namespace Nightbloom
 		std::array<VulkanBuffer*, 2> m_LightingUniforms{};
 		SceneLightingData m_CurrentLightingData;
 
-		// Shadow uniform buffers (set 0 in shadow pass - light's view/proj)
-		std::array<VulkanBuffer*, 2> m_ShadowUniforms{};
-		FrameUniformData m_ShadowFrameData;
+		// Shadow uniform buffers (set 0 in shadow pass - light's view/proj).
+		// Per frame in flight, per cascade: [frame][cascade].
+		std::array<std::array<VulkanBuffer*, NUM_CASCADES>, 2> m_ShadowUniforms{};
+		std::array<FrameUniformData, NUM_CASCADES> m_ShadowFrameData{};
 
 		// Reflection uniform buffers (set 0 in the planar-reflection pass - the
 		// mirror-flipped camera's view/proj). Same double-buffered pattern as the
@@ -219,6 +233,7 @@ namespace Nightbloom
 
 		// Shadow state
 		bool m_ShadowEnabled = true;
+		bool m_DebugCascadeTint = false;  // CSM cascade visualization (set 0=red,1=green,2=blue)
 		bool m_PostProcessAAEnabled = true;
 		glm::vec3 m_ShadowCenter = glm::vec3(0.0f);
 		ShadowConfig m_ShadowConfig;

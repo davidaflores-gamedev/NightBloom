@@ -1,6 +1,7 @@
 // Panels/DebugPanel.cpp
 #include "DebugPanel.hpp"
 #include "Engine/Renderer/Renderer.hpp"
+#include "Engine/Renderer/Components/GpuProfiler.hpp"
 #include "Engine/Core/Scene.hpp"
 #include <imgui.h>
 
@@ -50,6 +51,29 @@ namespace Nightbloom
         ImGui::Text("Memory & Performance");
         ImGui::Text("Press F3 to toggle performance overlay");
         ImGui::Text("FPS: %.1f (%.2f ms)", ImGui::GetIO().Framerate, 1000.0f / ImGui::GetIO().Framerate);
+
+        // Per-pass GPU timings (timestamp queries; ~1 frame-in-flight latency).
+        if (ctx.renderer)
+        {
+            GpuProfiler* prof = ctx.renderer->GetGpuProfiler();
+            if (prof && prof->IsSupported())
+            {
+                ImGui::Spacing();
+                ImGui::Text("GPU (per pass):");
+                float total = 0.0f;
+                for (const auto& r : prof->GetResults())
+                {
+                    ImGui::Text("  %-16s %6.3f ms", r.name.c_str(), r.ms);
+                    total += r.ms;
+                }
+                if (!prof->GetResults().empty())
+                    ImGui::Text("  %-16s %6.3f ms", "GPU total", total);
+            }
+            else if (prof)
+            {
+                ImGui::TextDisabled("GPU timestamps unsupported on this device");
+            }
+        }
 
         ImGui::Separator();
         ImGui::Text("Post-Process");

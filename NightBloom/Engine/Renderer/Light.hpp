@@ -49,11 +49,23 @@ namespace Nightbloom
 	// Shadow data - GPU struct for shadow mapping
 	// Must match GLSL ShadowData struct exactly!
 	//--------------------------------------------------------------------------
+	// Number of shadow cascades (CSM). Canonical definition — shared by the GPU ShadowData
+	// layout below, ShadowMapManager (array layers), VulkanDescriptorManager (per-cascade UBO
+	// sets) and Renderer. GLSL mirrors this as a literal in scene_common.glsl; keep in sync.
+	// Up to 4 (cascadeSplits/cascadeRadii are vec4, so they hold at most 4 entries).
+	static constexpr uint32_t NUM_CASCADES = 4;
+
 	struct ShadowData
 	{
-		glm::mat4 lightSpaceMatrix = glm::mat4(1.0f);  // View-projection from light's perspective
+		// One light view-projection per cascade. (Only [0] needs a sane default; all entries
+		// are rewritten every frame by Renderer::UpdateShadowMatrices when shadows are on.)
+		glm::mat4 lightSpaceMatrix[NUM_CASCADES] = { glm::mat4(1.0f) };
+		glm::vec4 cascadeSplits = glm::vec4(0.0f);  // view-space FAR distance of each cascade (selection)
+		glm::vec4 cascadeRadii  = glm::vec4(1.0f);  // ortho half-size (world units) of each cascade (bias scaling)
 		glm::vec4 shadowParams = glm::vec4(0.005f, 0.02f, 0.0f, 1.0f);
-		// x = bias, y = normalBias, z = unused, w = enabled (1.0 = enabled, 0.0 = disabled)
+		// x = bias, y = normalBias, z = debug cascade tint (1=on), w = enabled (1/0)
+		glm::vec4 extraParams = glm::vec4(0.25f, 0.0f, 0.0f, 0.0f);
+		// x = cascade blend fraction (0 = hard cuts, 0.5 = very soft), yzw = reserved
 	};
 
 	//--------------------------------------------------------------------------
@@ -87,11 +99,17 @@ namespace Nightbloom
 	struct ShadowConfig
 	{
 		bool  castsShadows = false;
-		float orthoSize = 25.0f;      // Half-size of orthographic frustum
+		float orthoSize = 25.0f;      // Half-size of orthographic frustum (legacy single-map; unused by CSM fit)
 		float nearPlane = 0.1f;
 		float farPlane = 100.0f;
 		float bias = 0.005f;          // Depth bias to reduce shadow acne
 		float normalBias = 0.02f;     // Normal-based bias
+
+		// --- Cascaded shadow maps (frustum-fit) ---
+		float shadowDistance = 200.0f;  // Max view distance shadows are fit to (outermost cascade far)
+		float splitLambda    = 0.85f;   // PSSM blend: 0 = uniform splits, 1 = logarithmic (higher = sharper near)
+		float casterExtrude  = 50.0f;   // Extra depth pulled toward the light so off-frustum occluders still cast
+		float cascadeBlend   = 0.25f;   // Cross-fade fraction between cascades (hides the boundary seam)
 	};
 
 	//--------------------------------------------------------------------------
@@ -195,7 +213,12 @@ namespace Nightbloom
 
 			if (type == LightType::Directional && shadowConfig.castsShadows)
 			{
-				data.lightSpaceMatrix = CalculateLightSpaceMatrix(center);
+				// NOTE: this helper is currently unused (Renderer::UpdateShadowMatrices owns
+				// per-cascade matrix generation). Fill all cascades with the single matrix so
+				// the struct stays valid if a caller ever uses it.
+				glm::mat4 m = CalculateLightSpaceMatrix(center);
+				for (uint32_t c = 0; c < NUM_CASCADES; ++c)
+					data.lightSpaceMatrix[c] = m;
 				data.shadowParams = glm::vec4(
 					shadowConfig.bias,
 					shadowConfig.normalBias,
@@ -205,8 +228,7 @@ namespace Nightbloom
 			}
 			else
 			{
-				// Shadows disabled
-				data.lightSpaceMatrix = glm::mat4(1.0f);
+				// Shadows disabled. lightSpaceMatrix[] already defaults to identity.
 				data.shadowParams = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);  // w = 0.0 means DISABLED
 			}
 

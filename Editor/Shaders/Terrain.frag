@@ -16,6 +16,8 @@
 
 #version 450
 
+#include "shadows.glsl"   // set 0 frame, set 2 lighting, set 3 shadowMap + CSM functions
+
 // ---------------------------------------------------------------------------
 // Inputs from vertex shader
 // ---------------------------------------------------------------------------
@@ -32,40 +34,9 @@ layout(location = 0) out vec4 outColor;
 // ---------------------------------------------------------------------------
 // Descriptor sets
 // ---------------------------------------------------------------------------
-layout(set = 0, binding = 0) uniform FrameUBO
-{
-    mat4 view;
-    mat4 proj;
-    vec4 time;
-    vec4 cameraPos;
-} frame;
-
 layout(set = 1, binding = 0) uniform sampler2D uGrassTex;
 layout(set = 1, binding = 1) uniform sampler2D uDirtTex;
 layout(set = 1, binding = 2) uniform sampler2D uRockTex;
-
-// Must match SceneLightingData in Light.hpp
-struct LightData {
-    vec4 position;
-    vec4 color;
-    vec4 attenuation;
-};
-
-struct ShadowData {
-    mat4 lightSpaceMatrix;
-    vec4 shadowParams; // x = bias, y = normalBias, z = unused, w = enabled
-};
-
-layout(std140, set = 2, binding = 0) uniform LightingUBO
-{
-    LightData lights[16];
-    vec4 ambient;
-    int  numLights;
-    int  _pad1, _pad2, _pad3;
-    ShadowData shadowData;
-} lighting;
-
-layout(set = 3, binding = 0) uniform sampler2DShadow shadowMap;
 
 // ---------------------------------------------------------------------------
 // Push constants
@@ -75,59 +46,6 @@ layout(push_constant) uniform PushConstants
     mat4  model;
     vec4  customData;   // x = heightScale, y = texelSize, zw = unused
 } pc;
-
-// ---------------------------------------------------------------------------
-// Shadow helper (PCF 3x3)
-// ---------------------------------------------------------------------------
-float ComputeShadow(vec3 worldPos, vec3 normal, vec3 lightDir)
-{
-    // Terrain's heightmap-driven slopes vary far more sharply over short
-    // distances than the meshes these shadow bias values were tuned for,
-    // so scale them up here to avoid self-shadowing acne shaped like the
-    // underlying noise. Mesh.frag is untouched — it reads the same UBO.
-    const float kTerrainBiasScale = 4.0;
-    float bias       = lighting.shadowData.shadowParams.x * kTerrainBiasScale;
-    float normalBias = lighting.shadowData.shadowParams.y * kTerrainBiasScale;
-
-    // Slope-scaled normal bias — same as Mesh.frag
-    float cosTheta   = clamp(dot(normalize(normal), lightDir), 0.0, 1.0);
-    float slopeScale = clamp(1.0 - cosTheta, 0.0, 1.0);
-    vec3 biasedWorldPos = worldPos + normalize(normal) * (normalBias * slopeScale);
-
-    vec4 lightSpacePos = lighting.shadowData.lightSpaceMatrix * vec4(biasedWorldPos, 1.0);
-
-    if (abs(lightSpacePos.w) < 0.00001) return 1.0;
-
-    vec3  proj        = lightSpacePos.xyz / lightSpacePos.w;
-    vec2  uv          = proj.xy * 0.5 + 0.5;
-    float shadowDepth = proj.z;
-
-    if (uv.x < 0.0 || uv.x > 1.0 ||
-        uv.y < 0.0 || uv.y > 1.0 ||
-        shadowDepth < 0.0 || shadowDepth > 1.0)
-        return 1.0;
-
-    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
-
-    vec2 dpdx = dFdx(proj.xy);
-    vec2 dpdy = dFdy(proj.xy);
-    float dzdx = dFdx(proj.z);
-    float dzdy = dFdy(proj.z);
-    float receiverBias = abs(dzdx) * texelSize.x + abs(dzdy) * texelSize.y;
-    receiverBias = clamp(receiverBias, 0.0, 0.02);
-    float currentDepth = proj.z - bias - receiverBias;
-
-    float shadow = 0.0;
-
-    for (int x = -1; x <= 1; ++x)
-        for (int y = -1; y <= 1; ++y)
-        {
-            vec2 offset = vec2(float(x), float(y)) * texelSize;
-            shadow += texture(shadowMap, vec3(uv + offset, currentDepth));
-        }
-
-    return shadow / 9.0;
-}
 
 // ---------------------------------------------------------------------------
 // Terrain material blending
@@ -205,7 +123,9 @@ void main()
 
     vec3 L = normalize(-lighting.lights[0].position.xyz);
     float NdotL = max(dot(N, L), 0.0);
-    float shadow = ComputeShadow(inWorldPos, N, L);
+    // Terrain wants ~4x bias (sharp heightmap slopes) + a larger receiver-bias clamp.
+    int cascade;
+    float shadow = SampleShadow(inWorldPos, N, L, 4.0, 0.02, cascade);
 
     vec3 diffuse = lighting.lights[0].color.xyz * lighting.lights[0].color.w
                  * NdotL * shadow * albedo.rgb;
@@ -236,5 +156,5 @@ void main()
     }
 
     vec3 finalColor = ambient + diffuse + specular + pointContrib;
-    outColor = vec4(finalColor, 1.0);
+    outColor = vec4(ApplyCascadeDebug(finalColor, cascade), 1.0);
 }

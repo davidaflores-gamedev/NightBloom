@@ -89,7 +89,7 @@ message(STATUS "Found shaders: ${SHADER_SOURCES}")
             get_filename_component(SHADER_NAME ${SHADER} NAME)
             add_custom_command(TARGET NightbloomEditor POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:NightbloomEditor>/Shaders"
-                COMMAND ${GLSLC} "${SHADER}" -o "$<TARGET_FILE_DIR:NightbloomEditor>/Shaders/${SHADER_NAME}.spv"
+                COMMAND ${GLSLC} "${SHADER}" -I "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Include" -o "$<TARGET_FILE_DIR:NightbloomEditor>/Shaders/${SHADER_NAME}.spv"
                 COMMENT "Compiling shader ${SHADER_NAME}"
                 VERBATIM
             )
