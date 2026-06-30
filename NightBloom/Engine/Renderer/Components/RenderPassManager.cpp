@@ -19,7 +19,22 @@ namespace Nightbloom
 		m_MemoryManager = memoryManager;
 		m_HasDepth = true;
 		m_SampleCount = sampleCount;
-		m_SceneColorFormat = swapchain->GetImageFormat();
+
+		// Offscreen scene-color target is a LINEAR HDR float format, NOT the swapchain's
+		// 8-bit sRGB format. This is the foundation for tonemapping/bloom: lighting can now
+		// produce values >1.0 (bright moonlight, fireflies, speculars) that survive to the
+		// post-process pass instead of being clamped to [0,1] on write. The post-process pass
+		// applies exposure + ACES tonemap and writes to the sRGB swapchain, which does the
+		// final linear->sRGB encode in hardware.
+		//
+		// B10G11R11 (32bpp, no alpha — we don't need alpha in the scene target) over
+		// RGBA16F (64bpp) deliberately: a prior session measured RGBA16F doubling per-fragment
+		// write bandwidth and amplifying the grass-overdraw perf wall (~80->20 fps looking down
+		// at dense grass). If this format ever fails validation (blend/MSAA-resolve support is
+		// near-universal on desktop but not spec-guaranteed), fall back to
+		// VK_FORMAT_R16G16B16A16_SFLOAT — same plumbing, just heavier. The reflection target
+		// shares this format, so render-pass compatibility with the shared scene pipelines holds.
+		m_SceneColorFormat = VK_FORMAT_B10G11R11_UFLOAT_PACK32;
 
 		// Create depth resources first (needed for render pass creation to know format)
 		if (m_HasDepth)
@@ -92,6 +107,15 @@ namespace Nightbloom
 			return false;
 		}
 
+		// Bloom (half-res HDR ping-pong targets, sampled by the post-process composite).
+		if (!CreateBloomRenderPass(device, m_SceneColorFormat) ||
+			!CreateBloomResources(device, m_SceneColorFormat, swapchain->GetExtent()))
+		{
+			LOG_ERROR("Failed to create bloom resources");
+			Cleanup(device);
+			return false;
+		}
+
 		LOG_INFO("Render pass manager initialized ({} post-process framebuffers, depth: {})",
 			m_PostProcessFramebuffers.size(), m_HasDepth);
 		return true;
@@ -99,6 +123,13 @@ namespace Nightbloom
 
 	void RenderPassManager::Cleanup(VkDevice device)
 	{
+		DestroyBloomResources(device);
+		if (m_BloomRenderPass != VK_NULL_HANDLE)
+		{
+			vkDestroyRenderPass(device, m_BloomRenderPass, nullptr);
+			m_BloomRenderPass = VK_NULL_HANDLE;
+		}
+
 		DestroyReflectionFramebuffer(device);
 		DestroyReflectionResources(device);
 
@@ -176,6 +207,16 @@ namespace Nightbloom
 		if (!CreateReflectionFramebuffer(device, swapchain->GetExtent()))
 		{
 			LOG_ERROR("Failed to recreate reflection framebuffer");
+			return false;
+		}
+
+		// Bloom targets are half the swapchain extent — recreate them too. The render pass is
+		// resolution-independent, so it's kept. The Renderer must re-point its bloom descriptor
+		// sets at the new image views afterward (see Renderer resize handling).
+		DestroyBloomResources(device);
+		if (!CreateBloomResources(device, m_SceneColorFormat, swapchain->GetExtent()))
+		{
+			LOG_ERROR("Failed to recreate bloom resources");
 			return false;
 		}
 
@@ -620,6 +661,167 @@ namespace Nightbloom
 			}
 		}
 		m_PostProcessFramebuffers.clear();
+	}
+
+	bool RenderPassManager::CreateBloomRenderPass(VkDevice device, VkFormat colorFormat)
+	{
+		// Color-only, single-sample. Every bloom sub-pass (extract + both blurs) overwrites
+		// the whole target via a full-screen triangle, so loadOp = DONT_CARE. Final layout is
+		// SHADER_READ so the next sub-pass / the composite can sample it directly.
+		VkAttachmentDescription colorAttachment{};
+		colorAttachment.format = colorFormat;
+		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		VkAttachmentReference colorRef{};
+		colorRef.attachment = 0;
+		colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		VkSubpassDescription subpass{};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &colorRef;
+
+		// Order the sequential sub-passes that ping-pong A<->B: (0) a prior fragment-shader
+		// read of this image must complete before we write it again; (1) our color write must
+		// complete before the next pass (or the post-process composite) samples it.
+		VkSubpassDependency deps[2]{};
+		deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+		deps[0].dstSubpass = 0;
+		deps[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		deps[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		deps[1].srcSubpass = 0;
+		deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+		deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		VkRenderPassCreateInfo rpInfo{};
+		rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		rpInfo.attachmentCount = 1;
+		rpInfo.pAttachments = &colorAttachment;
+		rpInfo.subpassCount = 1;
+		rpInfo.pSubpasses = &subpass;
+		rpInfo.dependencyCount = 2;
+		rpInfo.pDependencies = deps;
+
+		if (vkCreateRenderPass(device, &rpInfo, nullptr, &m_BloomRenderPass) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create bloom render pass");
+			return false;
+		}
+		LOG_INFO("Bloom render pass created");
+		return true;
+	}
+
+	bool RenderPassManager::CreateBloomResources(VkDevice device, VkFormat colorFormat, VkExtent2D fullExtent)
+	{
+		if (!m_MemoryManager)
+		{
+			LOG_ERROR("Memory manager not set - cannot create bloom resources");
+			return false;
+		}
+
+		// Half resolution — cheaper and naturally softer; the blur spans fewer texels.
+		m_BloomExtent.width  = (fullExtent.width  > 1) ? fullExtent.width  / 2 : 1;
+		m_BloomExtent.height = (fullExtent.height > 1) ? fullExtent.height / 2 : 1;
+
+		auto createTarget = [&](VkImage& img, VkImageView& view, void*& alloc) -> bool
+		{
+			VulkanMemoryManager::ImageCreateInfo info{};
+			info.width = m_BloomExtent.width;
+			info.height = m_BloomExtent.height;
+			info.format = colorFormat;
+			info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+			info.memoryUsage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+			info.samples = VK_SAMPLE_COUNT_1_BIT;
+
+			auto* a = m_MemoryManager->CreateImage(info);
+			if (!a) return false;
+			alloc = a;
+			img = a->image;
+
+			VkImageViewCreateInfo vi{};
+			vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			vi.image = img;
+			vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			vi.format = colorFormat;
+			vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			vi.subresourceRange.baseMipLevel = 0;
+			vi.subresourceRange.levelCount = 1;
+			vi.subresourceRange.baseArrayLayer = 0;
+			vi.subresourceRange.layerCount = 1;
+			return vkCreateImageView(device, &vi, nullptr, &view) == VK_SUCCESS;
+		};
+
+		if (!createTarget(m_BloomImageA, m_BloomImageViewA, m_BloomAllocationA))
+		{
+			LOG_ERROR("Failed to create bloom target A");
+			return false;
+		}
+		if (!createTarget(m_BloomImageB, m_BloomImageViewB, m_BloomAllocationB))
+		{
+			LOG_ERROR("Failed to create bloom target B");
+			return false;
+		}
+
+		// Linear filtering (the blur and the composite upscale rely on it), clamp-to-edge
+		// so blur taps near the border don't wrap.
+		VkSamplerCreateInfo si{};
+		si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		si.magFilter = VK_FILTER_LINEAR;
+		si.minFilter = VK_FILTER_LINEAR;
+		si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		si.maxLod = 0.0f;
+		if (vkCreateSampler(device, &si, nullptr, &m_BloomSampler) != VK_SUCCESS)
+		{
+			LOG_ERROR("Failed to create bloom sampler");
+			return false;
+		}
+
+		auto createFB = [&](VkImageView view, VkFramebuffer& fb) -> bool
+		{
+			VkFramebufferCreateInfo fi{};
+			fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			fi.renderPass = m_BloomRenderPass;
+			fi.attachmentCount = 1;
+			fi.pAttachments = &view;
+			fi.width = m_BloomExtent.width;
+			fi.height = m_BloomExtent.height;
+			fi.layers = 1;
+			return vkCreateFramebuffer(device, &fi, nullptr, &fb) == VK_SUCCESS;
+		};
+		if (!createFB(m_BloomImageViewA, m_BloomFramebufferA) ||
+			!createFB(m_BloomImageViewB, m_BloomFramebufferB))
+		{
+			LOG_ERROR("Failed to create bloom framebuffer(s)");
+			return false;
+		}
+
+		LOG_INFO("Bloom resources created: {}x{}", m_BloomExtent.width, m_BloomExtent.height);
+		return true;
+	}
+
+	void RenderPassManager::DestroyBloomResources(VkDevice device)
+	{
+		if (m_BloomFramebufferA != VK_NULL_HANDLE) { vkDestroyFramebuffer(device, m_BloomFramebufferA, nullptr); m_BloomFramebufferA = VK_NULL_HANDLE; }
+		if (m_BloomFramebufferB != VK_NULL_HANDLE) { vkDestroyFramebuffer(device, m_BloomFramebufferB, nullptr); m_BloomFramebufferB = VK_NULL_HANDLE; }
+		if (m_BloomSampler != VK_NULL_HANDLE) { vkDestroySampler(device, m_BloomSampler, nullptr); m_BloomSampler = VK_NULL_HANDLE; }
+		if (m_BloomImageViewA != VK_NULL_HANDLE) { vkDestroyImageView(device, m_BloomImageViewA, nullptr); m_BloomImageViewA = VK_NULL_HANDLE; }
+		if (m_BloomImageViewB != VK_NULL_HANDLE) { vkDestroyImageView(device, m_BloomImageViewB, nullptr); m_BloomImageViewB = VK_NULL_HANDLE; }
+		if (m_BloomAllocationA && m_MemoryManager) { m_MemoryManager->DestroyImage(static_cast<VulkanMemoryManager::ImageAllocation*>(m_BloomAllocationA)); m_BloomAllocationA = nullptr; m_BloomImageA = VK_NULL_HANDLE; }
+		if (m_BloomAllocationB && m_MemoryManager) { m_MemoryManager->DestroyImage(static_cast<VulkanMemoryManager::ImageAllocation*>(m_BloomAllocationB)); m_BloomAllocationB = nullptr; m_BloomImageB = VK_NULL_HANDLE; }
 	}
 
 	bool RenderPassManager::CreateReflectionRenderPass(VkDevice device, VkFormat colorFormat)

@@ -719,6 +719,14 @@ namespace Nightbloom
 			return false;
 		}
 
+		// Bloom reuses the post-process full-screen-triangle vertex shader.
+		if (!m_Resources->LoadShader("bloom_frag", ShaderStage::Fragment, "Bloom.frag"))
+		{
+			LOG_ERROR("Failed to load bloom fragment shader");
+			return false;
+		}
+
+
 		if (!m_Resources->LoadShader("water_vert", ShaderStage::Vertex, "Water.vert"))
 		{
 			LOG_WARN("Failed to load water vertex shader - continuing without water pipeline");
@@ -1452,14 +1460,15 @@ namespace Nightbloom
 				postProcessConfig.depthWriteEnable = false;
 				postProcessConfig.blendEnable = false;
 
-				// Descriptor sets: 0=scene-color sampler (only input this pass needs)
+				// Descriptor sets: 0 = scene-color sampler, 1 = bloom result sampler.
 				postProcessConfig.usePostProcessInput = true;
+				postProcessConfig.useBloomInput = true;
 
-				// AA on/off toggle (Debug Panel) — bypasses this entirely
-				// independent of CommandRecorder's shared PushConstantData,
-				// since this pass is recorded directly (see RecordPostProcessPass),
-				// not through the normal per-draw-command path.
-				postProcessConfig.pushConstantSize = sizeof(int);
+				// Tone-mapping / grading params (Debug Panel). 20 bytes: (int aaEnabled,
+				// int tonemapEnabled, float exposure, float vignetteStrength, float bloomIntensity).
+				// This pass is recorded directly (see RecordPostProcessPass), independent of
+				// CommandRecorder's shared PushConstantData, so the size is local to it.
+				postProcessConfig.pushConstantSize = 5 * sizeof(float);  // 5x 4-byte = 20 bytes
 				postProcessConfig.pushConstantStages = ShaderStage::Fragment;
 
 				if (m_PipelineAdapter->CreatePipeline(PipelineType::PostProcess, postProcessConfig))
@@ -1487,6 +1496,59 @@ namespace Nightbloom
 			else
 			{
 				LOG_ERROR("PostProcess shaders not found - nothing will reach the screen");
+				return false;
+			}
+		}
+
+		// ---- Bloom pipeline (bright-extract + separable blur) -------------------------
+		{
+			VulkanShader* bloomVert = m_Resources->GetShader("postprocess_vert");  // shared full-screen triangle
+			VulkanShader* bloomFrag = m_Resources->GetShader("bloom_frag");
+			if (bloomVert && bloomFrag)
+			{
+				m_PipelineAdapter->SetBloomRenderPass(m_RenderPasses->GetBloomRenderPass());
+
+				PipelineConfig bloomConfig;
+				bloomConfig.vertexShader = bloomVert;
+				bloomConfig.fragmentShader = bloomFrag;
+				bloomConfig.useVertexInput = false;
+				bloomConfig.topology = PrimitiveTopology::TriangleList;
+				bloomConfig.polygonMode = PolygonMode::Fill;
+				bloomConfig.cullMode = CullMode::None;
+				bloomConfig.frontFace = FrontFace::CounterClockwise;
+				bloomConfig.depthTestEnable = false;
+				bloomConfig.depthWriteEnable = false;
+				bloomConfig.blendEnable = false;
+				bloomConfig.usePostProcessInput = true;   // set 0 = single input sampler (scene or a bloom target)
+				// push: vec2 direction + float threshold + int mode = 16 bytes
+				bloomConfig.pushConstantSize = 4 * sizeof(float);
+				bloomConfig.pushConstantStages = ShaderStage::Fragment;
+
+				if (!m_PipelineAdapter->CreatePipeline(PipelineType::Bloom, bloomConfig))
+				{
+					LOG_ERROR("Failed to create bloom pipeline");
+					return false;
+				}
+				LOG_INFO("Bloom pipeline created successfully");
+
+				// Two sampler sets (single-sampler shape, reused from the post-process input
+				// layout): A -> bloom target A, B -> bloom target B. A also serves as set 1 of
+				// the post-process composite. Re-pointed in HandleSwapchainResize.
+				m_BloomSetA = m_DescriptorManager->AllocatePostProcessInputSet();
+				m_BloomSetB = m_DescriptorManager->AllocatePostProcessInputSet();
+				if (m_BloomSetA == VK_NULL_HANDLE || m_BloomSetB == VK_NULL_HANDLE)
+				{
+					LOG_ERROR("Failed to allocate bloom descriptor sets");
+					return false;
+				}
+				m_DescriptorManager->UpdatePostProcessInputSet(m_BloomSetA,
+					m_RenderPasses->GetBloomImageViewA(), m_RenderPasses->GetBloomSampler());
+				m_DescriptorManager->UpdatePostProcessInputSet(m_BloomSetB,
+					m_RenderPasses->GetBloomImageViewB(), m_RenderPasses->GetBloomSampler());
+			}
+			else
+			{
+				LOG_ERROR("Bloom shaders not found");
 				return false;
 			}
 		}
@@ -1839,6 +1901,17 @@ namespace Nightbloom
 		if (m_GpuProfiler) m_GpuProfiler->EndScope(profCmd, sceneScope);
 
 		// =========================================================================
+		// BLOOM PASS - bright-extract + separable blur of the HDR scene color into
+		// the half-res bloom targets, which the post-process composite adds back.
+		// Runs every frame (cost is small); strength is the bloomIntensity param.
+		// =========================================================================
+		{
+			uint32_t bloomScope = m_GpuProfiler ? m_GpuProfiler->BeginScope(profCmd, "Bloom") : UINT32_MAX;
+			RecordBloomPass(frameIndex);
+			if (m_GpuProfiler) m_GpuProfiler->EndScope(profCmd, bloomScope);
+		}
+
+		// =========================================================================
 		// POST-PROCESS PASS - samples the scene-color texture, runs FXAA, and
 		// writes the actual swapchain image. UI renders after this, directly
 		// on the swapchain target, so it isn't blurred by the AA filter.
@@ -2112,6 +2185,69 @@ namespace Nightbloom
 	}
 
 	// =====================================================================
+	// RecordBloomPass — bright-extract the HDR scene color into half-res
+	// target A, then a separable Gaussian blur (A->B horizontal, B->A
+	// vertical). The post-process composite then adds target A back into the
+	// scene before tonemapping. One pipeline (PipelineType::Bloom) run three
+	// times with a push-constant mode, recorded directly like the other
+	// fixed full-screen passes. The bloom render pass's two subpass
+	// dependencies serialize the A<->B ping-pong.
+	// =====================================================================
+	void Renderer::RecordBloomPass(uint32_t frameIndex)
+	{
+		if (!m_RenderPasses || m_PostProcessInputSet == VK_NULL_HANDLE) return;
+
+		VkExtent2D extent = m_RenderPasses->GetBloomExtent();
+		if (extent.width == 0 || extent.height == 0) return;
+
+		VkCommandBuffer cmd = m_Commands->GetCommandBuffer(frameIndex);
+		VkPipelineLayout layout = m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::Bloom);
+
+		VkViewport viewport{};
+		viewport.x = 0.0f; viewport.y = 0.0f;
+		viewport.width = static_cast<float>(extent.width);
+		viewport.height = static_cast<float>(extent.height);
+		viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 };
+		scissor.extent = extent;
+
+		// Matches PushConstants in Bloom.frag: vec2 direction, float threshold, int mode.
+		struct BloomPush { float dirX; float dirY; float threshold; int mode; };
+
+		auto runPass = [&](VkFramebuffer fb, VkDescriptorSet inputSet, const BloomPush& p)
+		{
+			VkRenderPassBeginInfo rp{};
+			rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+			rp.renderPass = m_RenderPasses->GetBloomRenderPass();
+			rp.framebuffer = fb;
+			rp.renderArea.offset = { 0, 0 };
+			rp.renderArea.extent = extent;
+			rp.clearValueCount = 0;   // loadOp = DONT_CARE; the full-screen triangle overwrites all
+			rp.pClearValues = nullptr;
+
+			vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+			vkCmdSetViewport(cmd, 0, 1, &viewport);
+			vkCmdSetScissor(cmd, 0, 1, &scissor);
+			m_PipelineAdapter->BindPipeline(cmd, PipelineType::Bloom);
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &inputSet, 0, nullptr);
+			vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(BloomPush), &p);
+			vkCmdDraw(cmd, 3, 1, 0, 0);
+			vkCmdEndRenderPass(cmd);
+		};
+
+		const float threshold = m_PostProcessSettings.bloomThreshold;
+
+		// 1) Bright extract + downsample: scene color -> A
+		runPass(m_RenderPasses->GetBloomFramebufferA(), m_PostProcessInputSet, BloomPush{ 0.0f, 0.0f, threshold, 0 });
+		// 2) Horizontal blur: A -> B
+		runPass(m_RenderPasses->GetBloomFramebufferB(), m_BloomSetA, BloomPush{ 1.0f, 0.0f, threshold, 1 });
+		// 3) Vertical blur: B -> A  (A is then sampled by the post-process composite)
+		runPass(m_RenderPasses->GetBloomFramebufferA(), m_BloomSetB, BloomPush{ 0.0f, 1.0f, threshold, 1 });
+	}
+
+	// =====================================================================
 	// RecordPostProcessPass — samples the scene-color texture rendered by
 	// the scene pass, runs FXAA, and writes the swapchain image. A single
 	// fixed full-screen draw, not a DrawList entry, so this is recorded
@@ -2152,16 +2288,32 @@ namespace Nightbloom
 		scissor.extent = extent;
 		vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-		if (m_PostProcessInputSet != VK_NULL_HANDLE)
+		if (m_PostProcessInputSet != VK_NULL_HANDLE && m_BloomSetA != VK_NULL_HANDLE)
 		{
 			m_PipelineAdapter->BindPipeline(cmd, PipelineType::PostProcess);
 
 			VkPipelineLayout layout = m_PipelineAdapter->GetVulkanManager()->GetPipelineLayout(PipelineType::PostProcess);
+			// set 0 = scene color, set 1 = bloom result (target A, after blur V).
+			VkDescriptorSet sets[2] = { m_PostProcessInputSet, m_BloomSetA };
 			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
-				0, 1, &m_PostProcessInputSet, 0, nullptr);
+				0, 2, sets, 0, nullptr);
 
-			int aaEnabled = m_PostProcessAAEnabled ? 1 : 0;
-			vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(int), &aaEnabled);
+			// Must match PushConstants in PostProcess.frag (std430 scalar layout):
+			// (int aaEnabled, int tonemapEnabled, float exposure, float vignetteStrength, float bloomIntensity).
+			struct PostProcessPush
+			{
+				int   aaEnabled;
+				int   tonemapEnabled;
+				float exposure;
+				float vignetteStrength;
+				float bloomIntensity;
+			} push;
+			push.aaEnabled        = m_PostProcessSettings.aaEnabled ? 1 : 0;
+			push.tonemapEnabled   = m_PostProcessSettings.tonemapEnabled ? 1 : 0;
+			push.exposure         = m_PostProcessSettings.exposure;
+			push.vignetteStrength = m_PostProcessSettings.vignetteStrength;
+			push.bloomIntensity   = m_PostProcessSettings.bloomIntensity;
+			vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
 
 			vkCmdDraw(cmd, 3, 1, 0, 0);
 		}
@@ -2230,6 +2382,14 @@ namespace Nightbloom
 			m_DescriptorManager->UpdatePostProcessInputSet(m_PostProcessInputSet,
 				m_RenderPasses->GetSceneColorImageView(), m_RenderPasses->GetSceneColorSampler());
 		}
+
+		// Bloom targets were recreated at the new half-extent — re-point their sampler sets.
+		if (m_BloomSetA != VK_NULL_HANDLE)
+			m_DescriptorManager->UpdatePostProcessInputSet(m_BloomSetA,
+				m_RenderPasses->GetBloomImageViewA(), m_RenderPasses->GetBloomSampler());
+		if (m_BloomSetB != VK_NULL_HANDLE)
+			m_DescriptorManager->UpdatePostProcessInputSet(m_BloomSetB,
+				m_RenderPasses->GetBloomImageViewB(), m_RenderPasses->GetBloomSampler());
 
 		// Reflection target was recreated too — re-point the water's sampler set.
 		if (m_ReflectionInputSet != VK_NULL_HANDLE)

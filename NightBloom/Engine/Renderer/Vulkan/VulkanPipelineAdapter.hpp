@@ -167,6 +167,11 @@ namespace Nightbloom
 			m_PostProcessRenderPass = postProcessRenderPass;
 		}
 
+		void SetBloomRenderPass(VkRenderPass bloomRenderPass)
+		{
+			m_BloomRenderPass = bloomRenderPass;
+		}
+
 		// MSAA sample count of the offscreen scene pass — applied to every
 		// scene-pass pipeline so its rasterizationSamples matches the render
 		// pass. The shadow and post-process passes are single-sample and are
@@ -228,12 +233,18 @@ namespace Nightbloom
 				vkConfig.renderPass = m_PostProcessRenderPass;
 			}
 
+			if (type == PipelineType::Bloom && m_BloomRenderPass != VK_NULL_HANDLE)
+			{
+				vkConfig.renderPass = m_BloomRenderPass;
+			}
+
 			// MSAA sample count: scene-pass pipelines match the scene render
-			// pass; the shadow and post-process passes are single-sample.
+			// pass; the shadow, post-process and bloom passes are single-sample.
 			const bool singleSamplePass =
 				type == PipelineType::Shadow ||
 				type == PipelineType::TerrainShadow ||
 				type == PipelineType::PostProcess ||
+				type == PipelineType::Bloom ||
 				type == PipelineType::Compute;
 			vkConfig.rasterizationSamples = singleSamplePass ? VK_SAMPLE_COUNT_1_BIT : m_SampleCount;
 
@@ -284,6 +295,15 @@ namespace Nightbloom
 			{
 				VkDescriptorSetLayout postProcessInputLayout = m_DescriptorManager->GetPostProcessInputSetLayout();
 				vkConfig.descriptorSetLayouts.push_back(postProcessInputLayout);
+			}
+
+			// Bloom result as a SECOND single-sampler set for the post-process composite. Pushed
+			// right after usePostProcessInput so it lands at set 1 (scene = set 0, bloom = set 1).
+			// Reuses the post-process input layout shape (one combined image sampler, fragment).
+			if (config.useBloomInput && m_DescriptorManager)
+			{
+				VkDescriptorSetLayout bloomInputLayout = m_DescriptorManager->GetPostProcessInputSetLayout();
+				vkConfig.descriptorSetLayouts.push_back(bloomInputLayout);
 			}
 
 			if (config.useLighting && m_DescriptorManager)
@@ -388,6 +408,7 @@ namespace Nightbloom
 		VkRenderPass m_DefaultRenderPass = VK_NULL_HANDLE;
 		VkRenderPass m_ShadowRenderPass = VK_NULL_HANDLE;
 		VkRenderPass m_PostProcessRenderPass = VK_NULL_HANDLE;
+		VkRenderPass m_BloomRenderPass = VK_NULL_HANDLE;
 		VkSampleCountFlagBits m_SampleCount = VK_SAMPLE_COUNT_1_BIT;
 
 

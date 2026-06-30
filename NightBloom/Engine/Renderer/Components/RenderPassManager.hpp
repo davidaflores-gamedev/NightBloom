@@ -67,6 +67,17 @@ namespace Nightbloom
 			return (index < m_PostProcessFramebuffers.size()) ? m_PostProcessFramebuffers[index] : VK_NULL_HANDLE;
 		}
 
+		// Bloom — two half-res HDR ping-pong targets sharing one color-only render pass.
+		// Pipeline: bright-extract (scene -> A), blur H (A -> B), blur V (B -> A); the
+		// post-process pass then composites A into the tonemap. See Renderer::RecordBloomPass.
+		VkRenderPass GetBloomRenderPass() const { return m_BloomRenderPass; }
+		VkFramebuffer GetBloomFramebufferA() const { return m_BloomFramebufferA; }
+		VkFramebuffer GetBloomFramebufferB() const { return m_BloomFramebufferB; }
+		VkImageView GetBloomImageViewA() const { return m_BloomImageViewA; }
+		VkImageView GetBloomImageViewB() const { return m_BloomImageViewB; }
+		VkSampler GetBloomSampler() const { return m_BloomSampler; }
+		VkExtent2D GetBloomExtent() const { return m_BloomExtent; }
+
 		bool HasDepthBuffer() const { return m_HasDepth; }
 
 		// MSAA sample count of the scene pass (1 = no MSAA). Scene-pass
@@ -123,6 +134,21 @@ namespace Nightbloom
 		VkRenderPass m_PostProcessRenderPass = VK_NULL_HANDLE;
 		std::vector<VkFramebuffer> m_PostProcessFramebuffers;
 
+		// Bloom ping-pong targets — half-res, HDR (= m_SceneColorFormat), single-sample.
+		// One render pass (color-only, final layout SHADER_READ) reused for all three
+		// bloom sub-passes; A and B alternate as render target / sampled input.
+		VkRenderPass m_BloomRenderPass = VK_NULL_HANDLE;
+		VkExtent2D m_BloomExtent = { 0, 0 };
+		VkImage m_BloomImageA = VK_NULL_HANDLE;
+		VkImageView m_BloomImageViewA = VK_NULL_HANDLE;
+		void* m_BloomAllocationA = nullptr;
+		VkImage m_BloomImageB = VK_NULL_HANDLE;
+		VkImageView m_BloomImageViewB = VK_NULL_HANDLE;
+		void* m_BloomAllocationB = nullptr;
+		VkSampler m_BloomSampler = VK_NULL_HANDLE;
+		VkFramebuffer m_BloomFramebufferA = VK_NULL_HANDLE;
+		VkFramebuffer m_BloomFramebufferB = VK_NULL_HANDLE;
+
 		bool m_HasDepth = false;
 		VkImage m_DepthImage = VK_NULL_HANDLE;
 		VkImageView m_DepthImageView = VK_NULL_HANDLE;
@@ -142,6 +168,12 @@ namespace Nightbloom
 		bool CreatePostProcessRenderPass(VkDevice device, VkFormat colorFormat);
 		bool CreatePostProcessFramebuffers(VkDevice device, VulkanSwapchain* swapchain);
 		void DestroyPostProcessFramebuffers(VkDevice device);
+
+		// Bloom helpers. CreateBloomResources builds both images/views, the shared sampler,
+		// and both framebuffers at half of `extent`. The render pass is created once.
+		bool CreateBloomRenderPass(VkDevice device, VkFormat colorFormat);
+		bool CreateBloomResources(VkDevice device, VkFormat colorFormat, VkExtent2D fullExtent);
+		void DestroyBloomResources(VkDevice device);
 
 		// Reflection target helpers (single-sample color + depth, sampled by water)
 		bool CreateReflectionRenderPass(VkDevice device, VkFormat colorFormat);

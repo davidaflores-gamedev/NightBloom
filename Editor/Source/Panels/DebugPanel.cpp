@@ -79,9 +79,33 @@ namespace Nightbloom
         ImGui::Text("Post-Process");
         if (ctx.renderer)
         {
-            bool aaEnabled = ctx.renderer->IsPostProcessAAEnabled();
-            if (ImGui::Checkbox("Anti-Aliasing (FXAA)", &aaEnabled))
-                ctx.renderer->SetPostProcessAAEnabled(aaEnabled);
+            auto& pp = ctx.renderer->GetPostProcessSettings();
+
+            ImGui::Checkbox("Tonemap (ACES)", &pp.tonemapEnabled);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Filmic HDR->display curve. Off = hard clamp to [0,1].\n"
+                                  "The scene renders to a linear HDR target, so values >1\n"
+                                  "(moonlight, speculars, fireflies) now compress instead of clipping.");
+
+            ImGui::SliderFloat("Exposure", &pp.exposure, 0.1f, 4.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Linear exposure multiplier applied before the tonemap.");
+
+            ImGui::SliderFloat("Vignette", &pp.vignetteStrength, 0.0f, 1.0f, "%.2f");
+
+            ImGui::Spacing();
+            ImGui::SliderFloat("Bloom Intensity", &pp.bloomIntensity, 0.0f, 2.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Additive glow strength. 0 = off. Bloom is added in HDR\n"
+                                  "before tonemap, so bright sources (fireflies, moonlight,\n"
+                                  "speculars) bleed naturally into surrounding pixels.");
+            ImGui::SliderFloat("Bloom Threshold", &pp.bloomThreshold, 0.0f, 3.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Luma above which a pixel blooms (HDR units). ~1.0 means\n"
+                                  "only above-white pixels glow; lower for a dreamier look.");
+
+            ImGui::Spacing();
+            ImGui::Checkbox("Anti-Aliasing (FXAA)", &pp.aaEnabled);
             ImGui::TextDisabled("Toggle to compare edge softening in the same view.");
         }
 

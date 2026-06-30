@@ -127,8 +127,24 @@ namespace Nightbloom
 
 		// Shadow controls
 		bool IsShadowEnabled() const { return m_ShadowEnabled; }
-		bool IsPostProcessAAEnabled() const { return m_PostProcessAAEnabled; }
-		void SetPostProcessAAEnabled(bool enabled) { m_PostProcessAAEnabled = enabled; }
+		// Post-process / tone-mapping controls. The scene renders into a linear HDR target;
+		// the post-process pass applies exposure + ACES tonemap + vignette (+ FXAA) and writes
+		// the sRGB swapchain. Edited live from the Debug panel via the mutable getter.
+		struct PostProcessSettings
+		{
+			bool  aaEnabled        = true;   // FXAA edge-aware AA
+			bool  tonemapEnabled   = true;   // ACES filmic tonemap (off = hard clamp)
+			float exposure         = 1.0f;   // linear exposure multiplier (pre-tonemap)
+			float vignetteStrength = 0.25f;  // 0 = off
+			float bloomIntensity   = 0.8f;   // additive bloom strength (0 = off)
+			float bloomThreshold   = 0.8f;   // luma above this blooms (lower = more of the scene glows)
+		};
+		PostProcessSettings& GetPostProcessSettings() { return m_PostProcessSettings; }
+		const PostProcessSettings& GetPostProcessSettings() const { return m_PostProcessSettings; }
+
+		// Back-compat wrappers for the existing AA toggle.
+		bool IsPostProcessAAEnabled() const { return m_PostProcessSettings.aaEnabled; }
+		void SetPostProcessAAEnabled(bool enabled) { m_PostProcessSettings.aaEnabled = enabled; }
 		void SetShadowEnabled(bool enabled) { m_ShadowEnabled = enabled; }
 		void SetShadowCenter(const glm::vec3& center) { m_ShadowCenter = center; }
 		void SetShadowConfig(const ShadowConfig& config) { m_ShadowConfig = config; }
@@ -213,6 +229,13 @@ namespace Nightbloom
 		// re-updated in HandleSwapchainResize since the texture is recreated then.
 		VkDescriptorSet m_PostProcessInputSet = VK_NULL_HANDLE;
 
+		// Bloom sampler sets (same single-sampler shape as the post-process input).
+		// A points at the bloom A target, B at B. Used as the input set for the bloom
+		// sub-passes and, for A, as set 1 of the post-process composite. Re-pointed on
+		// swapchain resize since the bloom targets are recreated then.
+		VkDescriptorSet m_BloomSetA = VK_NULL_HANDLE;
+		VkDescriptorSet m_BloomSetB = VK_NULL_HANDLE;
+
 		//Compute support
 		bool m_ComputeEnabled = false;
 		VkDescriptorSet m_ComputeTestDescriptorSet = VK_NULL_HANDLE;
@@ -234,7 +257,7 @@ namespace Nightbloom
 		// Shadow state
 		bool m_ShadowEnabled = true;
 		bool m_DebugCascadeTint = false;  // CSM cascade visualization (set 0=red,1=green,2=blue)
-		bool m_PostProcessAAEnabled = true;
+		PostProcessSettings m_PostProcessSettings;
 		glm::vec3 m_ShadowCenter = glm::vec3(0.0f);
 		ShadowConfig m_ShadowConfig;
 
@@ -267,6 +290,7 @@ namespace Nightbloom
 		void RecordComputePass(uint32_t frameIndex);
 		void RecordShadowPass(uint32_t frameIndex);
 		void RecordReflectionPass(uint32_t frameIndex);
+		void RecordBloomPass(uint32_t frameIndex);   // bright-extract + separable blur into the bloom targets
 		void RecordPostProcessPass(uint32_t frameIndex, uint32_t imageIndex);
 		void UpdateShadowMatrices();
 		bool HandleSwapchainResize();

@@ -1,20 +1,24 @@
 //------------------------------------------------------------------------------
 // PostProcess.frag
 //
-// Simplified edge-aware anti-aliasing, not canonical FXAA (self-contained —
-// this codebase has no shared .glsl include mechanism, see .claude/
-// CLAUDE.md). Detect local luma contrast to find edges, box-blur (center +
-// 4 neighbors) only those pixels, blended in by edge strength. A real
-// directional single-sample variant was tried first and abandoned — it had
-// a sign/orientation bug that made it replace a pixel with a neighbor's
-// color instead of averaging them, producing no visible softening despite
-// edge detection itself working correctly (confirmed via a debug overlay
-// that painted detected edges red — they traced grass/terrain/cloud
-// silhouettes correctly, so the bug was in the blend step, not detection).
-// This cruder box-blur has no directionality to get wrong.
+// Final composite of the HDR scene into the sRGB swapchain. In order:
+//   1. FXAA-style edge-aware box blur (toggle) — see the AA notes below.
+//   2. Additive bloom composite (the half-res blurred bright-pass result),
+//      added in LINEAR HDR before tonemapping so highlights bleed naturally.
+//   3. Exposure multiply -> ACES filmic tonemap (toggle; off = hard clamp).
+//   4. Vignette.
+// The scene target is linear HDR (B10G11R11), so samples here can exceed 1.0;
+// the sRGB swapchain applies the display OETF on write (no manual gamma).
+//
+// AA note: a directional single-sample variant was tried first and abandoned
+// (it relocated edges instead of averaging — no visible softening); this box
+// blur has no directionality to get wrong. Ideally AA would run post-tonemap
+// on LDR — flagged as a future refinement. See .claude/ROADMAP.md.
 //
 // Descriptor sets:
-//   set 0 - scene-color texture (the scene pass's offscreen render target)
+//   set 0 - scene-color texture (the scene pass's offscreen HDR render target)
+//   set 1 - bloom result (half-res blurred bright-pass, linear HDR)
+// Push constants: aaEnabled, tonemapEnabled, exposure, vignetteStrength, bloomIntensity.
 //------------------------------------------------------------------------------
 #version 450
 
@@ -22,12 +26,17 @@ layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D sceneColor;
+layout(set = 1, binding = 0) uniform sampler2D bloomTex;  // half-res blurred bloom (linear HDR)
 
+// Tone mapping / grading params. Must match PostProcessParams on the C++ side
+// (Renderer::RecordPostProcessPass). Push-constant block = std430 scalar layout.
 layout(push_constant) uniform PushConstants
 {
-    int aaEnabled; // Debug Panel toggle — lets the on/off difference be
-                   // compared live in the same view, since this effect is
-                   // subtle in static screenshots.
+    int   aaEnabled;        // FXAA edge-aware AA on/off
+    int   tonemapEnabled;   // ACES filmic tonemap on/off (off = hard clamp to [0,1])
+    float exposure;         // linear exposure multiplier applied before tonemap
+    float vignetteStrength; // 0 = none; darkens toward frame edges
+    float bloomIntensity;   // additive bloom strength (0 = off)
 } pc;
 
 float Luma(vec3 c)
@@ -35,16 +44,28 @@ float Luma(vec3 c)
     return dot(c, vec3(0.299, 0.587, 0.114));
 }
 
+// ACES filmic tone curve (Narkowicz approximation). Operates on linear HDR and
+// returns linear [0,1]; the sRGB swapchain applies the display OETF on write, so
+// no manual gamma here. Compresses highlights gracefully instead of clipping —
+// the whole reason for the HDR scene target.
+vec3 ACESFilmic(vec3 x)
+{
+    const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
 void main()
 {
+    // The scene-color target is now LINEAR HDR (B10G11R11), so these samples can
+    // exceed 1.0. FXAA runs here on HDR values (acceptable; ideally it would run
+    // post-tonemap on LDR — flagged as a future refinement, AA is already a known
+    // soft spot). The resolved color is then exposure-scaled, tonemapped, and
+    // vignetted before being written to the sRGB swapchain.
     vec3 colorCenter = texture(sceneColor, inUV).rgb;
+    vec3 sceneCol = colorCenter;
 
-    if (pc.aaEnabled == 0)
+    if (pc.aaEnabled != 0)
     {
-        outColor = vec4(colorCenter, 1.0);
-        return;
-    }
-
     vec2 texel = 1.0 / vec2(textureSize(sceneColor, 0));
 
     vec3 colorUp    = texture(sceneColor, inUV + vec2(0.0, texel.y)).rgb;
@@ -62,50 +83,55 @@ void main()
     float lumaMax = max(lumaCenter, max(max(lumaUp, lumaDown), max(lumaLeft, lumaRight)));
     float lumaRange = lumaMax - lumaMin;
 
-    // Skip low-contrast pixels entirely — not an edge, blending here would
-    // just soften detail for no anti-aliasing benefit.
+    // Only blur actual edges; low-contrast interiors pass through unchanged.
     const float kEdgeThresholdMin = 0.0312;
     const float kEdgeThresholdMax = 0.125;
     float threshold = max(kEdgeThresholdMin, lumaMax * kEdgeThresholdMax);
-    if (lumaRange < threshold)
+    if (lumaRange >= threshold)
     {
-        outColor = vec4(colorCenter, 1.0);
-        return;
+        // Widened 9-tap box blur — radius kWideningFactor texels, including
+        // diagonals. See ROADMAP.md for the full FXAA investigation history;
+        // these constants (1.4 / 0.35) are a calm middle point, not final.
+        const float kWideningFactor = 1.4;
+        vec2 wideTexel = texel * kWideningFactor;
+
+        vec3 colorUpLeft    = texture(sceneColor, inUV + vec2(-wideTexel.x,  wideTexel.y)).rgb;
+        vec3 colorUpRight   = texture(sceneColor, inUV + vec2( wideTexel.x,  wideTexel.y)).rgb;
+        vec3 colorDownLeft  = texture(sceneColor, inUV + vec2(-wideTexel.x, -wideTexel.y)).rgb;
+        vec3 colorDownRight = texture(sceneColor, inUV + vec2( wideTexel.x, -wideTexel.y)).rgb;
+        vec3 colorWideUp    = texture(sceneColor, inUV + vec2(0.0,  wideTexel.y)).rgb;
+        vec3 colorWideDown  = texture(sceneColor, inUV + vec2(0.0, -wideTexel.y)).rgb;
+        vec3 colorWideLeft  = texture(sceneColor, inUV + vec2(-wideTexel.x, 0.0)).rgb;
+        vec3 colorWideRight = texture(sceneColor, inUV + vec2( wideTexel.x, 0.0)).rgb;
+
+        vec3 blurred = (colorCenter + colorWideUp + colorWideDown + colorWideLeft + colorWideRight
+            + colorUpLeft + colorUpRight + colorDownLeft + colorDownRight) / 9.0;
+
+        float edgeStrength = clamp(lumaRange / max(lumaMax, 0.0001), 0.0, 1.0);
+        float blendAmount = max(edgeStrength, 0.35);
+        sceneCol = mix(colorCenter, blurred, blendAmount);
+    }
+    } // end FXAA
+
+    // ---- Bloom composite (additive, in linear HDR before tonemap) ----
+    // bloomTex is half-res; the linear sampler upscales it. Adding in HDR (not after
+    // tonemap) is what gives bloom that natural "bleed into highlights" look.
+    if (pc.bloomIntensity > 0.0)
+        sceneCol += texture(bloomTex, inUV).rgb * pc.bloomIntensity;
+
+    // ---- Tone / color grade ----
+    // Exposure in linear HDR, then compress to displayable range. With tonemap
+    // off we just clamp (so HDR still shows *something* sane on the 8-bit output).
+    sceneCol *= pc.exposure;
+    sceneCol = (pc.tonemapEnabled != 0) ? ACESFilmic(sceneCol) : clamp(sceneCol, 0.0, 1.0);
+
+    // Vignette — gentle radial darkening toward the frame edge (display space).
+    if (pc.vignetteStrength > 0.0)
+    {
+        float dist = length(inUV - vec2(0.5));
+        float vig  = 1.0 - pc.vignetteStrength * smoothstep(0.35, 0.85, dist);
+        sceneCol *= vig;
     }
 
-    // Widened 9-tap box blur — radius kWideningFactor texels (not 1), and
-    // including diagonals, not just N/S/E/W. The plain 5-tap version at a
-    // 1-texel radius was mathematically a real blend (confirmed: edge
-    // pixels' colors do change), but at typical screenshot/zoom scrutiny a
-    // single softened pixel next to an otherwise-unchanged neighbor still
-    // reads as "a chunky pixel step", not "a smooth edge". Widening to 2.5
-    // texels/0.7 min blend made the effect clearly visible but noticeably
-    // over-softened the whole image; these constants (1.4 / 0.35) are a
-    // calmer middle point, not a carefully tuned final value — revisit if
-    // it still looks too soft or too weak. See ROADMAP.md for the full
-    // investigation history and open follow-ups (e.g. exposing these as
-    // panel-tunable instead of hardcoded).
-    const float kWideningFactor = 1.4;
-    vec2 wideTexel = texel * kWideningFactor;
-
-    vec3 colorUpLeft    = texture(sceneColor, inUV + vec2(-wideTexel.x,  wideTexel.y)).rgb;
-    vec3 colorUpRight   = texture(sceneColor, inUV + vec2( wideTexel.x,  wideTexel.y)).rgb;
-    vec3 colorDownLeft  = texture(sceneColor, inUV + vec2(-wideTexel.x, -wideTexel.y)).rgb;
-    vec3 colorDownRight = texture(sceneColor, inUV + vec2( wideTexel.x, -wideTexel.y)).rgb;
-    vec3 colorWideUp    = texture(sceneColor, inUV + vec2(0.0,  wideTexel.y)).rgb;
-    vec3 colorWideDown  = texture(sceneColor, inUV + vec2(0.0, -wideTexel.y)).rgb;
-    vec3 colorWideLeft  = texture(sceneColor, inUV + vec2(-wideTexel.x, 0.0)).rgb;
-    vec3 colorWideRight = texture(sceneColor, inUV + vec2( wideTexel.x, 0.0)).rgb;
-
-    vec3 blurred = (colorCenter + colorWideUp + colorWideDown + colorWideLeft + colorWideRight
-        + colorUpLeft + colorUpRight + colorDownLeft + colorDownRight) / 9.0;
-
-    // Once a pixel clears the edge threshold at all, blend it strongly
-    // (at least 70%) rather than scaling all the way down to near-zero for
-    // borderline-contrast edges — borderline edges are exactly the ones
-    // that look "stepped" rather than "thin", so they need the blend too.
-    float edgeStrength = clamp(lumaRange / max(lumaMax, 0.0001), 0.0, 1.0);
-    float blendAmount = max(edgeStrength, 0.35);
-
-    outColor = vec4(mix(colorCenter, blurred, blendAmount), 1.0);
+    outColor = vec4(sceneCol, 1.0);
 }

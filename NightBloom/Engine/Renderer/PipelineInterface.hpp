@@ -131,6 +131,11 @@ namespace Nightbloom
 		                // composite on top of clouds, not the reverse.
 		Firefly,        // Instanced billboard quads, additive blend, agent data from a storage buffer
 
+		Bloom,          // Full-screen bloom sub-pass (bright-extract / separable blur), recorded
+		                // directly by Renderer::RecordBloomPass like PostProcess — never appears in
+		                // a draw list, so the CommandRecorder draw chains don't reference it. One
+		                // pipeline, run 3x with a push-constant mode (extract / blur H / blur V).
+
 		Count
 	};
 
@@ -192,6 +197,7 @@ namespace Nightbloom
 		bool useCloudResult = false;  // Pipeline samples the low-res cloud raymarch result (fragment stage) - the graphics Clouds composite pass's only texture input
 		bool usePostProcessInput = false;  // Pipeline samples the scene-color texture (fragment stage) - the PostProcess/FXAA pass's only texture input
 		bool useReflectionInput = false;  // Pipeline samples the planar-reflection target (fragment stage) - the Water pass; lands last so it's set 2 (after uniform=0, lighting=1)
+		bool useBloomInput = false;  // PostProcess composite samples the bloom result as a SECOND single-sampler set (lands at set 1, after usePostProcessInput's set 0). Reuses the post-process input layout shape.
 
 		bool hasColorAttachment = true;  // False for depth-only passes (shadow)
 
