@@ -2076,8 +2076,23 @@ namespace Nightbloom
 			// Render all shadow-casting geometry from the draw list
 			for (const auto& drawCmd : m_FrameDrawList.GetCommands())
 			{
-				// Skip transparent objects and non-mesh pipelines
-				if (drawCmd.pipeline == PipelineType::Transparent)
+				// Only opaque WORLD geometry casts shadows. Whitelist Mesh + Terrain and
+				// skip everything else. In particular the Water plane (PipelineType::Water)
+				// was being drawn here — a big flat caster that painted a spurious shadow
+				// on the terrain and, because a horizontal plane's shadow-map coverage
+				// swings hard with the light angle, spiked the shadow cost across the
+				// day/night cycle. Foliage/Clouds/Firefly/Transparent are excluded too.
+				if (drawCmd.pipeline != PipelineType::Mesh &&
+					drawCmd.pipeline != PipelineType::Terrain)
+				{
+					continue;
+				}
+
+				// Skip emissive light-source discs (moon/sun): customData.w >= 2.0 flags
+				// an unlit emissive surface (see Mesh.frag). A celestial light source
+				// shouldn't cast shadows, and because it tracks the light its shadow-map
+				// overdraw would otherwise vary with time of day.
+				if (drawCmd.hasPushConstants && drawCmd.pushConstants.customData.w >= 2.0f)
 				{
 					continue;
 				}

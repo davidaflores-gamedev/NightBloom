@@ -27,6 +27,7 @@
 #include "Panels/SceneHierarchyPanel.hpp"
 #include "Panels/InspectorPanel.hpp"
 #include "Panels/LightingPanel.hpp"
+#include "Panels/DayNightPanel.hpp"
 #include "Panels/ProjectSettingsPanel.hpp"
 #include "Panels/NoiseDebugPanel.hpp"
 #include "Panels/ShaderCompilerPanel.hpp"
@@ -208,7 +209,9 @@ namespace Nightbloom {
                         glm::translate(glm::mat4(1.0f), moonPos) *
                         glm::scale(glm::mat4(1.0f), glm::vec3(kMoonRadius));
                     moon->SetTransform(moonTransform);
-                    moon->SetCustomData(glm::vec4(0.0f, 0.0f, 0.0f, kMoonIntensity)); // w>=2 => emissive, blooms
+                    // rgb = HDR emissive color (white * intensity), w = 2.0 emissive flag.
+                    // The Day/Night panel overrides rgb each frame (warm/dim by time of day).
+                    moon->SetCustomData(glm::vec4(glm::vec3(kMoonIntensity), 2.0f));
                     if (auto* white = resources->GetTexture("default_white"))
                         moon->AddTexture(white);
                     SceneObject* moonObj = m_EditorScene->AddPrimitive("Moon", std::move(moon));
@@ -286,6 +289,11 @@ namespace Nightbloom {
 
             m_Camera->Update(deltaTime);
 
+            // Day/night cycle: drives lights[0] direction/color/intensity + ambient
+            // from the time-of-day slider, and positions/tints the moon disc. Runs
+            // before BuildLightingData below so its changes take effect this frame.
+            if (m_EditorScene) m_DayNight.Apply(*m_EditorScene, deltaTime);
+
             // Push camera/lighting to renderer
             GetRenderer()->SetViewMatrix(m_Camera->GetViewMatrix());
             GetRenderer()->SetProjectionMatrix(m_Camera->GetProjectionMatrix());
@@ -296,28 +304,6 @@ namespace Nightbloom {
             if (m_EditorScene->GetLightCount() > 0)
             {
                 GetRenderer()->SetShadowConfig(m_EditorScene->GetLight(0)->shadowConfig);
-            }
-
-            // Anchor the moon opposite the moonlight (lights[0]) direction so it
-            // tracks the light live — drag the light's direction in the Lighting
-            // panel (or animate it from a future day/night cycle) and the moon
-            // follows. Looked up by name so it survives object add/remove.
-            if (m_EditorScene->GetLightCount() > 0)
-            {
-                if (Light* moonlight = m_EditorScene->GetLight(0))
-                {
-                    for (auto& obj : m_EditorScene->GetObjects())
-                    {
-                        if (obj.name != "Moon" || !obj.meshDrawable) continue;
-                        glm::vec3 dir = glm::normalize(moonlight->direction);
-                        glm::mat4 t =
-                            glm::translate(glm::mat4(1.0f), -dir * kMoonDistance) *
-                            glm::scale(glm::mat4(1.0f), glm::vec3(kMoonRadius));
-                        obj.meshDrawable->SetTransform(t);
-                        obj.primitiveTransform = t;
-                        break;
-                    }
-                }
             }
 
             // Update live shader test panel (owns rotation state)
@@ -394,6 +380,7 @@ namespace Nightbloom {
         SceneHierarchyPanel     m_SceneHierarchy;
         InspectorPanel          m_Inspector;
         LightingPanel           m_Lighting;
+        DayNightPanel           m_DayNight;
         ProjectSettingsPanel    m_ProjectSettings;
         NoiseDebugPanel         m_NoiseDebug;
         ShaderCompilerPanel     m_ShaderCompiler;
@@ -450,6 +437,7 @@ namespace Nightbloom {
             if (m_NoiseDebug.isOpen)      m_NoiseDebug.Draw(ctx);
             if (m_LiveShaderTest.isOpen)  m_LiveShaderTest.Draw(ctx);
             if (m_Lighting.isOpen)        m_Lighting.Draw(ctx);
+            if (m_DayNight.isOpen)        m_DayNight.Draw(ctx);
             if (m_TerrainPanel.isOpen) m_TerrainPanel.Draw(ctx);
             if (m_GrassPanel.isOpen) m_GrassPanel.Draw(ctx, m_TerrainPanel.GetTerrainSystem());
             if (m_FireflyPanel.isOpen) m_FireflyPanel.Draw(ctx);
@@ -512,6 +500,7 @@ namespace Nightbloom {
                 ImGui::MenuItem("Inspector", nullptr, &m_Inspector.isOpen);
                 ImGui::MenuItem("Console", nullptr, &m_Console.isOpen);
                 ImGui::MenuItem("Lighting", nullptr, &m_Lighting.isOpen);
+                ImGui::MenuItem("Day / Night", nullptr, &m_DayNight.isOpen);
                 ImGui::MenuItem("Noise Debug", nullptr, &m_NoiseDebug.isOpen);
                 ImGui::MenuItem("Terrain", nullptr, &m_TerrainPanel.isOpen);
                 ImGui::MenuItem("Grass", nullptr, &m_GrassPanel.isOpen);

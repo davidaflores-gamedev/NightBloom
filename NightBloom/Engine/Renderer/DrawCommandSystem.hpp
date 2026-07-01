@@ -152,8 +152,9 @@ namespace Nightbloom
 
 		void Update(float deltaTime) override
 		{
-			m_PushConstants.customData.x += deltaTime; // Example: animate custom data
-			// Update logic if needed
+			(void)deltaTime;
+			// (Previously animated customData.x as debug leftover — removed so
+			// customData.rgb is stable for emissive tint, e.g. the moon/sun disc.)
 		}
 
 		void SetTransform(const glm::mat4& transform) { m_PushConstants.model = transform; }

@@ -27,6 +27,44 @@ layout(location = 2) in vec3 fragWorldPos;
 layout(location = 0) out vec4 outColor;
 
 // ============================================================================
+// Cheap 3D value-noise FBM for the moon's surface mottling (maria/craters).
+// Sampled on the sphere's object-space direction (== fragNormal, since the moon
+// transform is translate + uniform-scale with no rotation), which is SEAMLESS —
+// no UV seam or pole pinching like a fragTexCoord sample would show, and stays
+// fixed to the moon surface as the moon translates.
+// ============================================================================
+float EmissiveHash3(vec3 p)
+{
+    p = fract(p * 0.3183099 + 0.1);
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float EmissiveNoise3(vec3 x)
+{
+    vec3 i = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(EmissiveHash3(i + vec3(0,0,0)), EmissiveHash3(i + vec3(1,0,0)), f.x),
+                   mix(EmissiveHash3(i + vec3(0,1,0)), EmissiveHash3(i + vec3(1,1,0)), f.x), f.y),
+               mix(mix(EmissiveHash3(i + vec3(0,0,1)), EmissiveHash3(i + vec3(1,0,1)), f.x),
+                   mix(EmissiveHash3(i + vec3(0,1,1)), EmissiveHash3(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+
+float EmissiveFbm3(vec3 p)
+{
+    float sum = 0.0;
+    float amp = 0.5;
+    for (int i = 0; i < 4; ++i)
+    {
+        sum += amp * EmissiveNoise3(p);
+        p *= 2.0;
+        amp *= 0.5;
+    }
+    return sum;
+}
+
+// ============================================================================
 // Blinn-Phong lighting
 // ============================================================================
 vec3 CalcBlinnPhong(vec3 N, vec3 V, vec3 lightDir, vec3 lightColor, float lightIntensity)
@@ -52,19 +90,36 @@ void main()
     vec4 texColor = texture(texSampler, fragTexCoord);
 
     // ---- Emissive branch (e.g. the moon) -------------------------------------
-    // customData.w >= 2.0 flags an unlit emissive surface AND carries the HDR
-    // intensity (glass uses w in (0.01, 1.0] as alpha, so >= 2.0 is unambiguous;
-    // this MUST be checked before the glass branch below). Output stays unlit and
-    // bright (> 1.0) so the HDR target + bloom bright-pass pick it up. Color comes
-    // from the bound texture (set 1) so .rgb is free to stay untouched by
-    // MeshDrawable::Update()'s customData.x animation.
+    // customData.w >= 2.0 flags an unlit emissive surface (glass uses w in
+    // (0.01, 1.0] as alpha, so >= 2.0 is unambiguous; this MUST be checked before
+    // the glass branch below). customData.rgb is the HDR emissive color (tint *
+    // intensity), kept bright (> 1.0) so the HDR target + bloom bright-pass pick
+    // it up. The day/night cycle drives rgb (warm/bright by day, cool/dim by
+    // night); the bound texture (set 1) supplies surface detail.
     if (push.customData.w >= 2.0)
     {
         vec3 N = normalize(fragNormal);
         vec3 V = normalize(frame.cameraPos.xyz - fragWorldPos);
-        // Gentle limb darkening so the sphere reads as a body, not a flat disc.
-        float limb = mix(0.55, 1.0, clamp(dot(N, V), 0.0, 1.0));
-        outColor = vec4(texColor.rgb * push.customData.w * limb, 1.0);
+        float ndv = clamp(dot(N, V), 0.0, 1.0);
+        vec3 emissive = texColor.rgb * push.customData.rgb;
+
+        if (push.customData.w >= 2.5)
+        {
+            // SUN: flat, uniformly bright disc with a slightly hotter core; no limb
+            // darkening, so it reads as a blazing light source (bloom does the glow).
+            float core = mix(0.9, 1.3, ndv);
+            outColor = vec4(emissive * core, 1.0);
+        }
+        else
+        {
+            // MOON: nearly-flat disc (only faint limb darkening so it doesn't read as
+            // a shaded 3D ball) with subtle seamless maria/crater mottling. Kept dim
+            // by the day/night intensity so its cool color + surface actually show
+            // instead of blooming out to the same white blob as the sun.
+            float limb = mix(0.8, 1.0, ndv);
+            float mott = mix(0.45, 1.0, EmissiveFbm3(N * 3.0)); // larger, more visible maria
+            outColor = vec4(emissive * limb * mott, 1.0);
+        }
         return;
     }
 
