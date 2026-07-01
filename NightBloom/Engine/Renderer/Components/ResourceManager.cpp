@@ -15,6 +15,7 @@
 #include "Engine/Renderer/Vertex.hpp"
 #include "Engine/Core/Logger/Logger.hpp"
 #include <vector>
+#include <cmath>
 
 namespace Nightbloom
 {
@@ -626,6 +627,99 @@ namespace Nightbloom
 			return static_cast<Buffer*>(it->second.get());
 		}
 		return nullptr;
+	}
+
+	bool ResourceManager::CreateMoonSphere(uint32_t rings, uint32_t sectors, float radius)
+	{
+		// UV sphere (VertexPNT). Centered at origin so the surface normal equals the
+		// normalized position. Used for the emissive moon (PipelineType::Mesh, emissive
+		// push-constant branch in Mesh.frag). Outward CCW winding so the existing
+		// Back/CCW cull keeps the visible (outer) faces — if the moon ever renders
+		// inside-out / invisible, the two index triples below are the thing to flip.
+		const float PI = 3.14159265358979323846f;
+
+		std::vector<VertexPNT> vertices;
+		vertices.reserve((rings + 1) * (sectors + 1));
+		for (uint32_t r = 0; r <= rings; ++r)
+		{
+			float stackAngle = PI * 0.5f - PI * (static_cast<float>(r) / rings); // +PI/2 .. -PI/2
+			float y   = std::sin(stackAngle);
+			float rxz = std::cos(stackAngle);
+			for (uint32_t s = 0; s <= sectors; ++s)
+			{
+				float sectorAngle = 2.0f * PI * (static_cast<float>(s) / sectors);
+				float x = rxz * std::cos(sectorAngle);
+				float z = rxz * std::sin(sectorAngle);
+
+				VertexPNT v{};
+				v.position = glm::vec3(x, y, z) * radius;
+				v.normal   = glm::vec3(x, y, z); // unit sphere => normal == direction
+				v.texCoord = glm::vec2(static_cast<float>(s) / sectors,
+				                       static_cast<float>(r) / rings);
+				vertices.push_back(v);
+			}
+		}
+
+		std::vector<uint32_t> indices;
+		indices.reserve(rings * sectors * 6);
+		for (uint32_t r = 0; r < rings; ++r)
+		{
+			for (uint32_t s = 0; s < sectors; ++s)
+			{
+				uint32_t k1 = r * (sectors + 1) + s;       // current ring
+				uint32_t k2 = k1 + sectors + 1;            // next ring
+				// Two triangles per quad, outward CCW.
+				indices.push_back(k1);     indices.push_back(k1 + 1); indices.push_back(k2);
+				indices.push_back(k1 + 1); indices.push_back(k2 + 1); indices.push_back(k2);
+			}
+		}
+
+		VkDeviceSize vertexBufferSize = sizeof(VertexPNT) * vertices.size();
+		VulkanBuffer* vertexBuffer = CreateVertexBuffer("MoonSphereVertices", vertexBufferSize, false);
+		if (!vertexBuffer)
+		{
+			LOG_ERROR("Failed to create moon sphere vertex buffer");
+			return false;
+		}
+		if (!vertexBuffer->UploadData(vertices.data(), vertexBufferSize, 0, m_TransferCommandPool.get()))
+		{
+			LOG_ERROR("Failed to upload moon sphere vertex data");
+			DestroyBuffer("MoonSphereVertices");
+			return false;
+		}
+
+		VkDeviceSize indexBufferSize = sizeof(uint32_t) * indices.size();
+		VulkanBuffer* indexBuffer = CreateIndexBuffer("MoonSphereIndices", indexBufferSize, false);
+		if (!indexBuffer)
+		{
+			LOG_ERROR("Failed to create moon sphere index buffer");
+			DestroyBuffer("MoonSphereVertices");
+			return false;
+		}
+		if (!indexBuffer->UploadData(indices.data(), indexBufferSize, 0, m_TransferCommandPool.get()))
+		{
+			LOG_ERROR("Failed to upload moon sphere index data");
+			DestroyBuffer("MoonSphereVertices");
+			DestroyBuffer("MoonSphereIndices");
+			return false;
+		}
+
+		m_MoonSphereIndexCount = static_cast<uint32_t>(indices.size());
+		LOG_INFO("Created moon sphere: {} vertices, {} indices ({} rings x {} sectors)",
+			vertices.size(), indices.size(), rings, sectors);
+		return true;
+	}
+
+	Buffer* ResourceManager::GetMoonSphereVertexBuffer() const
+	{
+		auto it = m_Buffers.find("MoonSphereVertices");
+		return (it != m_Buffers.end()) ? static_cast<Buffer*>(it->second.get()) : nullptr;
+	}
+
+	Buffer* ResourceManager::GetMoonSphereIndexBuffer() const
+	{
+		auto it = m_Buffers.find("MoonSphereIndices");
+		return (it != m_Buffers.end()) ? static_cast<Buffer*>(it->second.get()) : nullptr;
 	}
 
 	bool ResourceManager::CreateDefaultTextures()

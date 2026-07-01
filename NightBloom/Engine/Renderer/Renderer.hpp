@@ -81,6 +81,10 @@ namespace Nightbloom
 		Buffer* GetGroundPlaneIndexBuffer() const;
 		uint32_t GetGroundPlaneIndexCount() const;
 
+		Buffer* GetMoonSphereVertexBuffer() const;
+		Buffer* GetMoonSphereIndexBuffer() const;
+		uint32_t GetMoonSphereIndexCount() const;
+
 		void TestShaderClass();
 
 		void RunComputeTest();

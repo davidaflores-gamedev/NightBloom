@@ -186,6 +186,38 @@ namespace Nightbloom {
             moonlight->shadowConfig.normalBias = 0.03f;
 
             GetRenderer()->SetShadowConfig(moonlight->shadowConfig);
+
+            // Moon — a bright emissive sphere placed opposite the moonlight
+            // direction, giving the HDR/bloom pipeline an in-scene source to glow
+            // against. Rendered through the Mesh pipeline's emissive branch
+            // (customData.w >= 2.0 => unlit + HDR intensity); its color comes from
+            // the bound white texture. Placed well beyond shadowDistance so it
+            // never lands in a shadow cascade.
+            {
+                auto* moonVB = GetRenderer()->GetMoonSphereVertexBuffer();
+                auto* moonIB = GetRenderer()->GetMoonSphereIndexBuffer();
+                uint32_t moonIC = GetRenderer()->GetMoonSphereIndexCount();
+                if (moonVB && moonIB && moonIC > 0)
+                {
+                    glm::vec3 moonDir = glm::normalize(moonlight->direction);
+                    glm::vec3 moonPos = -moonDir * kMoonDistance; // source sits opposite its travel dir
+
+                    auto moon = std::make_unique<MeshDrawable>(
+                        moonVB, moonIB, moonIC, PipelineType::Mesh);
+                    glm::mat4 moonTransform =
+                        glm::translate(glm::mat4(1.0f), moonPos) *
+                        glm::scale(glm::mat4(1.0f), glm::vec3(kMoonRadius));
+                    moon->SetTransform(moonTransform);
+                    moon->SetCustomData(glm::vec4(0.0f, 0.0f, 0.0f, kMoonIntensity)); // w>=2 => emissive, blooms
+                    if (auto* white = resources->GetTexture("default_white"))
+                        moon->AddTexture(white);
+                    SceneObject* moonObj = m_EditorScene->AddPrimitive("Moon", std::move(moon));
+                    moonObj->pipeline = PipelineType::Mesh;
+                    moonObj->primitiveTransform = moonTransform;
+                    LOG_INFO("Added Moon to scene");
+                }
+            }
+
             if (m_EditorScene->GetObjectCount() > 0)
                 m_EditorScene->Select(0);
 
@@ -266,6 +298,28 @@ namespace Nightbloom {
                 GetRenderer()->SetShadowConfig(m_EditorScene->GetLight(0)->shadowConfig);
             }
 
+            // Anchor the moon opposite the moonlight (lights[0]) direction so it
+            // tracks the light live — drag the light's direction in the Lighting
+            // panel (or animate it from a future day/night cycle) and the moon
+            // follows. Looked up by name so it survives object add/remove.
+            if (m_EditorScene->GetLightCount() > 0)
+            {
+                if (Light* moonlight = m_EditorScene->GetLight(0))
+                {
+                    for (auto& obj : m_EditorScene->GetObjects())
+                    {
+                        if (obj.name != "Moon" || !obj.meshDrawable) continue;
+                        glm::vec3 dir = glm::normalize(moonlight->direction);
+                        glm::mat4 t =
+                            glm::translate(glm::mat4(1.0f), -dir * kMoonDistance) *
+                            glm::scale(glm::mat4(1.0f), glm::vec3(kMoonRadius));
+                        obj.meshDrawable->SetTransform(t);
+                        obj.primitiveTransform = t;
+                        break;
+                    }
+                }
+            }
+
             // Update live shader test panel (owns rotation state)
             m_LiveShaderTest.Update(deltaTime);
 
@@ -320,6 +374,13 @@ namespace Nightbloom {
         float m_FrameTime = 0.0f;
         int   m_FrameCount = 0;
         float m_FPS = 0.0f;
+
+        // Moon — emissive sphere anchored opposite the moonlight (lights[0])
+        // direction. Re-anchored every frame (see OnUpdate) so it tracks the
+        // light direction live, which is also the hook a day/night cycle uses.
+        static constexpr float kMoonDistance  = 350.0f;
+        static constexpr float kMoonRadius    = 45.0f;
+        static constexpr float kMoonIntensity = 5.0f;
 
         // ImGui demo/metrics (owned by EditorApp, not panels)
         bool m_ShowDemoWindow = false;

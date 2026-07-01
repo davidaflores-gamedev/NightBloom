@@ -79,6 +79,12 @@ namespace Nightbloom
 		Buffer* GetGroundPlaneIndexBuffer() const;
 		uint32_t GetGroundPlaneIndexCount() const { return m_GroundPlaneIndexCount; }
 
+		// Moon sphere (emissive moon primitive — rendered via PipelineType::Mesh)
+		bool CreateMoonSphere(uint32_t rings = 32, uint32_t sectors = 64, float radius = 1.0f);
+		Buffer* GetMoonSphereVertexBuffer() const;
+		Buffer* GetMoonSphereIndexBuffer() const;
+		uint32_t GetMoonSphereIndexCount() const { return m_MoonSphereIndexCount; }
+
 
 		bool CreateDefaultTextures();
 
@@ -103,6 +109,7 @@ namespace Nightbloom
 		// Test resources (temporary)
 		uint32_t m_TestIndexCount = 0;
 		uint32_t m_GroundPlaneIndexCount = 0;
+		uint32_t m_MoonSphereIndexCount = 0;
 
 		// Prevent copying
 		ResourceManager(const ResourceManager&) = delete;

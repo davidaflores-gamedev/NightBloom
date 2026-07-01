@@ -473,6 +473,24 @@ namespace Nightbloom
 		return m_Resources->GetTestIndexCount();
 	}
 
+	Buffer* Renderer::GetMoonSphereVertexBuffer() const
+	{
+		if (!m_Resources) return nullptr;
+		return m_Resources->GetMoonSphereVertexBuffer();
+	}
+
+	Buffer* Renderer::GetMoonSphereIndexBuffer() const
+	{
+		if (!m_Resources) return nullptr;
+		return m_Resources->GetMoonSphereIndexBuffer();
+	}
+
+	uint32_t Renderer::GetMoonSphereIndexCount() const
+	{
+		if (!m_Resources) return 0;
+		return m_Resources->GetMoonSphereIndexCount();
+	}
+
 	Buffer* Renderer::GetGroundPlaneVertexBuffer() const
 	{
 		if (!m_Resources) return nullptr;
@@ -1002,6 +1020,12 @@ namespace Nightbloom
 		if (!m_Resources->CreateGroundPlane(200.0f, 10.0f))
 		{
 			LOG_WARN("Failed to create ground plane");
+			// Non-fatal � continue without it
+		}
+
+		if (!m_Resources->CreateMoonSphere())
+		{
+			LOG_WARN("Failed to create moon sphere");
 			// Non-fatal � continue without it
 		}
 

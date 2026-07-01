@@ -157,6 +157,7 @@ namespace Nightbloom
 		}
 
 		void SetTransform(const glm::mat4& transform) { m_PushConstants.model = transform; }
+		void SetCustomData(const glm::vec4& data) { m_PushConstants.customData = data; }
 		//void SetViewMatrix(const glm::mat4& view) { m_PushConstants.view = view; }
 		//void SetProjectionMatrix(const glm::mat4& proj) { m_PushConstants.proj = proj; }
 

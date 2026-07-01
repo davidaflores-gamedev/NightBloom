@@ -50,6 +50,25 @@ void main()
     ClipReflection(fragWorldPos);  // drop below-water geometry in the reflection pass
 
     vec4 texColor = texture(texSampler, fragTexCoord);
+
+    // ---- Emissive branch (e.g. the moon) -------------------------------------
+    // customData.w >= 2.0 flags an unlit emissive surface AND carries the HDR
+    // intensity (glass uses w in (0.01, 1.0] as alpha, so >= 2.0 is unambiguous;
+    // this MUST be checked before the glass branch below). Output stays unlit and
+    // bright (> 1.0) so the HDR target + bloom bright-pass pick it up. Color comes
+    // from the bound texture (set 1) so .rgb is free to stay untouched by
+    // MeshDrawable::Update()'s customData.x animation.
+    if (push.customData.w >= 2.0)
+    {
+        vec3 N = normalize(fragNormal);
+        vec3 V = normalize(frame.cameraPos.xyz - fragWorldPos);
+        // Gentle limb darkening so the sphere reads as a body, not a flat disc.
+        float limb = mix(0.55, 1.0, clamp(dot(N, V), 0.0, 1.0));
+        outColor = vec4(texColor.rgb * push.customData.w * limb, 1.0);
+        return;
+    }
+
+
     bool isMaterialDriven = (push.customData.w > 0.01);
     vec4 albedo = isMaterialDriven ? push.customData : texColor;
 
