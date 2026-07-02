@@ -18,6 +18,8 @@ namespace Nightbloom
 
 	void Camera::SetPerspective(float fovDegrees, float aspect, float nearPlane, float farPlane)
 	{
+		m_Fov = fovDegrees;
+		m_NearPlane = nearPlane;
 		m_Projection = glm::perspective(glm::radians(fovDegrees), aspect, nearPlane, farPlane);
 		m_Projection[1][1] *= -1.0f;  // Vulkan Y-flip
 		m_UseReverseZ = false;
@@ -28,6 +30,9 @@ namespace Nightbloom
 		// Reverse-Z perspective projection
 		// Maps: near plane -> 1.0, far plane -> 0.0
 		// This provides much better depth precision for distant objects
+
+		m_Fov = fovDegrees;
+		m_NearPlane = nearPlane;
 
 		float fovRad = glm::radians(fovDegrees);
 		float tanHalfFov = tan(fovRad / 2.0f);
@@ -58,6 +63,9 @@ namespace Nightbloom
 		// Infinite far plane reverse-Z projection
 		// This is the "gold standard" for depth precision
 		// Near plane maps to 1.0, infinity maps to 0.0
+
+		m_Fov = fovDegrees;
+		m_NearPlane = nearPlane;
 
 		float fovRad = glm::radians(fovDegrees);
 		float tanHalfFov = tan(fovRad / 2.0f);

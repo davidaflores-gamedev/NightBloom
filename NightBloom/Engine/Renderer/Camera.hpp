@@ -55,6 +55,10 @@ namespace Nightbloom
 		const glm::vec3& GetUp() const { return m_Up; }
 		float GetYaw() const { return m_Yaw; }
 		float GetPitch() const { return m_Pitch; }
+		// Last values passed to a SetPerspective* call (for serialization). Far is
+		// omitted — the editor uses the infinite-far reverse-Z projection.
+		float GetFov() const { return m_Fov; }
+		float GetNearPlane() const { return m_NearPlane; }
 
 		// Settings
 		float moveSpeed = 5.0f;
@@ -80,6 +84,10 @@ namespace Nightbloom
 		glm::mat4 m_Projection = glm::mat4(1.0f);
 		bool m_ViewDirty = true;
 		bool m_UseReverseZ = false;
+
+		// Cached projection params (recorded by SetPerspective*), for serialization.
+		float m_Fov = 45.0f;
+		float m_NearPlane = 0.1f;
 
 		// Input accumulation
 		glm::vec3 m_MovementInput = glm::vec3(0.0f);  // x=right, y=up, z=forward

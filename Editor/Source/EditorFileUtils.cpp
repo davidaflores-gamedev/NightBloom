@@ -14,6 +14,7 @@
 
 #ifdef _WIN32
 #include <Windows.h>
+#include <commdlg.h>
 #endif
 
 namespace {
@@ -22,6 +23,44 @@ namespace {
 
 namespace Nightbloom {
 namespace Editor {
+
+#ifdef _WIN32
+	std::string EditorFileUtils::OpenFileDialog(const char* filter)
+	{
+		char filename[MAX_PATH] = { 0 };
+		OPENFILENAMEA ofn = { 0 };
+		ofn.lStructSize = sizeof(ofn);
+		ofn.hwndOwner = GetActiveWindow();
+		ofn.lpstrFilter = filter;
+		ofn.lpstrFile = filename;
+		ofn.nMaxFile = MAX_PATH;
+		// OFN_NOCHANGEDIR: the dialog must NOT change our working directory, or
+		// relative asset/shader paths break afterward.
+		ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+		if (GetOpenFileNameA(&ofn))
+			return std::string(filename);
+		return std::string();
+	}
+
+	std::string EditorFileUtils::SaveFileDialog(const char* filter, const char* defaultExt)
+	{
+		char filename[MAX_PATH] = { 0 };
+		OPENFILENAMEA ofn = { 0 };
+		ofn.lStructSize = sizeof(ofn);
+		ofn.hwndOwner = GetActiveWindow();
+		ofn.lpstrFilter = filter;
+		ofn.lpstrFile = filename;
+		ofn.nMaxFile = MAX_PATH;
+		ofn.lpstrDefExt = defaultExt;
+		ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+		if (GetSaveFileNameA(&ofn))
+			return std::string(filename);
+		return std::string();
+	}
+#else
+	std::string EditorFileUtils::OpenFileDialog(const char*) { return std::string(); }
+	std::string EditorFileUtils::SaveFileDialog(const char*, const char*) { return std::string(); }
+#endif
 
 	void EditorFileUtils::SetProjectContext(const ProjectContext& ctx) { g_ProjectCtx = ctx; }
 

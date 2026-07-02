@@ -46,6 +46,10 @@ target_include_directories(NightbloomEngine
 	${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/glm
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+        # nlohmann/json single-header (header-only) — engine-internal (SceneSerializer).
+        # Added as a private include dir rather than a linked target so it stays out of
+        # NightbloomEngine's export set (export() rejects non-exported link deps).
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/nlohmann/single_include
 )
 
 # Platform-specific sources and definitions

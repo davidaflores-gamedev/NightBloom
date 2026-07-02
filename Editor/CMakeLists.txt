@@ -38,6 +38,14 @@ endif()
 target_link_libraries(NightbloomEditor
     PRIVATE
         NightbloomEngine
+        $<$<PLATFORM_ID:Windows>:comdlg32.lib>   # native file Open/Save dialogs
+)
+
+# nlohmann/json single-header — the editor serializes panel state (DayNight) into
+# the scene file's opaque "editor" blob. Engine links it PRIVATE, so it doesn't
+# propagate here; add the include dir directly.
+target_include_directories(NightbloomEditor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../NightBloom/ThirdParty/nlohmann/single_include
 )
 
 #------------------------------------------------------------------------------

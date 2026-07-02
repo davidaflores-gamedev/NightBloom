@@ -65,6 +65,12 @@ namespace Editor {
 
 		// Read text file
 		static bool ReadTextFile(const std::string& filepath, std::string& outContent);
+
+		// Native file dialogs (Win32; return "" if cancelled or unsupported).
+		// 'filter' is a Win32 double-null-terminated pair list, e.g.
+		//   "Scene (*.nbscene)\0*.nbscene\0All Files\0*.*\0"
+		static std::string OpenFileDialog(const char* filter);
+		static std::string SaveFileDialog(const char* filter, const char* defaultExt);
 	};
 
 } // namespace Editor

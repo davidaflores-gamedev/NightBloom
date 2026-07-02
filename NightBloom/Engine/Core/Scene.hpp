@@ -11,6 +11,8 @@
 #include "Engine/Renderer/Light.hpp"
 #include "Engine/Renderer/Frustum.hpp"
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <vector>
 #include <string>
 #include <memory>
@@ -18,12 +20,33 @@
 namespace Nightbloom
 {
 	//--------------------------------------------------------------------------
+	// Primitive geometry kinds. Primitives (MeshDrawable) reference engine-owned
+	// built-in vertex/index buffers that have no file path, so serialization needs
+	// a tag to know which built-in geometry to rebind on load. None = not a
+	// primitive (either a model object, or geometry we can't yet reconstruct).
+	//--------------------------------------------------------------------------
+	enum class PrimitiveKind
+	{
+		None = 0,
+		TestCube,
+		GroundPlane,
+		MoonSphere
+	};
+
+	//--------------------------------------------------------------------------
 	// SceneObject - Wrapper for anything that can exist in the scene
 	//--------------------------------------------------------------------------
 	struct SceneObject
 	{
 		std::string name;
 		bool visible = true;
+
+		// Serialization metadata for primitives (meshDrawable-based objects). The
+		// transform + customData live in the MeshDrawable itself (read via its
+		// getters); these record what the drawable can't: which built-in geometry
+		// and which named texture to rebind on load.
+		PrimitiveKind primitiveKind = PrimitiveKind::None;
+		std::string   primitiveTexture;   // ResourceManager texture name, e.g. "uv_checker"
 
 		// The actual renderable (we own the model, drawable is created from it)
 		std::unique_ptr<Model> model;
@@ -36,42 +59,73 @@ namespace Nightbloom
 		int textureIndex = 0;        // Which texture is assigned (for UI display)
 		PipelineType pipeline = PipelineType::Mesh;  // Which pipeline (for primitives)
 
+		// Composed primitive transform (cache). Authoritative source is the
+		// decomposed TRS below; DayNight also writes this directly for the moon.
 		glm::mat4 primitiveTransform = glm::mat4(1.0f);
 
-		// Convenience accessors for transform
+		// Decomposed transform for primitives (meshDrawable has no TRS of its own,
+		// unlike Model). The accessors below edit these and recompose into the
+		// drawable, so the Inspector can move/rotate/scale primitives exactly like
+		// models. Rotation is euler radians, matching Model.
+		glm::vec3 primitivePosition = glm::vec3(0.0f);
+		glm::vec3 primitiveRotation = glm::vec3(0.0f);
+		glm::vec3 primitiveScale    = glm::vec3(1.0f);
+
+		// Recompose primitiveTransform from the TRS and push it to the drawable.
+		// Same order as Model::Set* (T * R * S) so primitives and models behave
+		// identically in the editor.
+		void UpdatePrimitiveTransform()
+		{
+			primitiveTransform =
+				glm::translate(glm::mat4(1.0f), primitivePosition) *
+				glm::mat4_cast(glm::quat(primitiveRotation)) *
+				glm::scale(glm::mat4(1.0f), primitiveScale);
+			if (meshDrawable) meshDrawable->SetTransform(primitiveTransform);
+		}
+
+		// Convenience accessors for transform. Delegate to the Model for model-based
+		// objects; edit the primitive TRS (and recompose) for primitives.
 		glm::vec3 GetPosition() const
 		{
-			return model ? model->GetPosition() : glm::vec3(0.0f);
+			return model ? model->GetPosition() : primitivePosition;
 		}
 
 		glm::vec3 GetRotation() const
 		{
-			return model ? model->GetRotation() : glm::vec3(0.0f);
+			return model ? model->GetRotation() : primitiveRotation;
 		}
 
 		glm::vec3 GetScale() const
 		{
-			return model ? model->GetScale() : glm::vec3(1.0f);
+			return model ? model->GetScale() : primitiveScale;
 		}
 
 		void SetPosition(const glm::vec3& pos)
 		{
-			if (model) model->SetPosition(pos);
+			if (model) { model->SetPosition(pos); return; }
+			primitivePosition = pos;
+			UpdatePrimitiveTransform();
 		}
 
 		void SetRotation(const glm::vec3& rot)
 		{
-			if (model) model->SetRotation(rot);
+			if (model) { model->SetRotation(rot); return; }
+			primitiveRotation = rot;
+			UpdatePrimitiveTransform();
 		}
 
 		void SetScale(const glm::vec3& scale)
 		{
-			if (model) model->SetScale(scale);
+			if (model) { model->SetScale(scale); return; }
+			primitiveScale = scale;
+			UpdatePrimitiveTransform();
 		}
 
 		void SetScale(float uniform)
 		{
-			if (model) model->SetScale(uniform);
+			if (model) { model->SetScale(uniform); return; }
+			primitiveScale = glm::vec3(uniform);
+			UpdatePrimitiveTransform();
 		}
 
 		IDrawable* GetDrawable() const {

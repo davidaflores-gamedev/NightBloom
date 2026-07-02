@@ -2,8 +2,15 @@
 #include "SceneHierarchyPanel.hpp"
 #include "Engine/Core/Scene.hpp"
 #include "Engine/Renderer/Light.hpp"
+#include "Engine/Renderer/Renderer.hpp"
+#include "Engine/Renderer/Model.hpp"
+#include "Engine/Renderer/Components/ResourceManager.hpp"
+#include "Engine/Renderer/Vulkan/VulkanTexture.hpp"  // complete type for VulkanTexture* -> Texture*
 #include "Engine/Core/Logger/Logger.hpp"
+#include "../EditorFileUtils.hpp"
 #include <imgui.h>
+#include <memory>
+#include <filesystem>
 
 namespace Nightbloom
 {
@@ -128,10 +135,55 @@ namespace Nightbloom
 
         if (ImGui::BeginPopup("AddObjectPopup"))
         {
-            if (ImGui::MenuItem("Load Model..."))
-                LOG_INFO("Load model dialog - not yet implemented");
-            if (ImGui::MenuItem("Primitive Cube"))
-                LOG_INFO("Add cube - not yet implemented");
+            if (ImGui::MenuItem("Load Model...") && ctx.scene && ctx.renderer)
+            {
+                std::string path = Editor::EditorFileUtils::OpenFileDialog(
+                    "glTF Models (*.gltf;*.glb)\0*.gltf;*.glb\0All Files (*.*)\0*.*\0");
+                if (!path.empty())
+                {
+                    std::string name = std::filesystem::path(path).stem().string();
+                    auto model = std::make_unique<Model>(name);
+                    if (model->LoadFromFile(path, ctx.renderer->GetResourceManager(),
+                        ctx.renderer->GetDescriptorManager()))
+                    {
+                        ResourceManager* res = ctx.renderer->GetResourceManager();
+                        Texture* def = res ? res->GetTexture("default_white") : nullptr;
+                        ctx.scene->AddObject(name, std::move(model), def);
+                        LOG_INFO("Loaded model '{}' from {}", name, path);
+                    }
+                    else
+                    {
+                        LOG_WARN("Failed to load model from {}", path);
+                    }
+                }
+            }
+            if (ImGui::MenuItem("Primitive Cube") && ctx.scene && ctx.renderer)
+            {
+                Buffer* vb = ctx.renderer->GetTestVertexBuffer();
+                Buffer* ib = ctx.renderer->GetTestIndexBuffer();
+                uint32_t ic = ctx.renderer->GetTestIndexCount();
+                if (vb && ib && ic > 0)
+                {
+                    auto cube = std::make_unique<MeshDrawable>(vb, ib, ic, PipelineType::Mesh);
+                    ResourceManager* res = ctx.renderer->GetResourceManager();
+                    if (res)
+                        if (Texture* white = res->GetTexture("default_white"))
+                            cube->AddTexture(white);
+                    SceneObject* o = ctx.scene->AddPrimitive("Cube", std::move(cube));
+                    if (o)
+                    {
+                        o->pipeline = PipelineType::Mesh;
+                        // Metadata so the cube survives save/load (see SceneSerializer).
+                        o->primitiveKind = PrimitiveKind::TestCube;
+                        o->primitiveTexture = "default_white";
+                    }
+                    LOG_INFO("Added primitive cube");
+                }
+                else
+                {
+                    LOG_WARN("Test cube buffers unavailable");
+                }
+            }
 
             ImGui::Separator();
             if (ImGui::MenuItem("Directional Light") && ctx.scene)

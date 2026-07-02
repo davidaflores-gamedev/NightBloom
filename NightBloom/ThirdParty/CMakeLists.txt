@@ -32,10 +32,14 @@ endif()
 
 # VMA (Vulkan Memory Allocator) - Header-only library
 add_library(VMA INTERFACE)
-target_include_directories(VMA INTERFACE 
+target_include_directories(VMA INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/VMA>
     $<INSTALL_INTERFACE:include/VMA>
 )
+
+# nlohmann/json - header-only (single include). Consumed directly by the engine
+# as a private include dir (see NightBloom/Engine/CMakeLists.txt) rather than a
+# linked INTERFACE target, so it stays out of NightbloomEngine's export set.
 
 # ImGui - Check if the directory exists first
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)

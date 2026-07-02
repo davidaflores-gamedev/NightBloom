@@ -16,6 +16,7 @@
 #include "Engine/Renderer/Material.hpp"
 #include "Engine/Renderer/Components/ResourceManager.hpp"
 #include "Engine/Core/Scene.hpp"
+#include "Engine/Core/SceneSerializer.hpp"
 #include "EditorFileUtils.hpp"
 #include "EditorContext.hpp"
 
@@ -41,6 +42,7 @@
 #include <imgui.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <nlohmann/json.hpp>
 #include <memory>
 #include <filesystem>
 
@@ -132,18 +134,20 @@ namespace Nightbloom {
                 SceneObject* obj1 = m_EditorScene->AddPrimitive("TestCube1", std::move(cube1));
                 obj1->textureIndex = 0;
                 obj1->pipeline = PipelineType::Mesh;
+                obj1->primitiveKind = PrimitiveKind::TestCube;
+                obj1->primitiveTexture = "uv_checker";
 
                 auto cube2 = std::make_unique<MeshDrawable>(
                     vertexBuffer, indexBuffer, indexCount, PipelineType::Mesh);
-                glm::mat4 cube2Transform =
-                    glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, 0.2f, -1.0f));
-                cube2->SetTransform(cube2Transform);
                 if (auto* white = resources->GetTexture("default_white"))
                     cube2->AddTexture(white);
                 SceneObject* obj2 = m_EditorScene->AddPrimitive("TestCube2", std::move(cube2));
                 obj2->textureIndex = 1;
                 obj2->pipeline = PipelineType::Mesh;
-                obj2->primitiveTransform = cube2Transform;
+                obj2->primitiveKind = PrimitiveKind::TestCube;
+                obj2->primitiveTexture = "default_white";
+                obj2->primitivePosition = glm::vec3(0.5f, 0.2f, -1.0f);
+                obj2->UpdatePrimitiveTransform();
             }
 
             // Ground plane
@@ -217,6 +221,8 @@ namespace Nightbloom {
                     SceneObject* moonObj = m_EditorScene->AddPrimitive("Moon", std::move(moon));
                     moonObj->pipeline = PipelineType::Mesh;
                     moonObj->primitiveTransform = moonTransform;
+                    moonObj->primitiveKind = PrimitiveKind::MoonSphere;
+                    moonObj->primitiveTexture = "default_white";
                     LOG_INFO("Added Moon to scene");
                 }
             }
@@ -246,6 +252,13 @@ namespace Nightbloom {
 
         void OnUpdate(float deltaTime) override
         {
+            // Process a deferred scene load / new BEFORE the frame's draw list is built
+            // in OnRender. These free the current scene's GPU buffers, and the previous
+            // frame's draw list held raw pointers into them — so we wait for the GPU to
+            // go idle first, then rebuild. Doing this mid-OnRender (from the menu) would
+            // free buffers this frame's draw list still references.
+            ProcessPendingSceneOps();
+
             // FPS tracking
             m_FrameTime += deltaTime;
             m_FrameCount++;
@@ -355,6 +368,19 @@ namespace Nightbloom {
         // Project info
         std::string           m_CurrentProjectName = "Sandbox";
         std::filesystem::path m_CurrentProjectPath;
+
+        // Scene persistence (M0). m_ScenePath is the current scene file (empty =
+        // untitled). Load/new are DEFERRED to the next OnUpdate (see
+        // ProcessPendingSceneOps) so they never run while this frame's draw list
+        // still references the scene's soon-to-be-freed GPU buffers.
+        std::string m_ScenePath;
+        std::string m_PendingLoadPath;
+        bool        m_PendingSceneLoad = false;
+        bool        m_PendingNewScene = false;
+
+        // Win32 double-null-terminated filter for the scene file dialogs.
+        static constexpr const char* kSceneFilter =
+            "Nightbloom Scene (*.nbscene)\0*.nbscene\0All Files (*.*)\0*.*\0";
 
         // FPS tracking
         float m_FrameTime = 0.0f;
@@ -466,10 +492,10 @@ namespace Nightbloom {
                 if (ImGui::MenuItem("Open Project...")) { LOG_INFO("Open project - TODO"); }
                 if (ImGui::MenuItem("Save Project", "Ctrl+S")) { LOG_INFO("Save project - TODO"); }
                 ImGui::Separator();
-                if (ImGui::MenuItem("New Scene", "Ctrl+N")) { LOG_INFO("New scene - TODO"); }
-                if (ImGui::MenuItem("Open Scene...", "Ctrl+O")) { LOG_INFO("Open scene - TODO"); }
-                if (ImGui::MenuItem("Save Scene", "Ctrl+S")) { LOG_INFO("Save scene - TODO"); }
-                if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) {}
+                if (ImGui::MenuItem("New Scene", "Ctrl+N")) RequestNewScene();
+                if (ImGui::MenuItem("Open Scene...", "Ctrl+O")) OpenSceneDialog();
+                if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
+                if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) SaveSceneAs();
                 ImGui::Separator();
                 if (ImGui::MenuItem("Project Settings...")) m_ProjectSettings.isOpen = true;
                 ImGui::Separator();
@@ -562,6 +588,12 @@ namespace Nightbloom {
             if (ctrl && GetInput()->IsPressed(InputCode::Key_R))
                 if (GetRenderer()) GetRenderer()->ReloadShaders();
 
+            if (ctrl && GetInput()->IsPressed(InputCode::Key_S))
+            {
+                if (GetInput()->IsDown(InputCode::Key_Shift)) SaveSceneAs();
+                else SaveScene();
+            }
+
             if (GetInput()->IsPressed(InputCode::Key_P))
                 if (GetRenderer()) GetRenderer()->TogglePipeline();
 
@@ -646,6 +678,205 @@ namespace Nightbloom {
         {
             std::string title = "Nightbloom Editor v0.1.0 | Project: " + m_CurrentProjectName;
             GetWindow()->SetTitle(title);
+        }
+
+        // -------------------------------------------------------------------------
+        // Scene save / load / new (M0 — see .claude/PACKAGING_ROADMAP.md)
+        // Save runs inline (read-only). Open/New are deferred to the next OnUpdate
+        // because they free the current scene's GPU buffers (see ProcessPendingSceneOps).
+        // -------------------------------------------------------------------------
+
+        // Save to the current file, or prompt if this scene has never been saved.
+        void SaveScene()
+        {
+            if (m_ScenePath.empty()) { SaveSceneAs(); return; }
+            DoSaveScene(m_ScenePath);
+        }
+
+        void SaveSceneAs()
+        {
+            std::string path = Editor::EditorFileUtils::SaveFileDialog(kSceneFilter, "nbscene");
+            if (path.empty()) return;  // cancelled
+            m_ScenePath = path;
+            DoSaveScene(path);
+        }
+
+        void OpenSceneDialog()
+        {
+            std::string path = Editor::EditorFileUtils::OpenFileDialog(kSceneFilter);
+            if (path.empty()) return;  // cancelled
+            m_PendingLoadPath = path;
+            m_PendingSceneLoad = true;
+        }
+
+        void RequestNewScene() { m_PendingNewScene = true; }
+
+        void DoSaveScene(const std::string& path)
+        {
+            if (!m_EditorScene || !m_Camera) return;
+
+            SceneCameraState cam;
+            cam.position = m_Camera->GetPosition();
+            cam.yaw = m_Camera->GetYaw();
+            cam.pitch = m_Camera->GetPitch();
+            cam.fov = m_Camera->GetFov();
+            cam.nearPlane = m_Camera->GetNearPlane();
+
+            SceneSerializer::Save(*m_EditorScene, cam, path, m_CurrentProjectName,
+                SerializeEditorState());
+        }
+
+        void ProcessPendingSceneOps()
+        {
+            if (m_PendingNewScene)
+            {
+                m_PendingNewScene = false;
+                DoNewScene();
+            }
+            if (m_PendingSceneLoad)
+            {
+                m_PendingSceneLoad = false;
+                DoLoadScene(m_PendingLoadPath);
+            }
+        }
+
+        void DoLoadScene(const std::string& path)
+        {
+            if (!m_EditorScene || !m_Camera || !GetRenderer()) return;
+            if (!std::filesystem::exists(path))
+            {
+                LOG_WARN("No scene file to load at '{}'", path);
+                return;
+            }
+
+            // GPU must be idle before Load() frees the current scene's model buffers.
+            GetRenderer()->WaitForIdle();
+
+            SceneCameraState cam;
+            cam.position = m_Camera->GetPosition();
+            cam.yaw = m_Camera->GetYaw();
+            cam.pitch = m_Camera->GetPitch();
+            cam.fov = m_Camera->GetFov();
+            cam.nearPlane = m_Camera->GetNearPlane();
+
+            std::string editorState;
+            if (SceneSerializer::Load(*m_EditorScene, cam, path, GetRenderer(), &editorState))
+            {
+                m_ScenePath = path;
+                ApplyCameraState(cam);
+                ApplyEditorState(editorState);
+
+                // Re-sync shadow config from the (new) primary light, as OnStartup does.
+                if (m_EditorScene->GetLightCount() > 0)
+                    GetRenderer()->SetShadowConfig(m_EditorScene->GetLight(0)->shadowConfig);
+            }
+        }
+
+        void DoNewScene()
+        {
+            if (!m_EditorScene || !m_Camera || !GetRenderer()) return;
+
+            GetRenderer()->WaitForIdle();
+            m_EditorScene->Clear();
+            while (m_EditorScene->GetLightCount() > 0)
+                m_EditorScene->RemoveLight(m_EditorScene->GetLightCount() - 1);
+            m_EditorScene->SetAmbient(glm::vec3(0.03f, 0.03f, 0.05f), 1.0f);
+
+            m_DayNight = DayNightPanel{};   // reset cycle to defaults (no GPU resources)
+            m_ScenePath.clear();
+
+            // Reset camera to the editor's default framing.
+            m_Camera->SetPosition(glm::vec3(3.0f, 3.0f, 3.0f));
+            m_Camera->SetRotation(-135.0f, -20.0f);
+            LOG_INFO("New (empty) scene");
+        }
+
+        void ApplyCameraState(const SceneCameraState& cam)
+        {
+            m_Camera->SetPosition(cam.position);
+            m_Camera->SetRotation(cam.yaw, cam.pitch);
+            uint32_t w = GetRenderer()->GetWidth();
+            uint32_t h = GetRenderer()->GetHeight();
+            float aspect = (h > 0) ? static_cast<float>(w) / static_cast<float>(h) : (1280.0f / 720.0f);
+            m_Camera->SetPerspectiveInfiniteReverseZ(cam.fov, aspect, cam.nearPlane);
+        }
+
+        // --- DayNight panel state <-> the scene file's opaque "editor" blob ---
+        std::string SerializeEditorState() const
+        {
+            auto v3 = [](const glm::vec3& v) { return nlohmann::json::array({ v.x, v.y, v.z }); };
+            const DayNightPanel& d = m_DayNight;
+
+            nlohmann::json dn;
+            dn["enabled"] = d.enabled;
+            dn["timeOfDay"] = d.timeOfDay;
+            dn["autoAdvance"] = d.autoAdvance;
+            dn["speedHours"] = d.speedHours;
+            dn["arcTilt"] = d.arcTilt;
+            dn["dayLightColor"] = v3(d.dayLightColor);
+            dn["nightLightColor"] = v3(d.nightLightColor);
+            dn["horizonColor"] = v3(d.horizonColor);
+            dn["horizonStrength"] = d.horizonStrength;
+            dn["dayLightIntensity"] = d.dayLightIntensity;
+            dn["nightLightIntensity"] = d.nightLightIntensity;
+            dn["dayAmbientColor"] = v3(d.dayAmbientColor);
+            dn["nightAmbientColor"] = v3(d.nightAmbientColor);
+            dn["dayAmbientIntensity"] = d.dayAmbientIntensity;
+            dn["nightAmbientIntensity"] = d.nightAmbientIntensity;
+            dn["dayDiscColor"] = v3(d.dayDiscColor);
+            dn["nightDiscColor"] = v3(d.nightDiscColor);
+            dn["dayDiscIntensity"] = d.dayDiscIntensity;
+            dn["nightDiscIntensity"] = d.nightDiscIntensity;
+            dn["discDistance"] = d.discDistance;
+            dn["discRadius"] = d.discRadius;
+
+            nlohmann::json root;
+            root["dayNight"] = std::move(dn);
+            return root.dump();
+        }
+
+        void ApplyEditorState(const std::string& stateJson)
+        {
+            if (stateJson.empty()) return;
+            try
+            {
+                nlohmann::json root = nlohmann::json::parse(stateJson);
+                if (!root.contains("dayNight")) return;
+                const nlohmann::json& dn = root["dayNight"];
+
+                auto rd3 = [](const nlohmann::json& a, glm::vec3 def) -> glm::vec3 {
+                    if (a.is_array() && a.size() == 3)
+                        return { a[0].get<float>(), a[1].get<float>(), a[2].get<float>() };
+                    return def;
+                };
+
+                DayNightPanel& d = m_DayNight;
+                d.enabled = dn.value("enabled", d.enabled);
+                d.timeOfDay = dn.value("timeOfDay", d.timeOfDay);
+                d.autoAdvance = dn.value("autoAdvance", d.autoAdvance);
+                d.speedHours = dn.value("speedHours", d.speedHours);
+                d.arcTilt = dn.value("arcTilt", d.arcTilt);
+                d.dayLightColor = rd3(dn.value("dayLightColor", nlohmann::json::array()), d.dayLightColor);
+                d.nightLightColor = rd3(dn.value("nightLightColor", nlohmann::json::array()), d.nightLightColor);
+                d.horizonColor = rd3(dn.value("horizonColor", nlohmann::json::array()), d.horizonColor);
+                d.horizonStrength = dn.value("horizonStrength", d.horizonStrength);
+                d.dayLightIntensity = dn.value("dayLightIntensity", d.dayLightIntensity);
+                d.nightLightIntensity = dn.value("nightLightIntensity", d.nightLightIntensity);
+                d.dayAmbientColor = rd3(dn.value("dayAmbientColor", nlohmann::json::array()), d.dayAmbientColor);
+                d.nightAmbientColor = rd3(dn.value("nightAmbientColor", nlohmann::json::array()), d.nightAmbientColor);
+                d.dayAmbientIntensity = dn.value("dayAmbientIntensity", d.dayAmbientIntensity);
+                d.nightAmbientIntensity = dn.value("nightAmbientIntensity", d.nightAmbientIntensity);
+                d.dayDiscColor = rd3(dn.value("dayDiscColor", nlohmann::json::array()), d.dayDiscColor);
+                d.nightDiscColor = rd3(dn.value("nightDiscColor", nlohmann::json::array()), d.nightDiscColor);
+                d.dayDiscIntensity = dn.value("dayDiscIntensity", d.dayDiscIntensity);
+                d.nightDiscIntensity = dn.value("nightDiscIntensity", d.nightDiscIntensity);
+                d.discDistance = dn.value("discDistance", d.discDistance);
+                d.discRadius = dn.value("discRadius", d.discRadius);
+            }
+            catch (const std::exception& e)
+            {
+                LOG_WARN("Failed to apply editor state from scene file: {}", e.what());
+            }
         }
 
         void LoadEditorSettings() { /* TODO */ }

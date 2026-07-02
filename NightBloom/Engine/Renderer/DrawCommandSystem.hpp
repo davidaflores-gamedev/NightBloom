@@ -159,6 +159,11 @@ namespace Nightbloom
 
 		void SetTransform(const glm::mat4& transform) { m_PushConstants.model = transform; }
 		void SetCustomData(const glm::vec4& data) { m_PushConstants.customData = data; }
+
+		// Read-back for serialization (primitives store their transform/custom data
+		// in the push constants rather than on the SceneObject).
+		const glm::mat4& GetTransform() const { return m_PushConstants.model; }
+		const glm::vec4& GetCustomData() const { return m_PushConstants.customData; }
 		//void SetViewMatrix(const glm::mat4& view) { m_PushConstants.view = view; }
 		//void SetProjectionMatrix(const glm::mat4& proj) { m_PushConstants.proj = proj; }
 
