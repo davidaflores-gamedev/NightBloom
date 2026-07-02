@@ -46,4 +46,14 @@ void main() {
 
     // Final clip-space position
     gl_Position = frame.proj * frame.view * worldPos;
+
+    // Emissive sky discs (moon/sun, customData.w >= 2.0) are pinned to the
+    // reverse-Z far plane (NDC z = 0), the same depth the cloud composite draws
+    // at. Without this the moon sits slightly nearer than infinity, so the
+    // clouds' GreaterOrEqual depth test fails over it and the moon punches
+    // through in FRONT of the clouds. Pinning to far lets the cloud pass blend
+    // over the moon (and real geometry still occludes it, having depth > 0).
+    if (push.customData.w >= 2.0) {
+        gl_Position.z = 0.0;
+    }
 }

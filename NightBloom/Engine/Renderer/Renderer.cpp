@@ -2007,6 +2007,18 @@ namespace Nightbloom
 
 			m_ComputeDispatcher->ComputeWriteToFragmentSampleBarrier(
 				cmd, m_CloudSystem->GetRaymarchResultImage());
+
+			// Second raymarch from the mirror-flipped reflection camera, composited
+			// into the water reflection target by RecordReflectionPass. Only worth
+			// doing when water is present to reflect it.
+			if (m_WaterSystem)
+			{
+				m_CloudSystem->DispatchReflectionRaymarch(cmd, m_ComputeDispatcher.get(), frameIndex,
+					m_DescriptorManager->GetReflectionUniformDescriptorSet(frameIndex));
+
+				m_ComputeDispatcher->ComputeWriteToFragmentSampleBarrier(
+					cmd, m_CloudSystem->GetReflectionResultImage());
+			}
 		}
 	}
 
@@ -2217,8 +2229,14 @@ namespace Nightbloom
 		vkCmdSetViewport(cmd, 0, 1, &viewport);
 
 		VkDescriptorSet reflectionUniformSet = m_DescriptorManager->GetReflectionUniformDescriptorSet(frameIndex);
+		// Hand the mirror-camera cloud raymarch result to the recorder so it also
+		// composites clouds into the reflection (only ready when a cloud system is
+		// registered; null otherwise skips clouds in the reflection).
+		VkDescriptorSet cloudReflectionSet = (m_CloudSystem && m_CloudSystem->IsReady())
+			? m_CloudSystem->GetReflectionResultSet()
+			: VK_NULL_HANDLE;
 		m_Commands->ExecuteReflectionDrawList(frameIndex, m_FrameDrawList,
-			m_PipelineAdapter.get(), reflectionUniformSet);
+			m_PipelineAdapter.get(), reflectionUniformSet, cloudReflectionSet);
 
 		m_Commands->EndRenderPass(frameIndex);
 	}

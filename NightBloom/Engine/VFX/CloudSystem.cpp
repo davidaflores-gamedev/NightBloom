@@ -62,6 +62,16 @@ namespace Nightbloom
 			return false;
 		}
 
+		// Reflection result: a second sampled/storage set pair, written by the
+		// mirror-camera raymarch and composited into the water reflection target.
+		m_ReflectionResultSet = m_DescriptorManager->AllocateCloudResultSet();
+		m_ReflectionOutputImageSet = m_DescriptorManager->AllocateComputeImageSet();
+		if (m_ReflectionResultSet == VK_NULL_HANDLE || m_ReflectionOutputImageSet == VK_NULL_HANDLE)
+		{
+			LOG_ERROR("CloudSystem: failed to allocate reflection cloud descriptor sets");
+			return false;
+		}
+
 		if (!CreateComputePipeline())
 		{
 			LOG_ERROR("CloudSystem: failed to create raymarch compute pipeline");
@@ -123,9 +133,15 @@ namespace Nightbloom
 			delete m_RaymarchResult;
 			m_RaymarchResult = nullptr;
 		}
+		if (m_ReflectionResult)
+		{
+			delete m_ReflectionResult;
+			m_ReflectionResult = nullptr;
+		}
 		m_ResultWidth = 0;
 		m_ResultHeight = 0;
 		m_ResultImageEverWritten = false;
+		m_ReflectionResultEverWritten = false;
 	}
 
 	bool CloudSystem::Regenerate(const CloudDesc& desc)
@@ -200,7 +216,6 @@ namespace Nightbloom
 		DestroyResultImage();
 
 		auto* vkDevice = static_cast<VulkanDevice*>(m_Renderer->GetDevice());
-		m_RaymarchResult = new VulkanTexture(vkDevice, m_Renderer->GetMemoryManager());
 
 		TextureDesc texDesc{};
 		texDesc.width = newWidth;
@@ -213,11 +228,24 @@ namespace Nightbloom
 		texDesc.generateMips = false;
 		texDesc.force3D = false;
 
-		if (!m_RaymarchResult->Initialize(texDesc))
+		// Helper: allocate + initialize one low-res result image.
+		auto createResult = [&](const char* label) -> VulkanTexture*
 		{
-			LOG_ERROR("CloudSystem: failed to initialize raymarch result image ({}x{})", newWidth, newHeight);
-			delete m_RaymarchResult;
-			m_RaymarchResult = nullptr;
+			auto* tex = new VulkanTexture(vkDevice, m_Renderer->GetMemoryManager());
+			if (!tex->Initialize(texDesc))
+			{
+				LOG_ERROR("CloudSystem: failed to initialize {} result image ({}x{})", label, newWidth, newHeight);
+				delete tex;
+				return nullptr;
+			}
+			return tex;
+		};
+
+		m_RaymarchResult = createResult("raymarch");
+		m_ReflectionResult = createResult("reflection");
+		if (!m_RaymarchResult || !m_ReflectionResult)
+		{
+			DestroyResultImage();
 			return false;
 		}
 
@@ -226,6 +254,8 @@ namespace Nightbloom
 
 		m_DescriptorManager->UpdateCloudResultSet(m_ResultDescriptorSet, m_RaymarchResult);
 		m_DescriptorManager->UpdateComputeImageSet(m_OutputImageSet, m_RaymarchResult->GetStorageImageView());
+		m_DescriptorManager->UpdateCloudResultSet(m_ReflectionResultSet, m_ReflectionResult);
+		m_DescriptorManager->UpdateComputeImageSet(m_ReflectionOutputImageSet, m_ReflectionResult->GetStorageImageView());
 
 		LOG_INFO("CloudSystem: raymarch result image (re)created ({}x{}, scale={:.2f})",
 			newWidth, newHeight, m_CurrentDesc.resolutionScale);
@@ -236,6 +266,11 @@ namespace Nightbloom
 	VkImage CloudSystem::GetRaymarchResultImage() const
 	{
 		return m_RaymarchResult ? m_RaymarchResult->GetImage() : VK_NULL_HANDLE;
+	}
+
+	VkImage CloudSystem::GetReflectionResultImage() const
+	{
+		return m_ReflectionResult ? m_ReflectionResult->GetImage() : VK_NULL_HANDLE;
 	}
 
 	void CloudSystem::UpdateParams(uint32_t frameIndex, float deltaTime)
@@ -281,6 +316,31 @@ namespace Nightbloom
 		dispatcher->BindDescriptorSet(cmd, m_RaymarchPipelineLayout, 1, m_DescriptorManager->GetCloudDescriptorSet(frameIndex));
 		dispatcher->BindDescriptorSet(cmd, m_RaymarchPipelineLayout, 2, m_DescriptorManager->GetLightingDescriptorSet(frameIndex));
 		dispatcher->BindDescriptorSet(cmd, m_RaymarchPipelineLayout, 3, m_OutputImageSet);
+
+		uint32_t groupsX = ComputeDispatcher::CalculateGroupCount(m_ResultWidth, 8);
+		uint32_t groupsY = ComputeDispatcher::CalculateGroupCount(m_ResultHeight, 8);
+		dispatcher->Dispatch(cmd, groupsX, groupsY, 1);
+	}
+
+	void CloudSystem::DispatchReflectionRaymarch(VkCommandBuffer cmd, ComputeDispatcher* dispatcher,
+		uint32_t frameIndex, VkDescriptorSet reflectionUniformSet)
+	{
+		if (!m_Ready || !dispatcher || !m_ReflectionResult || reflectionUniformSet == VK_NULL_HANDLE) return;
+
+		VkImageLayout oldLayout = m_ReflectionResultEverWritten
+			? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+			: VK_IMAGE_LAYOUT_UNDEFINED;
+		dispatcher->TransitionImageForComputeWrite(cmd, m_ReflectionResult->GetImage(), oldLayout);
+		m_ReflectionResultEverWritten = true;
+
+		dispatcher->BindPipeline(cmd, m_RaymarchPipeline);
+		// set 0 = the mirror-flipped reflection camera (invView/invProj/cameraPos
+		// the raymarch reconstructs rays from) — the ONLY difference from the main
+		// dispatch. Params/noise (set 1) and lighting (set 2) are identical.
+		dispatcher->BindDescriptorSet(cmd, m_RaymarchPipelineLayout, 0, reflectionUniformSet);
+		dispatcher->BindDescriptorSet(cmd, m_RaymarchPipelineLayout, 1, m_DescriptorManager->GetCloudDescriptorSet(frameIndex));
+		dispatcher->BindDescriptorSet(cmd, m_RaymarchPipelineLayout, 2, m_DescriptorManager->GetLightingDescriptorSet(frameIndex));
+		dispatcher->BindDescriptorSet(cmd, m_RaymarchPipelineLayout, 3, m_ReflectionOutputImageSet);
 
 		uint32_t groupsX = ComputeDispatcher::CalculateGroupCount(m_ResultWidth, 8);
 		uint32_t groupsY = ComputeDispatcher::CalculateGroupCount(m_ResultHeight, 8);

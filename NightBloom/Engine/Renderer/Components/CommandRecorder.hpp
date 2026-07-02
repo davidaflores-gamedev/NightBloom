@@ -53,10 +53,13 @@ namespace Nightbloom
 		// reusing their normal pipelines, but binds reflectionUniformSet at set 0
 		// (the mirror-flipped camera) instead of the scene uniform set. The
 		// winding flip from the mirror is cancelled by a negative-height viewport
-		// set by the caller before this runs.
+		// set by the caller before this runs. If cloudReflectionResultSet is
+		// non-null, the Clouds composite is also replayed, sampling that set (the
+		// mirror-camera raymarch result) so clouds appear in the reflection.
 		void ExecuteReflectionDrawList(uint32_t bufferIndex, const DrawList& drawList,
 			VulkanPipelineAdapter* pipelineManager,
-			VkDescriptorSet reflectionUniformSet);
+			VkDescriptorSet reflectionUniformSet,
+			VkDescriptorSet cloudReflectionResultSet = VK_NULL_HANDLE);
 
 		// Individual draw command execution. overrideUniformSet, when non-null,
 		// is bound at set 0 in place of the per-frame scene uniform set (used by

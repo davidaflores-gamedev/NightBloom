@@ -212,7 +212,8 @@ namespace Nightbloom
 	}
 
 	void CommandRecorder::ExecuteReflectionDrawList(uint32_t bufferIndex, const DrawList& drawList,
-		VulkanPipelineAdapter* pipelineManager, VkDescriptorSet reflectionUniformSet)
+		VulkanPipelineAdapter* pipelineManager, VkDescriptorSet reflectionUniformSet,
+		VkDescriptorSet cloudReflectionResultSet)
 	{
 		if (bufferIndex >= m_CommandBuffers.size() || !pipelineManager)
 		{
@@ -221,7 +222,26 @@ namespace Nightbloom
 
 		for (const auto& cmd : drawList.GetCommands())
 		{
-			// Only opaque world geometry is reflected. Transparent/Water/Clouds/
+			// Clouds are composited into the reflection too, but only if the caller
+			// supplied the mirror-camera raymarch result set. We swap the command's
+			// set-0 source (textureDescriptorSet) to that reflection result so the
+			// composite samples the reflected clouds, not the main-view ones. The
+			// draw list is pipeline-sorted, so this Clouds command already runs
+			// after the opaque geometry that writes the reflection depth buffer.
+			if (cmd.pipeline == PipelineType::Clouds)
+			{
+				if (cloudReflectionResultSet == VK_NULL_HANDLE)
+				{
+					continue;
+				}
+				DrawCommand cloudCmd = cmd;
+				cloudCmd.textureDescriptorSet = cloudReflectionResultSet;
+				ExecuteDrawCommand(bufferIndex, cloudCmd, pipelineManager, glm::mat4(1.0f), glm::mat4(1.0f),
+					reflectionUniformSet);
+				continue;
+			}
+
+			// Only opaque world geometry is otherwise reflected. Transparent/Water/
 			// Firefly are skipped (v1) — water can't reflect itself, and the rest
 			// are deferred follow-ups.
 			if (cmd.pipeline != PipelineType::Mesh &&

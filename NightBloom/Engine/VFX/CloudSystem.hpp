@@ -111,6 +111,17 @@ namespace Nightbloom
 		// split of responsibility as FireflySystem's compute->vertex barrier).
 		void DispatchRaymarch(VkCommandBuffer cmd, ComputeDispatcher* dispatcher, uint32_t frameIndex);
 
+		// Second raymarch for the water reflection: same shader, same noise/
+		// params, but fed the mirror-flipped reflection camera at set 0
+		// (reflectionUniformSet) and writing a SEPARATE low-res result image.
+		// Only dispatched by Renderer::RecordComputePass when a WaterSystem is
+		// registered. The reflection pass then composites this result into the
+		// reflection target (see GetReflectionResultSet), so the water samples
+		// clouds "for free" with no Water.frag change. Caller owns the
+		// compute->fragment barrier afterward, same as DispatchRaymarch.
+		void DispatchReflectionRaymarch(VkCommandBuffer cmd, ComputeDispatcher* dispatcher,
+			uint32_t frameIndex, VkDescriptorSet reflectionUniformSet);
+
 		void SubmitDraw(DrawList& drawList) const;
 
 		bool IsReady() const { return m_Ready; }
@@ -126,6 +137,12 @@ namespace Nightbloom
 
 		VkImage GetRaymarchResultImage() const;
 
+		// Reflection variant of the above — the image the mirror-camera raymarch
+		// writes, and the descriptor set the reflection pass's Clouds composite
+		// samples (set 0 of the Clouds pipeline, same slot as m_ResultDescriptorSet).
+		VkImage GetReflectionResultImage() const;
+		VkDescriptorSet GetReflectionResultSet() const { return m_ReflectionResultSet; }
+
 	private:
 		void DestroyNoiseTextures();
 		void DestroyResultImage();
@@ -138,11 +155,14 @@ namespace Nightbloom
 		VulkanTexture* m_ShapeTexture = nullptr;  // caller-owned, like Terrain's heightmap
 		VulkanTexture* m_DetailTexture = nullptr;
 		VulkanTexture* m_RaymarchResult = nullptr; // caller-owned, low-res compute output
+		VulkanTexture* m_ReflectionResult = nullptr; // caller-owned, low-res mirror-camera output for water reflection
 
 		VulkanBuffer* m_ParamsBuffers[2] = { nullptr, nullptr }; // double-buffered, owned by ResourceManager
 
 		VkDescriptorSet m_ResultDescriptorSet = VK_NULL_HANDLE; // graphics composite pass's only input (set 1)
 		VkDescriptorSet m_OutputImageSet = VK_NULL_HANDLE;      // compute pass's output binding (set 3)
+		VkDescriptorSet m_ReflectionResultSet = VK_NULL_HANDLE;   // reflection composite input (set 0 of Clouds)
+		VkDescriptorSet m_ReflectionOutputImageSet = VK_NULL_HANDLE; // reflection raymarch output binding (set 3)
 
 		// Raw compute pipeline - owned directly, mirrors FireflySystem's
 		// pattern (a continuous per-frame simulation, not a generic
@@ -153,6 +173,7 @@ namespace Nightbloom
 		uint32_t m_ResultWidth = 0;
 		uint32_t m_ResultHeight = 0;
 		bool m_ResultImageEverWritten = false; // first dispatch transitions from UNDEFINED, not SHADER_READ_ONLY_OPTIMAL
+		bool m_ReflectionResultEverWritten = false; // same, for the reflection result image
 
 		CloudDesc m_CurrentDesc;
 		float m_TotalTime = 0.0f;
