@@ -17,6 +17,7 @@
 #include "Engine/Renderer/Components/ResourceManager.hpp"
 #include "Engine/Core/Scene.hpp"
 #include "Engine/Core/SceneSerializer.hpp"
+#include "Engine/Core/Project.hpp"
 #include "EditorFileUtils.hpp"
 #include "EditorContext.hpp"
 
@@ -45,6 +46,9 @@
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <filesystem>
+#include <fstream>
+#include <cstdlib>
+#include <algorithm>
 
 // Check if docking is available
 #ifdef IMGUI_HAS_DOCK
@@ -101,8 +105,39 @@ namespace Nightbloom {
             GetRenderer()->SetViewMatrix(m_Camera->GetViewMatrix());
             GetRenderer()->SetProjectionMatrix(m_Camera->GetProjectionMatrix());
 
-            // Scene
+            // Scene (populated below by BootProject — either a loaded project scene
+            // or the seeded Sample project).
             m_EditorScene = std::make_unique<Scene>();
+
+            // ImGui config
+#if USE_IMGUI_DOCKING
+            ImGuiIO& io = ImGui::GetIO();
+            io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+            io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+#endif
+
+            // Initialize panels
+            m_ShaderCompiler.Initialize();
+
+            // Window resize -> update camera aspect
+            GetWindow()->SetResizeCallback([this](uint32_t width, uint32_t height) {
+                if (width > 0 && height > 0 && m_Camera)
+                {
+                    float aspect = static_cast<float>(width) / static_cast<float>(height);
+                    m_Camera->SetPerspectiveInfiniteReverseZ(45.0f, aspect, 0.1f);
+                }
+                });
+
+            // Boot into a project: last-opened if any, else the bundled Sample.
+            BootProject();
+        }
+
+        // Build the engine's default demo scene (ToyCar + test cubes + Moonlight +
+        // emissive moon) into the current, empty m_EditorScene. Used to seed the
+        // bundled Sample project the first time the editor runs. Requires an
+        // initialized Renderer (loads a model + uses built-in geometry buffers).
+        void BuildDefaultScene()
+        {
             ResourceManager* resources = GetRenderer()->GetResourceManager();
             Texture* defaultTex = resources ? resources->GetTexture("default_white") : nullptr;
 
@@ -229,25 +264,6 @@ namespace Nightbloom {
 
             if (m_EditorScene->GetObjectCount() > 0)
                 m_EditorScene->Select(0);
-
-            // ImGui config
-#if USE_IMGUI_DOCKING
-            ImGuiIO& io = ImGui::GetIO();
-            io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-            io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-#endif
-
-            // Initialize panels
-            m_ShaderCompiler.Initialize();
-
-            // Window resize -> update camera aspect
-            GetWindow()->SetResizeCallback([this](uint32_t width, uint32_t height) {
-                if (width > 0 && height > 0 && m_Camera)
-                {
-                    float aspect = static_cast<float>(width) / static_cast<float>(height);
-                    m_Camera->SetPerspectiveInfiniteReverseZ(45.0f, aspect, 0.1f);
-                }
-                });
         }
 
         void OnUpdate(float deltaTime) override
@@ -369,6 +385,20 @@ namespace Nightbloom {
         std::string           m_CurrentProjectName = "Sandbox";
         std::filesystem::path m_CurrentProjectPath;
 
+        // M1 project concept (see .claude/PACKAGING_ROADMAP.md). m_Project is the
+        // active project; opening one loads its start scene. m_EngineRoot is where the
+        // bundled "Sample" project + new projects are scaffolded (set in
+        // SetupDefaultProject). Project switches are DEFERRED like scene loads because
+        // they load a scene (freeing in-flight GPU buffers).
+        Project                  m_Project;
+        std::filesystem::path    m_EngineRoot;
+        std::vector<std::string> m_RecentProjects;   // most-recent first, capped
+        std::string              m_PendingProjectPath;
+        bool                     m_PendingProjectOpen = false;
+
+        static constexpr const char* kProjectFilter =
+            "Nightbloom Project (*.nbproj)\0*.nbproj\0All Files (*.*)\0*.*\0";
+
         // Scene persistence (M0). m_ScenePath is the current scene file (empty =
         // untitled). Load/new are DEFERRED to the next OnUpdate (see
         // ProcessPendingSceneOps) so they never run while this frame's draw list
@@ -488,9 +518,21 @@ namespace Nightbloom {
 
             if (ImGui::BeginMenu("File"))
             {
-                if (ImGui::MenuItem("New Project...")) { LOG_INFO("New project - TODO"); }
-                if (ImGui::MenuItem("Open Project...")) { LOG_INFO("Open project - TODO"); }
-                if (ImGui::MenuItem("Save Project", "Ctrl+S")) { LOG_INFO("Save project - TODO"); }
+                if (ImGui::MenuItem("New Project...")) NewProjectDialog();
+                if (ImGui::MenuItem("Open Project...")) OpenProjectDialog();
+                if (ImGui::MenuItem("Save Project")) SaveProject();
+                if (ImGui::BeginMenu("Recent Projects", !m_RecentProjects.empty()))
+                {
+                    for (const std::string& recent : m_RecentProjects)
+                    {
+                        if (ImGui::MenuItem(recent.c_str()))
+                        {
+                            m_PendingProjectPath = recent;
+                            m_PendingProjectOpen = true;
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("New Scene", "Ctrl+N")) RequestNewScene();
                 if (ImGui::MenuItem("Open Scene...", "Ctrl+O")) OpenSceneDialog();
@@ -650,6 +692,8 @@ namespace Nightbloom {
                 searchPath = searchPath.parent_path();
             }
 
+            m_EngineRoot = engineRoot;  // may be empty; BootProject falls back to cwd
+
             if (!engineRoot.empty())
             {
                 m_CurrentProjectPath = engineRoot / "Sandbox";
@@ -678,6 +722,159 @@ namespace Nightbloom {
         {
             std::string title = "Nightbloom Editor v0.1.0 | Project: " + m_CurrentProjectName;
             GetWindow()->SetTitle(title);
+        }
+
+        // -------------------------------------------------------------------------
+        // M1 project management (see .claude/PACKAGING_ROADMAP.md)
+        // -------------------------------------------------------------------------
+
+        // Where bundled + newly-created projects live: <engineRoot>/Projects, or
+        // ./Projects if the engine root wasn't found.
+        std::filesystem::path GetProjectsRoot() const
+        {
+            std::filesystem::path base = m_EngineRoot.empty()
+                ? std::filesystem::current_path() : m_EngineRoot;
+            return base / "Projects";
+        }
+
+        // Boot the editor into a project: the last-opened one if it still exists,
+        // otherwise the bundled Sample (seeded from BuildDefaultScene on first run).
+        void BootProject()
+        {
+            LoadEditorSettings();
+
+            for (const std::string& recent : m_RecentProjects)
+            {
+                if (!recent.empty() && std::filesystem::exists(recent))
+                {
+                    if (OpenProject(recent))
+                        return;
+                }
+            }
+
+            std::filesystem::path sample = EnsureSampleProject();
+            if (!sample.empty() && OpenProject(sample.string()))
+                return;
+
+            // Ultimate fallback: an in-memory demo scene with no project on disk.
+            LOG_WARN("BootProject: no project available; using in-memory default scene");
+            BuildDefaultScene();
+        }
+
+        // Create the bundled Sample project on first run (folder + .nbproj + start
+        // scene seeded from the demo scene). Returns the .nbproj path, or "" on error.
+        std::filesystem::path EnsureSampleProject()
+        {
+            std::filesystem::path projectsRoot = GetProjectsRoot();
+            std::filesystem::path sampleProj = projectsRoot / "Sample" / "Sample.nbproj";
+
+            if (std::filesystem::exists(sampleProj))
+                return sampleProj;
+
+            Project p;
+            if (!Project::Create(projectsRoot, "Sample", p))
+                return {};
+
+            // Seed the start scene from the demo content, then persist it.
+            BuildDefaultScene();
+            SceneCameraState cam;
+            cam.position = m_Camera->GetPosition();
+            cam.yaw = m_Camera->GetYaw();
+            cam.pitch = m_Camera->GetPitch();
+            cam.fov = m_Camera->GetFov();
+            cam.nearPlane = m_Camera->GetNearPlane();
+            SceneSerializer::Save(*m_EditorScene, cam, p.StartScenePath().string(),
+                p.Settings().name, SerializeEditorState());
+
+            LOG_INFO("Seeded Sample project at {}", p.Root().string());
+            return p.File();
+        }
+
+        // Load a project and its start scene. Safe to call directly at startup (no
+        // in-flight frame); at runtime, route through the pending-open path instead.
+        bool OpenProject(const std::string& projectFile)
+        {
+            Project p;
+            if (!Project::Load(projectFile, p))
+                return false;
+
+            m_Project = p;
+            m_CurrentProjectName = p.Settings().name;
+            m_CurrentProjectPath = p.Root();
+            UpdateWindowTitle();
+
+            // DoLoadScene waits for GPU idle and sets m_ScenePath on success.
+            if (std::filesystem::exists(p.StartScenePath()))
+                DoLoadScene(p.StartScenePath().string());
+            else
+                LOG_WARN("Project '{}' start scene missing: {}",
+                    p.Settings().name, p.StartScenePath().string());
+
+            AddRecentProject(projectFile);
+            SaveEditorSettings();
+            return true;
+        }
+
+        // File > New Project… — pick a location/name, scaffold it, seed an empty
+        // start scene, then switch to it (deferred).
+        void NewProjectDialog()
+        {
+            std::string path = Editor::EditorFileUtils::SaveFileDialog(kProjectFilter, "nbproj");
+            if (path.empty()) return;
+
+            std::filesystem::path pf(path);
+            std::string name = pf.stem().string();
+            std::filesystem::path parent = pf.parent_path();
+
+            Project p;
+            if (!Project::Create(parent, name, p))
+            {
+                LOG_ERROR("Failed to create project '{}'", name);
+                return;
+            }
+
+            // Seed a minimal start scene (ambient + one directional light) with no GPU
+            // interaction, so the new project isn't a black void when opened.
+            Scene seed;
+            seed.SetAmbient(glm::vec3(0.03f, 0.03f, 0.05f), 1.0f);
+            Light* sun = seed.AddLight("Sun", LightType::Directional);
+            sun->direction = glm::vec3(-0.3f, -0.8f, -0.5f);
+            sun->color = glm::vec3(1.0f, 0.96f, 0.9f);
+            sun->intensity = 1.0f;
+            sun->shadowConfig.castsShadows = true;
+            SceneCameraState cam;
+            SceneSerializer::Save(seed, cam, p.StartScenePath().string(), name, "{}");
+
+            m_PendingProjectPath = p.File().string();
+            m_PendingProjectOpen = true;
+        }
+
+        void OpenProjectDialog()
+        {
+            std::string path = Editor::EditorFileUtils::OpenFileDialog(kProjectFilter);
+            if (path.empty()) return;
+            m_PendingProjectPath = path;
+            m_PendingProjectOpen = true;
+        }
+
+        // Persist the project settings file and the current scene to its start scene.
+        void SaveProject()
+        {
+            if (m_Project.IsValid())
+                m_Project.Save();
+            SaveScene();
+        }
+
+        void AddRecentProject(const std::string& projectFile)
+        {
+            std::filesystem::path abs = std::filesystem::absolute(projectFile);
+            std::string key = abs.string();
+            m_RecentProjects.erase(
+                std::remove(m_RecentProjects.begin(), m_RecentProjects.end(), key),
+                m_RecentProjects.end());
+            m_RecentProjects.insert(m_RecentProjects.begin(), key);
+            if (m_RecentProjects.size() > 8)
+                m_RecentProjects.resize(8);
         }
 
         // -------------------------------------------------------------------------
@@ -728,6 +925,16 @@ namespace Nightbloom {
 
         void ProcessPendingSceneOps()
         {
+            // A project switch loads a scene (freeing GPU buffers), so it goes through
+            // the same deferred path and takes precedence over a stale scene op.
+            if (m_PendingProjectOpen)
+            {
+                m_PendingProjectOpen = false;
+                m_PendingSceneLoad = false;
+                m_PendingNewScene = false;
+                OpenProject(m_PendingProjectPath);
+                return;
+            }
             if (m_PendingNewScene)
             {
                 m_PendingNewScene = false;
@@ -879,8 +1086,50 @@ namespace Nightbloom {
             }
         }
 
-        void LoadEditorSettings() { /* TODO */ }
-        void SaveEditorSettings() { /* TODO */ }
+        // Global (project-independent) editor config: recent-projects list, so the
+        // editor can reopen your last project on launch. Lives under %APPDATA% so it
+        // survives clean rebuilds of the editor.
+        std::filesystem::path GetEditorConfigPath() const
+        {
+            const char* appData = std::getenv("APPDATA");
+            std::filesystem::path dir = appData
+                ? std::filesystem::path(appData) / "Nightbloom"
+                : std::filesystem::current_path();
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            return dir / "editor.json";
+        }
+
+        void LoadEditorSettings()
+        {
+            m_RecentProjects.clear();
+            std::filesystem::path cfg = GetEditorConfigPath();
+            if (!std::filesystem::exists(cfg)) return;
+
+            std::ifstream file(cfg);
+            if (!file.is_open()) return;
+            try
+            {
+                nlohmann::json j;
+                file >> j;
+                if (j.contains("recentProjects"))
+                    for (const auto& p : j["recentProjects"])
+                        m_RecentProjects.push_back(p.get<std::string>());
+            }
+            catch (const std::exception& e)
+            {
+                LOG_WARN("Failed to parse editor config: {}", e.what());
+            }
+        }
+
+        void SaveEditorSettings()
+        {
+            nlohmann::json j;
+            j["recentProjects"] = m_RecentProjects;
+            std::ofstream file(GetEditorConfigPath());
+            if (file.is_open())
+                file << j.dump(2);
+        }
     };
 
 } // namespace Nightbloom

@@ -77,7 +77,13 @@ desktop.ini
 *.swp
 *~
 
+# ==== Game projects (M1) ====
+# Projects the editor creates/opens live here but are NOT part of the engine repo.
+# The bundled "Sample" project auto-regenerates on first run (EnsureSampleProject),
+# and real prototypes belong in their own repos. Keeps game assets out of engine history.
+/Projects/
+
 # ==== Backup folder ====
 Backup/
-Distribution/ 
+Distribution/
 Docs/
