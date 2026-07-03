@@ -223,10 +223,10 @@ namespace Nightbloom
 		for (const auto& cmd : drawList.GetCommands())
 		{
 			// Clouds are composited into the reflection too, but only if the caller
-			// supplied the mirror-camera raymarch result set. We swap the command's
-			// set-0 source (textureDescriptorSet) to that reflection result so the
-			// composite samples the reflected clouds, not the main-view ones. The
-			// draw list is pipeline-sorted, so this Clouds command already runs
+			// supplied the mirror-camera raymarch result set. Clouds' set-0 is its
+			// raymarch-result sampler; overriding set 0 with the reflection result
+			// makes the composite sample the reflected clouds, not the main-view ones.
+			// The draw list is pipeline-sorted, so this Clouds command already runs
 			// after the opaque geometry that writes the reflection depth buffer.
 			if (cmd.pipeline == PipelineType::Clouds)
 			{
@@ -234,10 +234,8 @@ namespace Nightbloom
 				{
 					continue;
 				}
-				DrawCommand cloudCmd = cmd;
-				cloudCmd.textureDescriptorSet = cloudReflectionResultSet;
-				ExecuteDrawCommand(bufferIndex, cloudCmd, pipelineManager, glm::mat4(1.0f), glm::mat4(1.0f),
-					reflectionUniformSet);
+				ExecuteDrawCommand(bufferIndex, cmd, pipelineManager, glm::mat4(1.0f), glm::mat4(1.0f),
+					cloudReflectionResultSet);
 				continue;
 			}
 
@@ -275,199 +273,65 @@ namespace Nightbloom
 			m_CurrentPipelineLayout = layout;
 		}
 
-		bool pipelineUsesUniforms = (
-			cmd.pipeline == PipelineType::Mesh			||
-			cmd.pipeline == PipelineType::Transparent	||
-			cmd.pipeline == PipelineType::NodeGenerated ||
-			cmd.pipeline == PipelineType::Triangle		||
-			cmd.pipeline == PipelineType::Terrain		||
-			cmd.pipeline == PipelineType::Foliage		||
-			cmd.pipeline == PipelineType::Firefly		);
-			// Clouds excluded: the graphics composite pass only samples the
-			// low-res raymarch result (see below) - it needs no FrameUniforms
-			// at all, since the raymarch (and the camera math it needed)
-			// moved to CloudRaymarch.comp.
-
-		// Water also uses a set-0 uniform (the scene camera) — handled in the
-		// dedicated Water block below, not here, since its other sets differ.
-		if (cmd.pipeline == PipelineType::Water)
+		// --- Bind descriptor sets generically ---
+		// The recorder is pipeline-agnostic: each DrawCommand carries its own binding
+		// list (filled by the owning system, or AppendCoreBindings for the built-in
+		// pipelines). Frame-global sets are resolved here rather than at submit time,
+		// because their per-frame double-buffered handle isn't known to the submitter.
+		if (m_CurrentPipelineLayout != VK_NULL_HANDLE)
 		{
-			pipelineUsesUniforms = false;
-		}
-
-		if (pipelineUsesUniforms && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
-		{
-			// The reflection pass substitutes the mirror-flipped camera at set 0.
-			VkDescriptorSet uniformSet = (overrideUniformSet != VK_NULL_HANDLE)
-				? overrideUniformSet
-				: m_DescriptorManager->GetUniformDescriptorSet(bufferIndex);
-			vkCmdBindDescriptorSets(
-				commandBuffer,
-				VK_PIPELINE_BIND_POINT_GRAPHICS,
-				m_CurrentPipelineLayout,
-				0,  // set 0 for uniforms
-				1,
-				&uniformSet,
-				0,
-				nullptr
-			);
-		}
-
-		// --- Bind cloud raymarch result (set 0 - Clouds' only descriptor set) ---
-		// Distinct from pipelineUsesTextures below: this is set 0 (the Clouds
-		// composite pipeline has no uniform set ahead of it), and the source
-		// is cmd.textureDescriptorSet (set by CloudSystem::SubmitDraw to its
-		// single, non-per-frame result descriptor set).
-		if (cmd.pipeline == PipelineType::Clouds && m_CurrentPipelineLayout != VK_NULL_HANDLE
-			&& cmd.textureDescriptorSet != VK_NULL_HANDLE)
-		{
-			vkCmdBindDescriptorSets(
-				commandBuffer,
-				VK_PIPELINE_BIND_POINT_GRAPHICS,
-				m_CurrentPipelineLayout,
-				0,  // set 0 - Clouds' only set
-				1,
-				&cmd.textureDescriptorSet,
-				0,
-				nullptr
-			);
-		}
-
-		// --- Bind texture descriptor set (set 1) ---
-		bool pipelineUsesTextures = (
-			cmd.pipeline == PipelineType::Mesh			||
-			cmd.pipeline == PipelineType::Transparent	||
-			cmd.pipeline == PipelineType::NodeGenerated ||
-			cmd.pipeline == PipelineType::Terrain		||
-			cmd.pipeline == PipelineType::Foliage		||
-			cmd.pipeline == PipelineType::Firefly		);
-
-		if (pipelineUsesTextures && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE )
-		{
-			if (cmd.textureDescriptorSet != VK_NULL_HANDLE)
+			for (const auto& binding : cmd.descriptorBindings)
 			{
-				vkCmdBindDescriptorSets(
-					commandBuffer,
-					VK_PIPELINE_BIND_POINT_GRAPHICS,
-					m_CurrentPipelineLayout,
-					1,  // set 1 for textures
-					1,
-					&cmd.textureDescriptorSet,
-					0,
-					nullptr
-				);
-			}
-			else if (!cmd.textures.empty())
-			{
-				// Use the texture's own descriptor set instead of updating a shared one
-				VulkanTexture* vkTexture = static_cast<VulkanTexture*>(cmd.textures[0]);
-
-				if (vkTexture && vkTexture->HasDescriptorSet())
+				VkDescriptorSet set = VK_NULL_HANDLE;
+				switch (binding.source)
 				{
-					// Bind the texture's pre-allocated descriptor set - NO UPDATE during rendering!
-					VkDescriptorSet textureSet = vkTexture->GetDescriptorSet();
+				case BindingSource::Explicit:
+					set = binding.set;
+					break;
+				case BindingSource::FrameUniform:
+					if (m_DescriptorManager) set = m_DescriptorManager->GetUniformDescriptorSet(bufferIndex);
+					break;
+				case BindingSource::FrameLighting:
+					if (m_DescriptorManager) set = m_DescriptorManager->GetLightingDescriptorSet(bufferIndex);
+					break;
+				case BindingSource::FrameShadow:
+					if (m_DescriptorManager) set = m_DescriptorManager->GetShadowDescriptorSet(bufferIndex);
+					break;
+				case BindingSource::ReflectionInput:
+					set = m_ReflectionInputSet;
+					break;
+				case BindingSource::CommandTexture:
+					if (!cmd.textures.empty())
+					{
+						// Bind the texture's pre-allocated descriptor set — NO update during recording.
+						VulkanTexture* vkTexture = static_cast<VulkanTexture*>(cmd.textures[0]);
+						if (vkTexture && vkTexture->HasDescriptorSet())
+							set = vkTexture->GetDescriptorSet();
+						else
+							LOG_WARN("Texture has no descriptor set - texture may not have been properly initialized");
+					}
+					break;
+				}
+
+				// The reflection pass substitutes the set-0 source: the mirror-flipped
+				// camera for opaque geometry, or the mirror-view raymarch result for the
+				// Clouds composite. overrideUniformSet is null in every other pass.
+				if (binding.setIndex == 0 && overrideUniformSet != VK_NULL_HANDLE)
+					set = overrideUniformSet;
+
+				if (set != VK_NULL_HANDLE)
+				{
 					vkCmdBindDescriptorSets(
 						commandBuffer,
 						VK_PIPELINE_BIND_POINT_GRAPHICS,
 						m_CurrentPipelineLayout,
-						1,  // set 1 for textures
-						1,  // set count
-						&textureSet,
-						0,  // dynamic offset count
+						binding.setIndex,
+						1,
+						&set,
+						0,
 						nullptr
 					);
 				}
-				else
-				{
-					LOG_WARN("Texture has no descriptor set - texture may not have been properly initialized");
-				}
-			}
-		}
-
-		// --- Bind lighting descriptor set (set 2) ---
-		// Clouds excluded: the sun/lighting read now happens in
-		// CloudRaymarch.comp, not the graphics composite pass.
-		bool pipelineUsesLighting = (
-			cmd.pipeline == PipelineType::Mesh			||
-			cmd.pipeline == PipelineType::Transparent	||
-			cmd.pipeline == PipelineType::Terrain		||
-			cmd.pipeline == PipelineType::Foliage		);
-
-		if (pipelineUsesLighting && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
-		{
-			VkDescriptorSet lightingSet = m_DescriptorManager->GetLightingDescriptorSet(bufferIndex);
-			vkCmdBindDescriptorSets(
-				commandBuffer,
-				VK_PIPELINE_BIND_POINT_GRAPHICS,
-				m_CurrentPipelineLayout,
-				2,  // set 2 for lighting
-				1,
-				&lightingSet,
-				0,
-				nullptr
-			);
-		}
-
-		bool pipelineUsesShadowMap = (
-			cmd.pipeline == PipelineType::Mesh		||
-			cmd.pipeline == PipelineType::Terrain	||
-			cmd.pipeline == PipelineType::Foliage	);
-
-		if (pipelineUsesShadowMap && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
-		{
-			VkDescriptorSet shadowSet = m_DescriptorManager->GetShadowDescriptorSet(bufferIndex);
-			if (shadowSet != VK_NULL_HANDLE)
-			{
-				vkCmdBindDescriptorSets(
-					commandBuffer,
-					VK_PIPELINE_BIND_POINT_GRAPHICS,
-					m_CurrentPipelineLayout,
-					3,  // set 3 for shadow map
-					1,
-					&shadowSet,
-					0,
-					nullptr
-				);
-			}
-		}
-
-		bool pipelineUsesHeightmap = (
-			cmd.pipeline == PipelineType::Terrain	||
-			cmd.pipeline == PipelineType::Foliage	);
-
-		if (pipelineUsesHeightmap && cmd.heightmapDescriptorSet != VK_NULL_HANDLE
-			&& m_CurrentPipelineLayout != VK_NULL_HANDLE)
-		{
-			vkCmdBindDescriptorSets(
-				commandBuffer,
-				VK_PIPELINE_BIND_POINT_GRAPHICS,
-				m_CurrentPipelineLayout,
-				4,   // set 4
-				1,
-				&cmd.heightmapDescriptorSet,
-				0,
-				nullptr
-			);
-		}
-
-		// --- Water descriptor sets (set 0 = scene uniform, set 1 = lighting,
-		//     set 2 = reflection target). Water's set layout differs from the
-		//     Mesh/Terrain convention (no texture set, lighting at set 1), so it
-		//     gets its own block rather than reusing the generic chain above. ---
-		if (cmd.pipeline == PipelineType::Water && m_DescriptorManager && m_CurrentPipelineLayout != VK_NULL_HANDLE)
-		{
-			VkDescriptorSet uniformSet = m_DescriptorManager->GetUniformDescriptorSet(bufferIndex);
-			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-				m_CurrentPipelineLayout, 0, 1, &uniformSet, 0, nullptr);
-
-			VkDescriptorSet lightingSet = m_DescriptorManager->GetLightingDescriptorSet(bufferIndex);
-			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-				m_CurrentPipelineLayout, 1, 1, &lightingSet, 0, nullptr);
-
-			if (m_ReflectionInputSet != VK_NULL_HANDLE)
-			{
-				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-					m_CurrentPipelineLayout, 2, 1, &m_ReflectionInputSet, 0, nullptr);
 			}
 		}
 

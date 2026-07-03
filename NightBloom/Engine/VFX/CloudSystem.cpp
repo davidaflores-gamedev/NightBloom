@@ -362,7 +362,8 @@ namespace Nightbloom
 		cmd.vertexCount = 3;
 		cmd.instanceCount = 1;
 		cmd.hasPushConstants = false;
-		cmd.textureDescriptorSet = m_ResultDescriptorSet;
+		// The composite pass samples only the low-res raymarch result at set 0.
+		cmd.descriptorBindings = { { 0, BindingSource::Explicit, m_ResultDescriptorSet } };
 
 		drawList.AddCommand(cmd);
 	}

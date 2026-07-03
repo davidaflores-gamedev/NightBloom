@@ -264,9 +264,13 @@ namespace Nightbloom
         //    cmd.textures.push_back(m_AlbedoTexture);
         //}
 
-        // Heightmap descriptor set (set 4)
-        cmd.heightmapDescriptorSet = m_HeightmapDescriptorSet;
-        cmd.textureDescriptorSet = m_TerrainTextureSet;
+        cmd.descriptorBindings = {
+            { 0, BindingSource::FrameUniform },
+            { 1, BindingSource::Explicit, m_TerrainTextureSet },       // grass/dirt/rock (set 1)
+            { 2, BindingSource::FrameLighting },
+            { 3, BindingSource::FrameShadow },
+            { 4, BindingSource::Explicit, m_HeightmapDescriptorSet },  // heightmap (set 4)
+        };
 
         drawList.AddCommand(cmd);
 

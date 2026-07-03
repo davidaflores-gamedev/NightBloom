@@ -242,8 +242,13 @@ namespace Nightbloom
 			cmd.pushConstants.model = terrainBounds;
 			cmd.pushConstants.customData = windParams;
 
-			cmd.textureDescriptorSet = m_StorageDescriptorSet;
-			cmd.heightmapDescriptorSet = terrainHeightmapSet;
+			cmd.descriptorBindings = {
+				{ 0, BindingSource::FrameUniform },
+				{ 1, BindingSource::Explicit, m_StorageDescriptorSet },  // per-blade instance data (set 1)
+				{ 2, BindingSource::FrameLighting },
+				{ 3, BindingSource::FrameShadow },
+				{ 4, BindingSource::Explicit, terrainHeightmapSet },     // heightmap (set 4)
+			};
 
 			drawList.AddCommand(cmd);
 		}

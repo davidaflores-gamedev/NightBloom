@@ -55,6 +55,33 @@ namespace Nightbloom
 		glm::mat4 invProj;
 	};
 
+	// ============================================================================
+	// Descriptor binding — generic, pipeline-agnostic set binding
+	// ============================================================================
+	// A DrawCommand declares which descriptor sets it needs and at which set index.
+	// The CommandRecorder binds them in a single loop, so it no longer switches on
+	// PipelineType at all. Frame-global sets (camera / lighting / shadow map) are
+	// per-frame double-buffered and owned by the renderer, so a submitting system
+	// can't hold their handle — it names them by tag and the recorder resolves the
+	// current frame's set. This is what lets a new GPU system be self-contained in
+	// its own *System.cpp instead of requiring edits across the recorder.
+	enum class BindingSource : uint8_t
+	{
+		Explicit,        // bind `set` directly (a set the command/system owns)
+		FrameUniform,    // recorder resolves the per-frame FrameUniforms set
+		FrameLighting,   // recorder resolves the per-frame SceneLighting set
+		FrameShadow,     // recorder resolves the per-frame shadow-map sampler set
+		ReflectionInput, // recorder binds the planar-reflection colour-target sampler
+		CommandTexture,  // recorder binds cmd.textures[0]'s own descriptor set
+	};
+
+	struct DescriptorBinding
+	{
+		uint32_t        setIndex = 0;
+		BindingSource   source   = BindingSource::Explicit;
+		VkDescriptorSet set      = VK_NULL_HANDLE;  // used when source == Explicit
+	};
+
 	// A single draw command
 	struct DrawCommand
 	{
@@ -84,13 +111,59 @@ namespace Nightbloom
 		// Textures (simplified for now - expand later)
 		std::vector<Texture*> textures;
 
-		VkDescriptorSet heightmapDescriptorSet = VK_NULL_HANDLE;  // Set 4 — terrain only
-		VkDescriptorSet textureDescriptorSet = VK_NULL_HANDLE;  // Set 4 — terrain only
+		// Descriptor sets this draw needs, by set index. Filled at submit time by the
+		// owning system, or by AppendCoreBindings for the built-in Mesh/Transparent/
+		// Triangle/NodeGenerated pipelines. The recorder binds these generically — it
+		// does not switch on PipelineType. See BindingSource for how each is resolved.
+		std::vector<DescriptorBinding> descriptorBindings;
 
 		// Custom render state overrides (optional)
 		std::function<void()> preDrawCallback = nullptr;  // Called before draw
 		std::function<void()> postDrawCallback = nullptr; // Called after draw
 	};
+
+	// Look up the explicit descriptor set a command bound at a given set index (or
+	// VK_NULL_HANDLE if none). Used by passes that reuse a command's own set at a
+	// different slot — e.g. the TerrainShadow pass rebinds the heightmap (main-pass
+	// set 4) at set 1 of the depth-only shadow layout.
+	inline VkDescriptorSet FindExplicitBinding(const DrawCommand& cmd, uint32_t setIndex)
+	{
+		for (const auto& b : cmd.descriptorBindings)
+			if (b.setIndex == setIndex && b.source == BindingSource::Explicit)
+				return b.set;
+		return VK_NULL_HANDLE;
+	}
+
+	// Fills descriptorBindings for the engine's built-in pipelines. Self-contained GPU
+	// systems (Terrain, Grass, Water, Clouds, Fireflies) declare their own bindings in
+	// their SubmitDraw instead — this only covers the generic MeshDrawable/ModelDrawable
+	// path, which can emit several pipeline types depending on how it's used.
+	inline void AppendCoreBindings(DrawCommand& cmd)
+	{
+		switch (cmd.pipeline)
+		{
+		case PipelineType::Mesh:
+		case PipelineType::Transparent:
+			cmd.descriptorBindings = {
+				{ 0, BindingSource::FrameUniform },
+				{ 1, BindingSource::CommandTexture },
+				{ 2, BindingSource::FrameLighting },
+				{ 3, BindingSource::FrameShadow },
+			};
+			break;
+		case PipelineType::NodeGenerated:
+			cmd.descriptorBindings = {
+				{ 0, BindingSource::FrameUniform },
+				{ 1, BindingSource::CommandTexture },
+			};
+			break;
+		case PipelineType::Triangle:
+			cmd.descriptorBindings = { { 0, BindingSource::FrameUniform } };
+			break;
+		default:
+			break;
+		}
+	}
 
 	// ============================================================================
 	// Drawable Interface - Objects that can be rendered
@@ -136,6 +209,7 @@ namespace Nightbloom
 
 			cmd.textures = m_Textures;
 
+			AppendCoreBindings(cmd);
 			return { cmd };
 		}
 
@@ -233,6 +307,7 @@ namespace Nightbloom
 					if (textureToUse)
 						cmd.textures.push_back(textureToUse);
 
+					AppendCoreBindings(cmd);
 					transparentCommands.push_back(cmd);
 				}
 				else
@@ -244,6 +319,7 @@ namespace Nightbloom
 					if (textureToUse)
 						cmd.textures.push_back(textureToUse);
 
+					AppendCoreBindings(cmd);
 					opaqueCommands.push_back(cmd);
 				}
 	        }
@@ -322,6 +398,8 @@ namespace Nightbloom
 			cmd.indexCount = indexCount;
 			cmd.hasPushConstants = true;
 			cmd.pushConstants.model = transform;
+
+			AppendCoreBindings(cmd);
 
 			// View and projection should be set elsewhere
 			m_Commands.push_back(cmd);

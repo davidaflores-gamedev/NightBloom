@@ -198,7 +198,10 @@ namespace Nightbloom
 		cmd.vertexCount = 6;
 		cmd.instanceCount = m_AgentCount;
 		cmd.hasPushConstants = false;
-		cmd.textureDescriptorSet = m_StorageDescriptorSet;
+		cmd.descriptorBindings = {
+			{ 0, BindingSource::FrameUniform },
+			{ 1, BindingSource::Explicit, m_StorageDescriptorSet },  // agent storage buffer (set 1)
+		};
 
 		drawList.AddCommand(cmd);
 	}

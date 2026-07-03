@@ -2131,17 +2131,20 @@ namespace Nightbloom
 				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 					shadowLayout, 0, 1, &shadowUniformSet, 0, nullptr);
 
-				// For terrain: also bind heightmap at set 1
+				// For terrain: also bind heightmap at set 1. The heightmap lives at
+				// main-pass set 4; rebind the same set here at set 1 of the depth-only
+				// TerrainShadow layout so the shadow pass displaces identically.
 				if (isTerrain)
 				{
-					if (drawCmd.heightmapDescriptorSet == VK_NULL_HANDLE)
+					VkDescriptorSet heightmapSet = FindExplicitBinding(drawCmd, 4);
+					if (heightmapSet == VK_NULL_HANDLE)
 					{
-						LOG_WARN("TerrainShadow: heightmapDescriptorSet is null, skipping draw");
+						LOG_WARN("TerrainShadow: heightmap set is null, skipping draw");
 						continue;
 					}
 
 					vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-						shadowLayout, 1, 1, &drawCmd.heightmapDescriptorSet, 0, nullptr);
+						shadowLayout, 1, 1, &heightmapSet, 0, nullptr);
 				}
 
 				// Set push constants (model matrix)

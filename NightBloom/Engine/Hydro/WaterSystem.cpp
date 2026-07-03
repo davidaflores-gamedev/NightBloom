@@ -87,6 +87,14 @@ namespace Nightbloom
 			m_CurrentDesc.fresnelPower,
 			m_CurrentDesc.alpha);
 
+		// Water's set layout differs from Mesh/Terrain: uniform=0, lighting=1,
+		// reflection target=2 (no texture/shadow/heightmap sets).
+		cmd.descriptorBindings = {
+			{ 0, BindingSource::FrameUniform },
+			{ 1, BindingSource::FrameLighting },
+			{ 2, BindingSource::ReflectionInput },
+		};
+
 		drawList.AddCommand(cmd);
 	}
 
