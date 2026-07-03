@@ -339,25 +339,6 @@ namespace Nightbloom
 		Texture* m_DefaultTexture = nullptr;
 	};
 
-	// Debug shape drawable (for editor gizmos, etc.)
-	class DebugDrawable : public IDrawable
-	{
-	public:
-		enum class Shape { Line, Box, Sphere, Grid };
-
-		DebugDrawable(Shape shape, const glm::vec3& color = glm::vec3(1.0f))
-			: m_Shape(shape), m_Color(color)
-		{
-		}
-
-		std::vector<DrawCommand> GetDrawCommands() const override;
-
-	private:
-		Shape m_Shape;
-		glm::vec3 m_Color;
-		glm::mat4 m_Transform = glm::mat4(1.0f);
-	};
-
 	// ============================================================================
 	// Draw List - Accumulates draw commands for a frame
 	// ============================================================================

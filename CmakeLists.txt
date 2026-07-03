@@ -14,6 +14,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 #------------------------------------------------------------------------------
+# Shared CMake helpers. NightbloomShaders defines nightbloom_compile_shaders(),
+# used by any exe target (Editor now, Game runtime later) to deploy the
+# engine-owned shaders. Included before the targets so subdirectories see it.
+#------------------------------------------------------------------------------
+include(${CMAKE_SOURCE_DIR}/cmake/NightbloomShaders.cmake)
+
+#------------------------------------------------------------------------------
 # Build Engine (includes ThirdParty automatically)
 #------------------------------------------------------------------------------
 add_subdirectory(NightBloom)

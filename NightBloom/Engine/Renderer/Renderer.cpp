@@ -509,34 +509,6 @@ namespace Nightbloom
 		return m_Resources->GetGroundPlaneIndexCount();
 	}
 
-	void Renderer::TestShaderClass()
-	{
-		// Load a shader file
-		auto shaderCode = AssetManager::Get().LoadShaderBinary("triangle.vert");
-
-		VulkanDevice* vkDevice = static_cast<VulkanDevice*>(m_Device.get());
-
-		// Create a VulkanShader
-		VulkanShader testShader(vkDevice, ShaderStage::Vertex);
-
-		if (testShader.CreateFromSpirV(shaderCode))
-		{
-			LOG_INFO("Test shader created successfully!");
-
-			// Get the stage info
-			auto stageInfo = testShader.GetStageInfo();
-			LOG_INFO("Stage info created, entry point: {}", testShader.GetEntryPoint());
-		}
-		else
-		{
-			LOG_ERROR("Failed to create test shader");
-		}
-	}
-
-	void Renderer::RunComputeTest()
-	{
-	}
-
 	void Renderer::PrintComputeTestResults()
 	{
 		if (!m_ComputeEnabled || !m_ComputeTestOutputBuffer)
@@ -1701,24 +1673,6 @@ namespace Nightbloom
 		{
 			LOG_WARN("Failed to initialize NoiseTextureGenerator - continuing without noise");
 		}
-		else
-		{
-			// Sanity check: generate a small test noise texture
-			NoiseTextureDesc testDesc;
-			testDesc.width = 64;
-			testDesc.height = 64;
-			testDesc.depth = 64;
-			testDesc.noiseType = NoiseType::Perlin;
-			testDesc.octaves = 4;
-			testDesc.frequency = 4.0f;
-			testDesc.debugName = "TestNoise";
-
-			m_TestNoise = m_NoiseGenerator->Generate(testDesc, m_ComputeDispatcher.get());
-			if (!m_TestNoise)
-			{
-				LOG_WARN("Test noise generation failed");
-			}
-		}
 
 		// Generate initial 2D preview for the editor panel
 		NoiseTextureDesc previewDesc;
@@ -2482,12 +2436,6 @@ namespace Nightbloom
 		{
 			m_NoiseGenerator->Cleanup();
 			m_NoiseGenerator.reset();
-		}
-
-		if (m_TestNoise)
-		{
-			delete m_TestNoise;
-			m_TestNoise = nullptr;
 		}
 
 		if (m_ComputeDispatcher)

@@ -68,46 +68,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/EditorResources")
 endif()
 
 #------------------------------------------------------------------------------
-# Shader Compilation
+# Shader Compilation — deploys the engine-owned shaders (NightBloom/Shaders) next
+# to the editor exe. Shared with the future Game runtime; see
+# cmake/NightbloomShaders.cmake (P4 in .claude/RENDERER_ASSESSMENT.md).
 #------------------------------------------------------------------------------
-find_program(GLSLC glslc HINTS 
-    $ENV{VULKAN_SDK}/Bin 
-    $ENV{VULKAN_SDK}/Bin32
-)
-
-if(NOT GLSLC)
-    message(WARNING "glslc not found! Shaders won't be compiled automatically.")
-else()
-    message(STATUS "Found glslc: ${GLSLC}")
-    
-    file(GLOB SHADER_SOURCES
-    	CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.vert"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.frag"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.comp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.geom"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.tesc"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.tese"
-    )
-    
-message(STATUS "Found shaders: ${SHADER_SOURCES}")
-
-    if(SHADER_SOURCES)
-        foreach(SHADER ${SHADER_SOURCES})
-            get_filename_component(SHADER_NAME ${SHADER} NAME)
-            add_custom_command(TARGET NightbloomEditor POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:NightbloomEditor>/Shaders"
-                COMMAND ${GLSLC} "${SHADER}" -I "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Include" -o "$<TARGET_FILE_DIR:NightbloomEditor>/Shaders/${SHADER_NAME}.spv"
-                COMMENT "Compiling shader ${SHADER_NAME}"
-                VERBATIM
-            )
-        endforeach()
-    else()
-        add_custom_command(TARGET NightbloomEditor POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:NightbloomEditor>/Shaders"
-        )
-    endif()
-endif()
+nightbloom_compile_shaders(NightbloomEditor)
 
 # Group files in IDE
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${EDITOR_SOURCES})

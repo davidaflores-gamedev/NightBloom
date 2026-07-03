@@ -85,9 +85,8 @@ namespace Nightbloom
 		Buffer* GetMoonSphereIndexBuffer() const;
 		uint32_t GetMoonSphereIndexCount() const;
 
-		void TestShaderClass();
-
-		void RunComputeTest();
+		// Runs the compute-pipeline smoke test (multiply 64 floats by 2) and logs the
+		// result — a dev sanity check wired to the Debug panel button.
 		void PrintComputeTestResults();
 
 		// Noise access
@@ -254,8 +253,6 @@ namespace Nightbloom
 			float time;
 		};
 
-		// Noise Generator test texture
-		VulkanTexture* m_TestNoise = nullptr;
 		VulkanTexture* m_NoisePreview = nullptr;  // 2D (depth=1), displayable in ImGui
 
 		// Shadow state
