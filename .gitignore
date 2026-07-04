@@ -83,6 +83,10 @@ desktop.ini
 # and real prototypes belong in their own repos. Keeps game assets out of engine history.
 /Projects/
 
+# ==== Packaged distributables (M3) ====
+# Packaging/PackageGame.ps1 stages + zips shippable builds here. Build artifacts.
+/dist/
+
 # ==== Backup folder ====
 Backup/
 Distribution/

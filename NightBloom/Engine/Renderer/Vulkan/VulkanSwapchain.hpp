@@ -42,6 +42,11 @@ namespace Nightbloom
 		// Check if swapchain needs to be recreated
 		bool IsOutOfDate() const { return m_OutOfDate; }
 
+		// V-Sync preference — takes effect on the next (re)creation, since it only
+		// changes which present mode ChooseSwapPresentMode picks (FIFO vs Mailbox).
+		void SetVSync(bool enabled) { m_EnableVSync = enabled; }
+		bool IsVSyncEnabled() const { return m_EnableVSync; }
+
 	private:
 		// Helper structs
 		struct SwapChainSupportDetails

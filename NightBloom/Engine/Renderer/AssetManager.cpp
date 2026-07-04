@@ -296,6 +296,63 @@ namespace Nightbloom
 		return allValid;
 	}
 
+	std::string AssetManager::ToAssetRelativePath(const std::string& absolutePath) const
+	{
+		namespace fs = std::filesystem;
+		if (absolutePath.empty())
+			return absolutePath;
+
+		std::error_code ec;
+		fs::path abs = fs::weakly_canonical(fs::path(absolutePath), ec);
+		if (ec) abs = fs::path(absolutePath).lexically_normal();
+
+		// Prefer the active project's Assets dir, then the global one. The stored
+		// path is deliberately root-agnostic (e.g. "Models/ToyCar/ToyCar.gltf") so the
+		// SAME relative path resolves under a packaged project's Assets/ later.
+		for (const std::string& root : { m_ProjectAssetsPath, m_AssetsPath })
+		{
+			if (root.empty())
+				continue;
+			fs::path r = fs::weakly_canonical(fs::path(root), ec);
+			if (ec) r = fs::path(root).lexically_normal();
+
+			fs::path rel = abs.lexically_relative(r);
+			std::string rels = rel.generic_string();
+			if (!rels.empty() && rels != "." && rels.rfind("..", 0) != 0 && !rel.is_absolute())
+				return rels;
+		}
+		return absolutePath;  // not under any known root — keep absolute (dev fallback)
+	}
+
+	std::string AssetManager::ResolveAssetRelativePath(const std::string& storedPath) const
+	{
+		namespace fs = std::filesystem;
+		if (storedPath.empty())
+			return storedPath;
+
+		fs::path p(storedPath);
+
+		// Legacy scenes stored absolute paths — honor them when the file is present.
+		if (p.is_absolute() && fs::exists(p))
+			return storedPath;
+
+		// Relative path — resolve against candidate asset roots (project, then global).
+		if (!p.is_absolute())
+		{
+			for (const std::string& root : { m_ProjectAssetsPath, m_AssetsPath })
+			{
+				if (root.empty())
+					continue;
+				fs::path cand = fs::path(root) / p;
+				if (fs::exists(cand))
+					return cand.generic_string();
+			}
+		}
+
+		// Not found anywhere — return as-is so the loader logs a clear failure.
+		return storedPath;
+	}
+
 	bool AssetManager::FindProjectRoot(const std::string& basePathHint)
 	{
 		std::filesystem::path p(basePathHint);

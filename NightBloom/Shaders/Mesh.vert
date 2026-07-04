@@ -47,13 +47,22 @@ void main() {
     // Final clip-space position
     gl_Position = frame.proj * frame.view * worldPos;
 
-    // Emissive sky discs (moon/sun, customData.w >= 2.0) are pinned to the
-    // reverse-Z far plane (NDC z = 0), the same depth the cloud composite draws
-    // at. Without this the moon sits slightly nearer than infinity, so the
-    // clouds' GreaterOrEqual depth test fails over it and the moon punches
-    // through in FRONT of the clouds. Pinning to far lets the cloud pass blend
-    // over the moon (and real geometry still occludes it, having depth > 0).
+    // Emissive sky discs (moon/sun, customData.w >= 2.0) render as CELESTIAL
+    // bodies at effectively infinite distance. Two things make that work:
+    //   1) Strip the camera TRANSLATION from the view (rotation only) so the disc
+    //      keeps a fixed screen direction as the camera moves through the world.
+    //      Without this the disc is anchored to the world origin at a finite ~350u
+    //      and parallaxes — a bright white circle that slides / "zips" across the
+    //      sky as you fly around. A real moon must not parallax with translation.
+    //   2) Pin to the reverse-Z far plane (NDC z = 0), the same depth the cloud
+    //      composite draws at. Without this the moon sits slightly nearer than
+    //      infinity, so the clouds' GreaterOrEqual depth test fails over it and the
+    //      moon punches through in FRONT of the clouds. Pinning to far lets the
+    //      cloud pass blend over it (and real geometry, depth > 0, still occludes).
     if (push.customData.w >= 2.0) {
+        mat4 viewRotOnly = frame.view;
+        viewRotOnly[3] = vec4(0.0, 0.0, 0.0, 1.0); // drop translation column
+        gl_Position = frame.proj * viewRotOnly * worldPos;
         gl_Position.z = 0.0;
     }
 }

@@ -50,6 +50,16 @@ namespace Nightbloom
 		// Platform-specific handle
 		virtual void* GetNativeHandle() const = 0;
 
+		// Relative ("captured") mouse mode for always-on mouselook: hides the OS
+		// cursor and reports frame-to-frame motion deltas (by recentering the cursor
+		// each PollEvents) instead of an absolute position — the SDL_SetRelativeMouseMode
+		// model. Default no-ops so non-Win32 stubs still compile.
+		virtual void SetRelativeMouseMode(bool /*enabled*/) {}
+		virtual bool IsRelativeMouseMode() const { return false; }
+		// Mouse motion (pixels) accumulated during the last PollEvents while in
+		// relative mode; (0,0) when the mode is off or the window isn't focused.
+		virtual void GetRelativeMouseDelta(float& dx, float& dy) const { dx = 0.0f; dy = 0.0f; }
+
 		//Event callbacks
 		void SetCloseCallback(WindowCloseCallback callback) { m_CloseCallback = callback; }
 		void SetResizeCallback(WindowResizeCallback callback) { m_ResizeCallback = callback; }

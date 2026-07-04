@@ -9,6 +9,8 @@
 #include "Engine/Renderer/Vulkan/VulkanDescriptorManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanTexture.hpp"
 #include "Engine/Renderer/Vulkan/VulkanBuffer.hpp"
+#include "Engine/Renderer/Vulkan/VulkanDevice.hpp"
+#include "Engine/Renderer/Vulkan/VulkanCommandPool.hpp"
 #include "Engine/Renderer/NoiseTextureGenerator.hpp"
 #include "Engine/Renderer/Components/ComputeDispatcher.hpp"
 #include "Engine/Core/Logger/Logger.hpp"
@@ -167,6 +169,10 @@ namespace Nightbloom
 
             m_DescriptorManager->UpdateHeightmapSet(m_HeightmapDescriptorSet, m_Heightmap);
 
+            // Pull the heightmap to the CPU so GetHeightAt() (physics/character) can
+            // sample the exact same surface the vertex shader displaces to.
+            ReadbackHeightmap();
+
             LOG_INFO("TerrainSystem: heightmap regenerated ({}x{}, scale={:.1f})",
                 noiseDesc.width, noiseDesc.height, desc.heightScale);
         }
@@ -175,6 +181,137 @@ namespace Nightbloom
         m_Ready = true;
 
         return true;
+    }
+
+    // =========================================================================
+    // ReadbackHeightmap — copy the GPU heightmap's .r channel to m_CpuHeights
+    // =========================================================================
+    void TerrainSystem::ReadbackHeightmap()
+    {
+        m_CpuHeights.clear();
+        m_HeightmapW = 0;
+        m_HeightmapH = 0;
+
+        if (!m_Heightmap) return;
+
+        const uint32_t w = m_Heightmap->GetWidth();
+        const uint32_t h = m_Heightmap->GetHeight();
+        if (w == 0 || h == 0) return;
+
+        // The heightmap is RGBA32F (see NoiseTextureGenerator) — 4 floats per texel.
+        const size_t texelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
+        const size_t byteSize = texelCount * 4 * sizeof(float);
+
+        // Fixed name → ResourceManager reuses (overwrites) the slot each regenerate,
+        // so this doesn't accumulate buffers.
+        VulkanBuffer* readback = m_Resources->CreateStorageBuffer("TerrainHeightReadback", byteSize, true);
+        if (!readback)
+        {
+            LOG_WARN("TerrainSystem: heightmap readback buffer alloc failed; no CPU height data");
+            return;
+        }
+
+        VulkanDevice* device = static_cast<VulkanDevice*>(m_Renderer->GetDevice());
+        VkImage image = m_Heightmap->GetImage();
+
+        {
+            VulkanSingleTimeCommand cmd(device, m_Resources->GetTransferCommandPool());
+            VkCommandBuffer cb = cmd.Begin();
+
+            VkImageMemoryBarrier barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = image;
+            barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+
+            // SHADER_READ_ONLY -> TRANSFER_SRC
+            barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+            VkBufferImageCopy region{};
+            region.bufferOffset = 0;
+            region.bufferRowLength = 0;    // tightly packed
+            region.bufferImageHeight = 0;
+            region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            region.imageOffset = { 0, 0, 0 };
+            region.imageExtent = { w, h, 1 };
+            vkCmdCopyImageToBuffer(cb, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                readback->GetBuffer(), 1, &region);
+
+            // TRANSFER_SRC -> SHADER_READ_ONLY (restore so rendering keeps sampling it)
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+            cmd.End();  // submits and waits
+        }
+
+        m_Heightmap->SetCurrentLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        void* mapped = readback->Map();
+        if (!mapped)
+        {
+            LOG_WARN("TerrainSystem: failed to map heightmap readback buffer");
+            return;
+        }
+
+        const float* src = static_cast<const float*>(mapped);
+        m_CpuHeights.resize(texelCount);
+        for (size_t i = 0; i < texelCount; ++i)
+            m_CpuHeights[i] = src[i * 4];  // .r channel of RGBA32F
+        readback->Unmap();
+
+        m_HeightmapW = w;
+        m_HeightmapH = h;
+        LOG_INFO("TerrainSystem: read back {}x{} CPU heightfield", w, h);
+    }
+
+    // =========================================================================
+    // GetHeightAt — world-space terrain surface Y at (worldX, worldZ)
+    // =========================================================================
+    float TerrainSystem::GetHeightAt(float worldX, float worldZ) const
+    {
+        if (m_CpuHeights.empty() || m_HeightmapW < 2 || m_HeightmapH < 2)
+            return m_CurrentDesc.position.y;
+
+        // World -> patch UV (matches TerrainMesh grid + Terrain.vert):
+        //   u = (worldX - posX)/worldSize + 0.5,  v = (worldZ - posZ)/worldSize + 0.5
+        const float worldSize = m_CurrentDesc.worldSize;
+        float u = (worldX - m_CurrentDesc.position.x) / worldSize + 0.5f;
+        float v = (worldZ - m_CurrentDesc.position.z) / worldSize + 0.5f;
+
+        // Terrain.vert clamps the sample UV to [0.001, 0.999]; match that so edges agree.
+        u = glm::clamp(u, 0.001f, 0.999f);
+        v = glm::clamp(v, 0.001f, 0.999f);
+
+        // Bilinear sample of the heightfield (texel centers).
+        const float fx = u * static_cast<float>(m_HeightmapW - 1);
+        const float fy = v * static_cast<float>(m_HeightmapH - 1);
+        const uint32_t x0 = static_cast<uint32_t>(fx);
+        const uint32_t y0 = static_cast<uint32_t>(fy);
+        const uint32_t x1 = std::min(x0 + 1, m_HeightmapW - 1);
+        const uint32_t y1 = std::min(y0 + 1, m_HeightmapH - 1);
+        const float tx = fx - static_cast<float>(x0);
+        const float ty = fy - static_cast<float>(y0);
+
+        auto at = [&](uint32_t x, uint32_t y) -> float {
+            return m_CpuHeights[static_cast<size_t>(y) * m_HeightmapW + x];
+        };
+        const float h00 = at(x0, y0), h10 = at(x1, y0);
+        const float h01 = at(x0, y1), h11 = at(x1, y1);
+        const float h0 = h00 + (h10 - h00) * tx;
+        const float h1 = h01 + (h11 - h01) * tx;
+        const float height01 = h0 + (h1 - h0) * ty;
+
+        return m_CurrentDesc.position.y + height01 * m_CurrentDesc.heightScale;
     }
 
     // =========================================================================

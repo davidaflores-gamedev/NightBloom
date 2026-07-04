@@ -368,13 +368,11 @@ namespace Nightbloom
 		if (static_cast<int>(m_Usage) & static_cast<int>(TextureUsage::DepthStencil))
 			imageInfo.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
-		// Always allow transfers for uploads
+		// Always allow transfers both ways: DST for uploads, SRC for mip-blits and
+		// CPU readback (e.g. TerrainSystem reads back the heightmap for physics). This
+		// is a benign usage bit universally supported for standard color formats.
 		imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
-		if (m_GenerateMips && m_MipLevels > 1)
-		{
-			imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-		}
+		imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
 		m_ImageAllocation = m_MemoryManager->CreateImage(imageInfo);
 		return m_ImageAllocation != nullptr;

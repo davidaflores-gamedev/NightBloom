@@ -45,6 +45,11 @@ namespace Nightbloom
 
 		void* GetNativeHandle() const override { return static_cast<void*>(m_Hwnd); }
 
+		// Always-on mouselook support (see Window.hpp).
+		void SetRelativeMouseMode(bool enabled) override;
+		bool IsRelativeMouseMode() const override { return m_RelativeMouse; }
+		void GetRelativeMouseDelta(float& dx, float& dy) const override { dx = m_RelMouseDX; dy = m_RelMouseDY; }
+
 		// Additional methods from your old code
 		//Vec2 GetNormalizedCursorPosition() const;
 		//std::pair<int, int> GetClientDimensions() const { return std::pair<int, int>(m_ClientDimensionsX, m_ClientDimensionsY); }
@@ -57,6 +62,7 @@ namespace Nightbloom
 	private:
 		void CreateOSWindow(const WindowDesc& desc);
 		void RunMessagePump();
+		POINT ClientCenterScreen() const;  // client-area center in screen coords
 
 		// Friend function for Windows message handling
 		friend LRESULT CALLBACK WindowsMessageHandlingProcedure(HWND windowHandle, UINT wmMessageCode, WPARAM wParam, LPARAM lParam);
@@ -70,6 +76,11 @@ namespace Nightbloom
 		bool m_ShuttingDown;
 		int m_ClientDimensionsX, m_ClientDimensionsY;
 		std::string m_Title;
+
+		// Relative ("captured") mouse state for always-on mouselook.
+		bool  m_RelativeMouse = false;
+		bool  m_CursorHidden = false;
+		float m_RelMouseDX = 0.0f, m_RelMouseDY = 0.0f;
 
 		static Win32Window* s_MainWindow;
 		InputSystem* m_InputSystem = nullptr; // Pointer to the input system for handling input events

@@ -2459,6 +2459,23 @@ namespace Nightbloom
 		LOG_INFO("Compute resources cleaned up");
 	}
 
+	void Renderer::SetVSync(bool enabled)
+	{
+		if (!m_Swapchain) return;
+		if (m_Swapchain->IsVSyncEnabled() == enabled) return;
+
+		m_Swapchain->SetVSync(enabled);
+		// Recreate the swapchain so ChooseSwapPresentMode re-runs with the new
+		// preference (it waits for GPU idle + rebuilds framebuffers internally).
+		HandleSwapchainResize();
+		LOG_INFO("VSync {}", enabled ? "enabled (FIFO)" : "disabled (Mailbox/Immediate)");
+	}
+
+	bool Renderer::IsVSyncEnabled() const
+	{
+		return m_Swapchain ? m_Swapchain->IsVSyncEnabled() : false;
+	}
+
 	void Renderer::SetShadowResolution(uint32_t resolution)
 	{
 		if (!m_ShadowManager || !m_DescriptorManager) return;

@@ -164,6 +164,12 @@ namespace Nightbloom
 		void     SetShadowResolution(uint32_t resolution);
 		uint32_t GetShadowResolution() const;
 
+		// V-Sync toggle: swaps the swapchain present mode (FIFO vs Mailbox/Immediate)
+		// by recreating the swapchain. Waits for GPU idle internally — call outside a
+		// frame (e.g. from a settings menu action), never mid-record.
+		void SetVSync(bool enabled);
+		bool IsVSyncEnabled() const;
+
 		// Status
 		bool IsInitialized() const { return m_Initialized; }
 		bool IsFrameValid() const { return m_FrameValid; }

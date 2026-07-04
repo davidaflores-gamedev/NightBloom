@@ -7,6 +7,7 @@
 #include "Engine/Renderer/Renderer.hpp"
 #include "Engine/Renderer/Components/ResourceManager.hpp"
 #include "Engine/Renderer/Vulkan/VulkanTexture.hpp"  // complete type for VulkanTexture* -> Texture* upcast
+#include "Engine/Renderer/AssetManager.hpp"          // portable (project-relative) scene asset paths
 #include "Engine/Core/Logger/Logger.hpp"
 
 #include <nlohmann/json.hpp>
@@ -150,7 +151,9 @@ namespace Nightbloom
 					{ "kind", "model" },
 					{ "name", obj.name },
 					{ "visible", obj.visible },
-					{ "source", obj.model->GetSourcePath() },
+					// Store relative to the Assets root so the scene is portable — the
+					// same relative path resolves under a packaged project's Assets/.
+					{ "source", AssetManager::Get().ToAssetRelativePath(obj.model->GetSourcePath()) },
 					{ "position", Vec3ToJson(obj.model->GetPosition()) },
 					{ "rotation", Vec3ToJson(obj.model->GetRotation()) },  // euler radians
 					{ "scale", Vec3ToJson(obj.model->GetScale()) },
@@ -309,12 +312,15 @@ namespace Nightbloom
 
 			if (kind == "model")
 			{
-				const std::string source = oj.value("source", std::string());
-				if (source.empty())
+				const std::string stored = oj.value("source", std::string());
+				if (stored.empty())
 				{
 					LOG_WARN("SceneSerializer: model object '{}' has no source path — skipped", name);
 					continue;
 				}
+				// Resolve a relative (or legacy-absolute) path against the active
+				// project's Assets/ then the global Assets/ (see AssetManager).
+				const std::string source = AssetManager::Get().ResolveAssetRelativePath(stored);
 				auto model = std::make_unique<Model>(name);
 				if (!model->LoadFromFile(source, resources, renderer->GetDescriptorManager()))
 				{

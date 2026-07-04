@@ -21,6 +21,7 @@
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include <memory>
+#include <vector>
 
 namespace Nightbloom
 {
@@ -94,14 +95,26 @@ namespace Nightbloom
         const TerrainDesc& GetDesc() const { return m_CurrentDesc; }
 
         // For GrassSystem — it samples the same heightmap Terrain.vert does
-        // (no CPU height query exists, so this is how foliage placement
-        // shares terrain height/slope data; see GrassSystem::SubmitDraw).
+        // (this is how foliage placement shares terrain height/slope data on the
+        // GPU; see GrassSystem::SubmitDraw).
         VkDescriptorSet GetHeightmapDescriptorSet() const { return m_HeightmapDescriptorSet; }
+
+        // CPU height query — the world-space terrain surface Y at (worldX, worldZ),
+        // matching Terrain.vert's displacement exactly (the heightmap is read back to
+        // the CPU on each regenerate). Used for physics / character-on-ground. Returns
+        // the terrain's base Y if no height data is available (e.g. readback failed).
+        bool  HasHeightData() const { return !m_CpuHeights.empty(); }
+        float GetHeightAt(float worldX, float worldZ) const;
 
     private:
         bool BuildGridMesh(uint32_t resolution, float worldSize);
         uint32_t SelectLODResolution(float distance, uint32_t baseResolution, float worldSize) const;
         void DestroyHeightmap();
+
+        // Copies the freshly-generated GPU heightmap into m_CpuHeights (the .r channel)
+        // so GetHeightAt() can sample it on the CPU. Called from Regenerate whenever the
+        // heightmap is (re)generated.
+        void ReadbackHeightmap();
 
         Renderer* m_Renderer = nullptr;
         ResourceManager* m_Resources = nullptr;
@@ -123,6 +136,12 @@ namespace Nightbloom
         Texture* m_DirtTexture = nullptr;
         Texture* m_RockTexture = nullptr;
         VkDescriptorSet m_TerrainTextureSet = VK_NULL_HANDLE;
+
+        // CPU copy of the heightmap's .r channel (row-major, m_HeightmapW x m_HeightmapH,
+        // values in [0,1] — multiply by heightScale + add position.y for world height).
+        std::vector<float> m_CpuHeights;
+        uint32_t           m_HeightmapW = 0;
+        uint32_t           m_HeightmapH = 0;
 
         TerrainDesc m_CurrentDesc;
         bool        m_Ready = false;

@@ -73,6 +73,11 @@ namespace Nightbloom
 			if (input)
 				input->ClearState();
 
+			// Release a captured cursor so Alt-Tab doesn't strand an invisible,
+			// recentering cursor. The app re-captures on click when refocused.
+			if (window->m_RelativeMouse)
+				window->SetRelativeMouseMode(false);
+
 			if (window->m_FocusCallback)
 				window->m_FocusCallback(false);
 			return 0;
@@ -304,6 +309,14 @@ namespace Nightbloom
 	{
 		m_InputSystem = nullptr;
 
+		// Restore the OS cursor if we were still capturing it (ShowCursor is a
+		// process-global counter — leaving it negative hides the cursor elsewhere).
+		if (m_CursorHidden)
+		{
+			while (ShowCursor(TRUE) < 0) {}
+			m_CursorHidden = false;
+		}
+
 		if (m_DisplayContext)
 		{
 			ReleaseDC(m_Hwnd, m_DisplayContext);
@@ -430,6 +443,67 @@ namespace Nightbloom
 	void Win32Window::PollEvents()
 	{
 		RunMessagePump();
+
+		// Relative mouse mode: measure how far the cursor drifted from the client
+		// center this frame, then snap it back. That drift IS the look delta, and it
+		// never reaches a screen edge. Only while we own focus, so we don't wrestle
+		// the cursor away from other apps when Alt-Tabbed out.
+		if (m_RelativeMouse && !m_ShuttingDown)
+		{
+			if (GetForegroundWindow() == m_Hwnd)
+			{
+				POINT center = ClientCenterScreen();
+				POINT p{};
+				GetCursorPos(&p);
+				m_RelMouseDX = static_cast<float>(p.x - center.x);
+				m_RelMouseDY = static_cast<float>(p.y - center.y);
+				SetCursorPos(center.x, center.y);
+			}
+			else
+			{
+				m_RelMouseDX = 0.0f;
+				m_RelMouseDY = 0.0f;
+			}
+		}
+	}
+
+	POINT Win32Window::ClientCenterScreen() const
+	{
+		RECT rc{};
+		GetClientRect(m_Hwnd, &rc);
+		POINT c{ (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
+		ClientToScreen(m_Hwnd, &c);
+		return c;
+	}
+
+	void Win32Window::SetRelativeMouseMode(bool enabled)
+	{
+		if (enabled == m_RelativeMouse)
+			return;
+
+		m_RelativeMouse = enabled;
+		m_RelMouseDX = 0.0f;
+		m_RelMouseDY = 0.0f;
+
+		if (enabled)
+		{
+			if (!m_CursorHidden)
+			{
+				while (ShowCursor(FALSE) >= 0) {}  // ShowCursor is a counter — drive it negative
+				m_CursorHidden = true;
+			}
+			// Seed the baseline so the first frame's delta is ~0.
+			POINT center = ClientCenterScreen();
+			SetCursorPos(center.x, center.y);
+		}
+		else
+		{
+			if (m_CursorHidden)
+			{
+				while (ShowCursor(TRUE) < 0) {}
+				m_CursorHidden = false;
+			}
+		}
 	}
 
 	void Win32Window::RunMessagePump()

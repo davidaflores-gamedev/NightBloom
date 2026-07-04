@@ -36,7 +36,16 @@ void main()
     const vec3 kRootColor = vec3(0.08, 0.22, 0.05);
     const vec3 kTipColor  = vec3(0.46, 0.62, 0.20);
 
-    vec3 albedo = mix(kRootColor, kTipColor, inHeightFraction) * inTint;
+    // Height fraction is 0 at the root, 1 at the tip — a fraction, in [0,1] by
+    // definition (baked as texCoord.y in BladeMesh). Clamp it: a blade whose
+    // triangle straddles the camera's w=0 plane makes perspective-correct
+    // interpolation EXTRAPOLATE this attribute far outside [0,1] (RenderDoc caught
+    // hf ~= 25 on a near-camera blade), which blows up both the albedo gradient
+    // and the AO term into a ~50x-overbright pixel that bloom then detonates into
+    // a white speck. Clamping is a no-op for every normal blade.
+    float hf = clamp(inHeightFraction, 0.0, 1.0);
+
+    vec3 albedo = mix(kRootColor, kTipColor, hf) * inTint;
 
     // Up-biased normal. The baked blade normal always points up-ish (the
     // per-instance transform is a Y-rotation, which preserves the up
@@ -64,7 +73,7 @@ void main()
     float transmission = pow(backLight, 2.0) * 0.6;
 
     // Fake AO: darker toward the root (less sky/light reaches between blades).
-    float ao = mix(0.45, 1.0, inHeightFraction);
+    float ao = mix(0.45, 1.0, hf);
 
     vec3 ambient = lighting.ambient.xyz * lighting.ambient.w * albedo * ao;
     vec3 direct  = lightColor * albedo * (diffuse + transmission) * shadow * ao;

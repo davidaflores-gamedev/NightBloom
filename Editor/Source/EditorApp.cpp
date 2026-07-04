@@ -803,6 +803,10 @@ namespace Nightbloom {
             m_CurrentProjectPath = p.Root();
             UpdateWindowTitle();
 
+            // Resolve/serialize scene asset paths against this project's Assets/ first
+            // (then the global Assets/). Must be set before DoLoadScene resolves paths.
+            AssetManager::Get().SetProjectAssetsPath(p.AssetsPath().string());
+
             // DoLoadScene waits for GPU idle and sets m_ScenePath on success.
             if (std::filesystem::exists(p.StartScenePath()))
                 DoLoadScene(p.StartScenePath().string());

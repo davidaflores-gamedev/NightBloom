@@ -31,6 +31,31 @@ add_subdirectory(NightBloom)
 add_subdirectory(Editor)
 
 #------------------------------------------------------------------------------
+# Build standalone Game runtime (Milestone 2 — links engine, no editor UI)
+#------------------------------------------------------------------------------
+add_subdirectory(Game)
+
+#------------------------------------------------------------------------------
+# Packaging (Milestone 3 — see .claude/PACKAGING_ROADMAP.md): assemble a
+# distributable, self-contained NightbloomGame zip. The heavy lifting (staging
+# exe + Shaders/ + Assets/ + the project with project-relative scene paths, then
+# zipping) lives in Packaging/PackageGame.ps1 — a package script is the roadmap's
+# accepted alternative to install()/CPack, and it also migrates legacy absolute
+# asset paths, which pure CMake can't. This target just builds the Game and runs
+# the script for the current config. Not part of ALL_BUILD.
+#   cmake --build build --target package --config Release
+#------------------------------------------------------------------------------
+if(WIN32)
+	add_custom_target(package
+		COMMAND powershell -ExecutionPolicy Bypass -File
+			"${CMAKE_SOURCE_DIR}/Packaging/PackageGame.ps1" -Config $<CONFIG> -SkipBuild
+		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+		COMMENT "Packaging NightbloomGame ($<CONFIG>) -> dist/"
+		VERBATIM)
+	add_dependencies(package NightbloomGame)
+endif()
+
+#------------------------------------------------------------------------------
 # Set Editor as the startup project in Visual Studio
 #------------------------------------------------------------------------------
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT NightbloomEditor)
