@@ -4,9 +4,20 @@
 # Configuration for third-party dependencies
 #------------------------------------------------------------------------------
 
-set(VULKAN_SDK_PATH "$ENV{VULKAN_SDK}")
-set(VULKAN_INCLUDE_DIR "${VULKAN_SDK_PATH}/Include")
-set(VULKAN_LIBRARY "${VULKAN_SDK_PATH}/Lib/vulkan-1.lib")
+if(APPLE)
+    # Homebrew Vulkan (vulkan-headers + vulkan-loader; MoltenVK is the ICD).
+    find_path(VULKAN_INCLUDE_DIR vulkan/vulkan.h
+        HINTS /opt/homebrew/include /usr/local/include)
+    find_library(VULKAN_LIBRARY NAMES vulkan
+        HINTS /opt/homebrew/lib /usr/local/lib)
+    # GLFW platform backend for ImGui (and the engine's macOS window).
+    find_package(glfw3 REQUIRED
+        PATHS /opt/homebrew/lib/cmake/glfw3 /usr/local/lib/cmake/glfw3)
+else()
+    set(VULKAN_SDK_PATH "$ENV{VULKAN_SDK}")
+    set(VULKAN_INCLUDE_DIR "${VULKAN_SDK_PATH}/Include")
+    set(VULKAN_LIBRARY "${VULKAN_SDK_PATH}/Lib/vulkan-1.lib")
+endif()
 
 # Google Test
 if(NIGHTBLOOM_BUILD_TESTS)
@@ -49,6 +60,13 @@ if(EXISTS ${IMGUI_DIR})
         message(WARNING "ImGui internal headers missing. Make sure you copied ALL files from imgui/ folder")
     endif()
     
+    # Platform backend: Win32 hooks on Windows, GLFW callbacks on macOS.
+    if(APPLE)
+        set(IMGUI_PLATFORM_BACKEND ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp)
+    else()
+        set(IMGUI_PLATFORM_BACKEND ${IMGUI_DIR}/backends/imgui_impl_win32.cpp)
+    endif()
+
     add_library(ImGui STATIC
         ${IMGUI_DIR}/imgui.cpp
         ${IMGUI_DIR}/imgui_demo.cpp
@@ -56,8 +74,11 @@ if(EXISTS ${IMGUI_DIR})
         ${IMGUI_DIR}/imgui_tables.cpp
         ${IMGUI_DIR}/imgui_widgets.cpp
         ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
-        ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
+        ${IMGUI_PLATFORM_BACKEND}
     )
+    if(APPLE)
+        target_link_libraries(ImGui PRIVATE glfw)
+    endif()
 
     # Include directories for ImGui
     target_include_directories(ImGui PUBLIC 

@@ -125,7 +125,15 @@ void main()
 
 
     bool isMaterialDriven = (push.customData.w > 0.01);
-    vec4 albedo = isMaterialDriven ? push.customData : texColor;
+    // customData.w <= -0.5 => matte material color: an opaque surface whose color
+    // comes from the material (e.g. a glTF baseColorFactor with no texture) instead
+    // of the bound texture. The texture (default_white for untextured materials)
+    // still multiplies in, so a real albedo texture composes with the tint. Kept
+    // disjoint from glass (w in (0.01, 1]) and emissive (w >= 2.0).
+    bool isMatteColor = (push.customData.w <= -0.5);
+    vec4 albedo = isMaterialDriven ? push.customData
+                : isMatteColor    ? vec4(texColor.rgb * push.customData.rgb, 1.0)
+                                  : texColor;
 
     vec3 N = normalize(fragNormal);
     vec3 V = normalize(frame.cameraPos.xyz - fragWorldPos);

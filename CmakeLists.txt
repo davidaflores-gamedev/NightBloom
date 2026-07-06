@@ -35,6 +35,13 @@ add_subdirectory(Editor)
 #------------------------------------------------------------------------------
 add_subdirectory(Game)
 
+# Local-only: Stolen Orbit game repo, symlinked in as a sibling checkout
+# (separate repo — see StolenOrbit/README.md). Guarded so the engine tree
+# still configures without it.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/StolenOrbit/CMakeLists.txt")
+    add_subdirectory(StolenOrbit)
+endif()
+
 #------------------------------------------------------------------------------
 # Packaging (Milestone 3 — see .claude/PACKAGING_ROADMAP.md): assemble a
 # distributable, self-contained NightbloomGame zip. The heavy lifting (staging

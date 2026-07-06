@@ -9,7 +9,19 @@
 #include "Engine/Core/Logger/Logger.hpp"
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
+
+// Platform backend: Win32 message hooks on Windows, GLFW callbacks on macOS
+// (windowHandle is HWND / GLFWwindow* respectively — see Window::GetNativeHandle).
+#ifdef NIGHTBLOOM_PLATFORM_WINDOWS
 #include <imgui_impl_win32.h>
+#define NB_ImGui_Platform_Shutdown ImGui_ImplWin32_Shutdown
+#define NB_ImGui_Platform_NewFrame ImGui_ImplWin32_NewFrame
+#elif defined(NIGHTBLOOM_PLATFORM_MACOS)
+#include <imgui_impl_glfw.h>
+struct GLFWwindow;
+#define NB_ImGui_Platform_Shutdown ImGui_ImplGlfw_Shutdown
+#define NB_ImGui_Platform_NewFrame ImGui_ImplGlfw_NewFrame
+#endif
 
 namespace Nightbloom
 {
@@ -33,12 +45,23 @@ namespace Nightbloom
 		ImGui::StyleColorsDark();
 
 		// Setup Platform/Renderer bindings
+#ifdef NIGHTBLOOM_PLATFORM_WINDOWS
 		if (!ImGui_ImplWin32_Init(windowHandle))
 		{
 			LOG_ERROR("Failed to initialize ImGui Win32 implementation");
 			Cleanup(device->GetDevice());
 			return false;
 		}
+#elif defined(NIGHTBLOOM_PLATFORM_MACOS)
+		// install_callbacks=true: ImGui saves and chains the GLFWWindow callbacks,
+		// so game input keeps flowing underneath the UI.
+		if (!ImGui_ImplGlfw_InitForVulkan(static_cast<GLFWwindow*>(windowHandle), true))
+		{
+			LOG_ERROR("Failed to initialize ImGui GLFW implementation");
+			Cleanup(device->GetDevice());
+			return false;
+		}
+#endif
 
 		// Setup Vulkan binding
 		ImGui_ImplVulkan_InitInfo init_info = {};
@@ -60,7 +83,7 @@ namespace Nightbloom
 		if (!ImGui_ImplVulkan_Init(&init_info))
 		{
 			LOG_ERROR("Failed to initialize ImGui Vulkan implementation");
-			ImGui_ImplWin32_Shutdown();
+			NB_ImGui_Platform_Shutdown();
 			Cleanup(device->GetDevice());
 			return false;
 		}
@@ -75,7 +98,7 @@ namespace Nightbloom
 		if (m_Initialized)
 		{
 			ImGui_ImplVulkan_Shutdown();
-			ImGui_ImplWin32_Shutdown();
+			NB_ImGui_Platform_Shutdown();
 			ImGui::DestroyContext();
 			m_Initialized = false;
 		}
@@ -94,7 +117,7 @@ namespace Nightbloom
 		if (!m_Initialized) return;
 
 		ImGui_ImplVulkan_NewFrame();
-		ImGui_ImplWin32_NewFrame();
+		NB_ImGui_Platform_NewFrame();
 		ImGui::NewFrame();
 	}
 

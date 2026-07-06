@@ -189,6 +189,10 @@ namespace Nightbloom
 		VkInstanceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 		createInfo.pApplicationInfo = &appInfo;
+#ifdef NIGHTBLOOM_PLATFORM_MACOS
+		// Pairs with VK_KHR_portability_enumeration above (MoltenVK).
+		createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
 
 		// Get required extensions (window system integration + debug)
 		auto extensions = GetRequiredExtensions();
@@ -353,8 +357,27 @@ namespace Nightbloom
 		createInfo.pEnabledFeatures = &deviceFeatures;
 
 		// Enable device extensions (swapchain support)
-		createInfo.enabledExtensionCount = static_cast<uint32_t>(m_DeviceExtensions.size());
-		createInfo.ppEnabledExtensionNames = m_DeviceExtensions.data();
+		std::vector<const char*> deviceExtensions = m_DeviceExtensions;
+#ifdef NIGHTBLOOM_PLATFORM_MACOS
+		// MoltenVK advertises VK_KHR_portability_subset, and the spec requires
+		// enabling it whenever the physical device offers it.
+		{
+			uint32_t extCount = 0;
+			vkEnumerateDeviceExtensionProperties(m_PhysicalDevice, nullptr, &extCount, nullptr);
+			std::vector<VkExtensionProperties> extProps(extCount);
+			vkEnumerateDeviceExtensionProperties(m_PhysicalDevice, nullptr, &extCount, extProps.data());
+			for (const auto& p : extProps)
+			{
+				if (strcmp(p.extensionName, "VK_KHR_portability_subset") == 0)
+				{
+					deviceExtensions.push_back("VK_KHR_portability_subset");
+					break;
+				}
+			}
+		}
+#endif
+		createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+		createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
 		// Validation layers 
 		if (m_EnableValidationLayers) {
@@ -427,6 +450,10 @@ namespace Nightbloom
         extensions.push_back(VK_KHR_XLIB_SURFACE_EXTENSION_NAME);
 #elif defined(NIGHTBLOOM_PLATFORM_MACOS)
         extensions.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
+        // MoltenVK is a portability (non-conformant) implementation — the loader
+        // only enumerates it when portability enumeration is explicitly requested.
+        extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 #endif
 
 		//Debug extensions

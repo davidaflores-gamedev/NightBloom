@@ -20,6 +20,9 @@
 #include <sys/types.h>
 #include <signal.h>
 #endif
+#ifdef __APPLE__
+#include <sys/sysctl.h>  // sysctl-based IsDebuggerAttached
+#endif
 
 // Optional: Include your engine's logger if available
 // #include "Logger.hpp"

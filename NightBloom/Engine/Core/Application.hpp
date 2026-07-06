@@ -34,6 +34,7 @@ namespace Nightbloom
 		virtual void OnUpdate(float deltaTime) { (void)(deltaTime); }
 		virtual void OnRender() {}
 		virtual void OnShutdown() {}
+		virtual glm::vec4 GetClearColor() const { return glm::vec4(0.1f, 0.1f, 0.2f, 1.0f); }
 
 		//saving for later when i add in an event system
 		virtual void OnEvent(/* Event& e */) {}

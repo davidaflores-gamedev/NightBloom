@@ -6833,11 +6833,6 @@ static int cgltf_fixup_pointers(cgltf_data* data)
 		for (cgltf_size j = 0; j < data->scenes[i].nodes_count; ++j)
 		{
 			CGLTF_PTRFIXUP_REQ(data->scenes[i].nodes[j], data->nodes, data->nodes_count);
-
-			if (data->scenes[i].nodes[j]->parent)
-			{
-				return CGLTF_ERROR_JSON;
-			}
 		}
 	}
 

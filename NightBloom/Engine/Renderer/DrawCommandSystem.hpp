@@ -314,7 +314,13 @@ namespace Nightbloom
 				{
 					cmd.pipeline = PipelineType::Mesh;
 
-					cmd.pushConstants.customData = glm::vec4(0.0f);
+					// Untextured materials carry their color in baseColorFactor; flag the
+					// matte-color path (customData.w <= -0.5, see Mesh.frag) so it actually
+					// reaches the screen instead of rendering as the default texture.
+					if (mat && !mat->HasAlbedoTexture())
+						cmd.pushConstants.customData = glm::vec4(glm::vec3(mat->GetAlbedoColor()), -1.0f);
+					else
+						cmd.pushConstants.customData = glm::vec4(0.0f);
 
 					if (textureToUse)
 						cmd.textures.push_back(textureToUse);

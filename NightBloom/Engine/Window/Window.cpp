@@ -9,7 +9,11 @@
 #include "Core/Logger/Logger.hpp"
 #include <iostream>
 #include <memory>
+#ifdef NIGHTBLOOM_PLATFORM_WINDOWS
 #include "Engine/Window/Platform/Win32/Win32Window.hpp"
+#elif defined(NIGHTBLOOM_PLATFORM_MACOS)
+#include "Engine/Window/Platform/GLFW/GLFWWindow.hpp"
+#endif
 
 namespace Nightbloom
 {
@@ -37,6 +41,16 @@ namespace Nightbloom
 			LOG_ERROR("Exception creating window: {}", e.what());
 			return nullptr;
 		}
+#elif defined(NIGHTBLOOM_PLATFORM_MACOS)
+		LOG_INFO("Creating GLFW window: {} ({}x{})", desc.title, desc.width, desc.height);
+		auto window = std::make_unique<GLFWWindow>(desc);
+		if (!window->IsOpen())
+		{
+			LOG_ERROR("GLFWWindow creation failed");
+			return nullptr;
+		}
+		LOG_INFO("GLFWWindow created successfully");
+		return window;
 #else
 		LOG_ERROR("Unsupported platform for window creation!");
 		return nullptr;

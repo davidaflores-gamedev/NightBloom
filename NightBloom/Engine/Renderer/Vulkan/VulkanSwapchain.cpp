@@ -10,6 +10,13 @@
 #include <algorithm>
 #include <limits>
 
+#ifdef NIGHTBLOOM_PLATFORM_MACOS
+// Surface creation goes through GLFW (the macOS window backend), which builds
+// the CAMetalLayer + VK_EXT_metal_surface plumbing for MoltenVK internally.
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+#endif
+
 namespace Nightbloom
 {
 	VulkanSwapchain::VulkanSwapchain(VulkanDevice* device)
@@ -117,6 +124,14 @@ namespace Nightbloom
 
 		if (result != VK_SUCCESS) {
 			//LOG_ERROR("Failed to create Win32 surface: {}", result);
+			return false;
+		}
+#elif defined(NIGHTBLOOM_PLATFORM_MACOS)
+		// m_WindowHandle is the GLFWwindow* (GLFWWindow::GetNativeHandle).
+		VkResult result = glfwCreateWindowSurface(m_Device->GetInstance(),
+			static_cast<GLFWwindow*>(m_WindowHandle), nullptr, &m_Surface);
+		if (result != VK_SUCCESS) {
+			LOG_ERROR("glfwCreateWindowSurface failed: {}", static_cast<int>(result));
 			return false;
 		}
 #else

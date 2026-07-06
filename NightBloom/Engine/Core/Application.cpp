@@ -9,6 +9,7 @@
 #include "Core/Engine.hpp"
 #include "Core/Logger/Logger.hpp"
 #include <chrono>
+#include <thread>
 
 #include <iostream>
 
@@ -47,7 +48,9 @@ namespace Nightbloom
 
 		LOG_INFO("Initializing Renderer...");
 		m_Renderer = std::make_unique<Renderer>();
-		if (!m_Renderer->Initialize(m_Window->GetNativeHandle(), desc.width, desc.height))
+		if (!m_Renderer->Initialize(m_Window->GetNativeHandle(),
+			static_cast<uint32_t>(m_Window->GetWidth()),
+			static_cast<uint32_t>(m_Window->GetHeight())))
 		{
 			LOG_ERROR("Failed to initialize Renderer");
 			throw std::runtime_error("Renderer initialization failed");
@@ -122,7 +125,8 @@ namespace Nightbloom
 
 				if (m_Renderer->IsFrameValid())
 				{
-					m_Renderer->Clear(0.1f, 0.1f, 0.2f, 1.0f);  // Dark blue background
+					glm::vec4 clear = GetClearColor();
+					m_Renderer->Clear(clear.r, clear.g, clear.b, clear.a);
 					OnRender();  // Your app can override this
 					m_Renderer->FinalizeFrame();
 					m_Renderer->EndFrame();
