@@ -36,6 +36,17 @@ add_subdirectory(Editor)
 add_subdirectory(Game)
 
 #------------------------------------------------------------------------------
+# Build Stolen Orbit — space-game prototype (see .claude/Games/StolenOrbit.md).
+# A second standalone runtime target; different gameplay (6DOF flight), no editor.
+# StolenOrbit/ lives in its OWN (private) git repo and is gitignored here, so this
+# public engine repo does not contain the game code. Guarded so the engine still
+# configures cleanly for anyone who clones it without the StolenOrbit folder present.
+#------------------------------------------------------------------------------
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/StolenOrbit/CMakeLists.txt")
+    add_subdirectory(StolenOrbit)
+endif()
+
+#------------------------------------------------------------------------------
 # Packaging (Milestone 3 — see .claude/PACKAGING_ROADMAP.md): assemble a
 # distributable, self-contained NightbloomGame zip. The heavy lifting (staging
 # exe + Shaders/ + Assets/ + the project with project-relative scene paths, then

@@ -83,6 +83,12 @@ desktop.ini
 # and real prototypes belong in their own repos. Keeps game assets out of engine history.
 /Projects/
 
+# ==== Stolen Orbit game code (own private repo) ====
+# StolenOrbit/ is a separate (private) git repo nested here; the engine repo must NOT
+# track it, so the game code stays out of this public repo. The root CMake guards its
+# add_subdirectory with an EXISTS check, so the engine still configures without it.
+/StolenOrbit/
+
 # ==== Packaged distributables (M3) ====
 # Packaging/PackageGame.ps1 stages + zips shippable builds here. Build artifacts.
 /dist/
