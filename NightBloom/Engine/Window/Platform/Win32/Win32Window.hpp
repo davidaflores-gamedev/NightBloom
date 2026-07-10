@@ -9,6 +9,8 @@
 #include "Engine/Window/Window.hpp"
 // #include "Math/IntVec2.hpp"
 
+#include "Engine/Input/Win32/DualSenseController.hpp"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -83,6 +85,23 @@ namespace Nightbloom
 		float m_RelMouseDX = 0.0f, m_RelMouseDY = 0.0f;
 
 		static Win32Window* s_MainWindow;
-		InputSystem* m_InputSystem = nullptr; // Pointer to the input system for handling input events
+		// NOTE: the input system lives in the base class (Window::m_InputSystem, set via
+		// SetInputSystem, read via GetInputSystem). Do NOT redeclare it here — a shadowing
+		// member would stay null and silently break anything that reads it (it did: the
+		// XInput poller). Use GetInputSystem().
+
+		// XInput gamepad polling. XInput is level-state (polled), so we keep the
+		// previous frame's state per pad to emit press/release edges, and only probe
+		// empty slots occasionally (probing a disconnected slot every frame is slow).
+		void PollGamepads();
+		unsigned short m_PadPrevButtons[4] = { 0, 0, 0, 0 };
+		bool           m_PadPrevLT[4] = { false, false, false, false };
+		bool           m_PadPrevRT[4] = { false, false, false, false };
+		bool           m_PadConnected[4] = { false, false, false, false };
+		unsigned int   m_PadRescanCounter = 0;
+
+		// PlayStation DualSense over raw HID (XInput can't see it). Polled alongside the
+		// XInput pads in PollEvents; feeds the same InputSystem::OnGamepad* path.
+		DualSenseController m_DualSense;
 	};
 }

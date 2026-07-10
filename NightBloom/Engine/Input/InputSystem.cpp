@@ -282,20 +282,47 @@ namespace Nightbloom
 
     void InputSystem::OnGamepadButton(int gamepadIndex, int button, bool pressed)
     {
-        // TODO: Map button index to InputCode based on gamepad index
-        // For now, this is a placeholder
-        (void)gamepadIndex;
-        (void)button;
-        (void)pressed;
+        if (gamepadIndex < 0 || gamepadIndex > 3 || button < 0) return;
+
+        // The Gamepad_* codes are contiguous, and the enum reserves 0x20 per pad
+        // (Gamepad2_A = 0x220). 'button' is the offset within that block (see the
+        // XInput poller in Win32Window). Fits because there are < 0x20 buttons.
+        size_t index = static_cast<size_t>(InputCode::Gamepad_A)
+                     + static_cast<size_t>(gamepadIndex) * 0x20u
+                     + static_cast<size_t>(button);
+        if (index >= MAX_INPUTS) return;
+
+        // The poller only calls us on edges (like OnKeyDown/Up), so mirror that path.
+        if (pressed)
+        {
+            if (!m_InputsDown[index])
+            {
+                m_InputsDown[index] = true;
+                m_InputsPressed[index] = true;
+            }
+        }
+        else
+        {
+            if (m_InputsDown[index])
+            {
+                m_InputsDown[index] = false;
+                m_InputsReleased[index] = true;
+            }
+        }
     }
 
     void InputSystem::OnGamepadAxis(int gamepadIndex, int axis, float value)
     {
-        // TODO: Map axis index to AxisCode based on gamepad index
-        // Apply deadzone, normalize, etc.
-        (void)gamepadIndex;
-        (void)axis;
-        (void)value;
+        // Only the primary pad's axes are enumerated in AxisCode today (pad 2+ have
+        // just a single placeholder entry); feed pad 0, ignore the rest for now.
+        if (gamepadIndex != 0 || axis < 0 || axis > 5) return;
+
+        size_t code = static_cast<size_t>(AxisCode::Gamepad_LeftStickX)
+                    + static_cast<size_t>(axis);
+        if (code >= static_cast<size_t>(AxisCode::Count)) return;
+
+        // Poller applies deadzone + normalization; store the final value directly.
+        m_Axes[code].value = value;
     }
 
     //--------------------------------------------------------------------------

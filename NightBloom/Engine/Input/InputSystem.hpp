@@ -235,8 +235,10 @@ namespace Nightbloom
 		void QueueEvent(const InputEvent& event);
 
 	private:
-		// Digital state (buttons/keys)
-		static constexpr size_t MAX_INPUTS = 512;  // Enough for all input codes
+		// Digital state (buttons/keys). Must cover the full InputCode range: gamepad
+		// codes start at 0x200 (=512) and run up to InputCode::Count (0x300), so a
+		// 512-wide bitset would drop every gamepad button. 0x300 = 768.
+		static constexpr size_t MAX_INPUTS = 0x300;  // 768 — covers keyboard, mouse, and gamepad codes
 		std::bitset<MAX_INPUTS> m_InputsDown;
 		std::bitset<MAX_INPUTS> m_InputsPressed;
 		std::bitset<MAX_INPUTS> m_InputsReleased;

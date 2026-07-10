@@ -6,10 +6,15 @@
 //------------------------------------------------------------------------------
 
 #include "Engine/Window/Platform/Win32/Win32Window.hpp"
-#include "Engine/Input/InputSystem.hpp" 
+#include "Engine/Input/InputSystem.hpp"
 #include "Core/Logger/Logger.hpp"
 //#include "Core/Assert.hpp"  // For GUARANTEE_OR_DIE
 #include <windowsx.h>
+#include <Xinput.h>
+#pragma comment(lib, "Xinput.lib")  // XInput 1.4 (Win8+); links without a CMake edit
+
+#include <algorithm>
+#include <cmath>
 
 #include <imgui.h>
 
@@ -299,7 +304,6 @@ namespace Nightbloom
 		, m_ShuttingDown(false)
 		, m_ClientDimensionsX(desc.width), m_ClientDimensionsY(desc.height)
 		, m_Title(desc.title)
-		, m_InputSystem(nullptr)  // Initialize the input system pointer
 	{
 		s_MainWindow = this;
 		CreateOSWindow(desc);
@@ -307,7 +311,8 @@ namespace Nightbloom
 
 	Win32Window::~Win32Window()
 	{
-		m_InputSystem = nullptr;
+		// Release the DualSense HID handle before anything else tears down.
+		m_DualSense.Shutdown();
 
 		// Restore the OS cursor if we were still capturing it (ShowCursor is a
 		// process-global counter — leaving it negative hides the cursor elsewhere).
@@ -440,9 +445,122 @@ namespace Nightbloom
 			desc.title, m_ClientDimensionsX, m_ClientDimensionsY, x, y);
 	}
 
+	// Radial deadzone for an XInput thumbstick: zero inside the deadzone, then
+	// rescale the remaining magnitude to [0,1] so there's no snap at the edge.
+	// Output is [-1,1] with up = +1 (XInput's native sign).
+	static void ApplyStickDeadzone(short rawX, short rawY, short deadzone,
+		float& outX, float& outY)
+	{
+		float x = static_cast<float>(rawX);
+		float y = static_cast<float>(rawY);
+		float mag = std::sqrt(x * x + y * y);
+		if (mag <= static_cast<float>(deadzone))
+		{
+			outX = outY = 0.0f;
+			return;
+		}
+		float clamped = std::min(mag, 32767.0f);
+		float scaled = (clamped - deadzone) / (32767.0f - deadzone);  // 0..1 past deadzone
+		float inv = scaled / mag;
+		outX = std::clamp(x * inv, -1.0f, 1.0f);
+		outY = std::clamp(y * inv, -1.0f, 1.0f);
+	}
+
+	// XInput bit -> our contiguous Gamepad_* offset (order matches InputSystem.hpp:
+	// A,B,X,Y,LB,RB,LT,RT,LS,RS,DPadU,D,L,R,Start,Back). LT/RT (offsets 6/7) are fed
+	// from the analog triggers below, not here.
+	void Win32Window::PollGamepads()
+	{
+		// NOTE: use the base-class Window::m_InputSystem via GetInputSystem(), NOT the
+		// derived Win32Window::m_InputSystem — that one shadows the base and is never
+		// assigned (always null). SetInputSystem() only sets the base member.
+		InputSystem* input = GetInputSystem();
+		if (!input)
+			return;
+
+		// Poll believed-connected pads every frame; scan empty slots only periodically.
+		const bool rescan = (m_PadRescanCounter++ % 120u) == 0u;
+
+		struct BtnMap { WORD bit; int offset; };
+		static const BtnMap kButtons[] = {
+			{ XINPUT_GAMEPAD_A, 0 }, { XINPUT_GAMEPAD_B, 1 },
+			{ XINPUT_GAMEPAD_X, 2 }, { XINPUT_GAMEPAD_Y, 3 },
+			{ XINPUT_GAMEPAD_LEFT_SHOULDER, 4 }, { XINPUT_GAMEPAD_RIGHT_SHOULDER, 5 },
+			{ XINPUT_GAMEPAD_LEFT_THUMB, 8 }, { XINPUT_GAMEPAD_RIGHT_THUMB, 9 },
+			{ XINPUT_GAMEPAD_DPAD_UP, 10 }, { XINPUT_GAMEPAD_DPAD_DOWN, 11 },
+			{ XINPUT_GAMEPAD_DPAD_LEFT, 12 }, { XINPUT_GAMEPAD_DPAD_RIGHT, 13 },
+			{ XINPUT_GAMEPAD_START, 14 }, { XINPUT_GAMEPAD_BACK, 15 },
+		};
+
+		for (int i = 0; i < 4; ++i)
+		{
+			if (!m_PadConnected[i] && !rescan)
+				continue;
+
+			XINPUT_STATE state{};
+			bool connected = (XInputGetState(static_cast<DWORD>(i), &state) == ERROR_SUCCESS);
+
+			if (connected != m_PadConnected[i])
+			{
+				m_PadConnected[i] = connected;
+				if (connected)
+				{
+					input->OnGamepadConnected(i);
+				}
+				else
+				{
+					input->OnGamepadDisconnected(i);
+					for (int a = 0; a < 6; ++a)
+						input->OnGamepadAxis(i, a, 0.0f);
+					m_PadPrevButtons[i] = 0;
+					m_PadPrevLT[i] = m_PadPrevRT[i] = false;
+				}
+			}
+
+			if (!connected)
+				continue;
+
+			const XINPUT_GAMEPAD& gp = state.Gamepad;
+
+			// Buttons — emit only on change (edge), matching the keyboard path.
+			WORD cur = gp.wButtons;
+			WORD prev = m_PadPrevButtons[i];
+			for (const auto& b : kButtons)
+			{
+				bool now = (cur & b.bit) != 0;
+				bool was = (prev & b.bit) != 0;
+				if (now != was)
+					input->OnGamepadButton(i, b.offset, now);
+			}
+			m_PadPrevButtons[i] = cur;
+
+			// Triggers — analog axes (offsets 4/5) + digital buttons (offsets 6/7) past a threshold.
+			float lt = gp.bLeftTrigger / 255.0f;
+			float rt = gp.bRightTrigger / 255.0f;
+			input->OnGamepadAxis(i, 4, lt);
+			input->OnGamepadAxis(i, 5, rt);
+			bool ltDown = lt > 0.5f;
+			bool rtDown = rt > 0.5f;
+			if (ltDown != m_PadPrevLT[i]) { input->OnGamepadButton(i, 6, ltDown); m_PadPrevLT[i] = ltDown; }
+			if (rtDown != m_PadPrevRT[i]) { input->OnGamepadButton(i, 7, rtDown); m_PadPrevRT[i] = rtDown; }
+
+			// Sticks — radial deadzone, normalized [-1,1], up = +1.
+			float lx, ly, rx, ry;
+			ApplyStickDeadzone(gp.sThumbLX, gp.sThumbLY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE, lx, ly);
+			ApplyStickDeadzone(gp.sThumbRX, gp.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE, rx, ry);
+			input->OnGamepadAxis(i, 0, lx);
+			input->OnGamepadAxis(i, 1, ly);
+			input->OnGamepadAxis(i, 2, rx);
+			input->OnGamepadAxis(i, 3, ry);
+		}
+	}
+
 	void Win32Window::PollEvents()
 	{
 		RunMessagePump();
+
+		PollGamepads();
+		m_DualSense.Poll(GetInputSystem());
 
 		// Relative mouse mode: measure how far the cursor drifted from the client
 		// center this frame, then snap it back. That drift IS the look delta, and it
