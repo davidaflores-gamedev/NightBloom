@@ -414,45 +414,52 @@ namespace Nightbloom
 
 	bool ResourceManager::CreateTestCube()
 	{
-		// Define cube vertices (8 unique vertices)
+		// 24 vertices — 4 per face, split so each face carries its own flat normal.
+		//
+		// This is VertexPNT, NOT VertexPCU. It used to be VertexPCU with per-vertex
+		// COLORS in the middle slot, which was silently wrong: Mesh.vert reads
+		// location 1 as the NORMAL, so every flat face was lit by a color gradient
+		// (looked like jagged/blotchy shading, easy to misread as a shadow bug).
+		// VertexPCU and VertexPNT are binary-identical (vec3/vec3/vec2), so this is
+		// a pure data fix — no pipeline or shader change.
 
-			std::vector<VertexPCU> vertices = {
-				// FRONT (z = +0.5), normal ~ (0,0,1)
-			{{-0.5f,-0.5f, 0.5f},{1,0,0},{0,0}},
-			{{ 0.5f,-0.5f, 0.5f},{1,0.5f,0},{1,0}},
-			{{ 0.5f, 0.5f, 0.5f},{1,0,0.5f},{1,1}},
-			{{-0.5f, 0.5f, 0.5f},{1,0.5f,0.5f},{0,1}},
+			std::vector<VertexPNT> vertices = {
+				// FRONT (z = +0.5), normal (0,0,1)
+			{{-0.5f,-0.5f, 0.5f},{0,0,1},{0,0}},
+			{{ 0.5f,-0.5f, 0.5f},{0,0,1},{1,0}},
+			{{ 0.5f, 0.5f, 0.5f},{0,0,1},{1,1}},
+			{{-0.5f, 0.5f, 0.5f},{0,0,1},{0,1}},
 
-			// BACK (z = -0.5), normal ~ (0,0,-1)
+			// BACK (z = -0.5), normal (0,0,-1)
 			// Flip winding or UV to avoid mirror; this mapping keeps checker upright.
-			{{ 0.5f,-0.5f,-0.5f},{0,0,1},{0,0}},
-			{{-0.5f,-0.5f,-0.5f},{0,0.5f,1},{1,0}},
-			{{-0.5f, 0.5f,-0.5f},{0.5f,0,1},{1,1}},
-			{{ 0.5f, 0.5f,-0.5f},{0.5f,0.5f,1},{0,1}},
+			{{ 0.5f,-0.5f,-0.5f},{0,0,-1},{0,0}},
+			{{-0.5f,-0.5f,-0.5f},{0,0,-1},{1,0}},
+			{{-0.5f, 0.5f,-0.5f},{0,0,-1},{1,1}},
+			{{ 0.5f, 0.5f,-0.5f},{0,0,-1},{0,1}},
 
-			// LEFT (x = -0.5), normal ~ (-1,0,0)   map z->u, y->v
-			{{-0.5f,-0.5f,-0.5f},{0,1,0},{0,0}},
-			{{-0.5f,-0.5f, 0.5f},{0,1,0.5f},{1,0}},
-			{{-0.5f, 0.5f, 0.5f},{0.5f,1,0.5f},{1,1}},
-			{{-0.5f, 0.5f,-0.5f},{0.5f,1,0},{0,1}},
+			// LEFT (x = -0.5), normal (-1,0,0)   map z->u, y->v
+			{{-0.5f,-0.5f,-0.5f},{-1,0,0},{0,0}},
+			{{-0.5f,-0.5f, 0.5f},{-1,0,0},{1,0}},
+			{{-0.5f, 0.5f, 0.5f},{-1,0,0},{1,1}},
+			{{-0.5f, 0.5f,-0.5f},{-1,0,0},{0,1}},
 
-			// RIGHT (x = +0.5), normal ~ (1,0,0)   map z->u, y->v
-			{{ 0.5f,-0.5f, 0.5f},{0,1,0},{0,0}},
-			{{ 0.5f,-0.5f,-0.5f},{0,1,0.5f},{1,0}},
-			{{ 0.5f, 0.5f,-0.5f},{0.5f,1,0.5f},{1,1}},
-			{{ 0.5f, 0.5f, 0.5f},{0.5f,1,0},{0,1}},
+			// RIGHT (x = +0.5), normal (1,0,0)   map z->u, y->v
+			{{ 0.5f,-0.5f, 0.5f},{1,0,0},{0,0}},
+			{{ 0.5f,-0.5f,-0.5f},{1,0,0},{1,0}},
+			{{ 0.5f, 0.5f,-0.5f},{1,0,0},{1,1}},
+			{{ 0.5f, 0.5f, 0.5f},{1,0,0},{0,1}},
 
-			// TOP (y = +0.5), normal ~ (0,1,0)    map x->u, z->v
-			{{-0.5f, 0.5f, 0.5f},{1,1,1},{0,0}},
-			{{ 0.5f, 0.5f, 0.5f},{1,1,1},{1,0}},
-			{{ 0.5f, 0.5f,-0.5f},{1,1,1},{1,1}},
-			{{-0.5f, 0.5f,-0.5f},{1,1,1},{0,1}},
+			// TOP (y = +0.5), normal (0,1,0)    map x->u, z->v
+			{{-0.5f, 0.5f, 0.5f},{0,1,0},{0,0}},
+			{{ 0.5f, 0.5f, 0.5f},{0,1,0},{1,0}},
+			{{ 0.5f, 0.5f,-0.5f},{0,1,0},{1,1}},
+			{{-0.5f, 0.5f,-0.5f},{0,1,0},{0,1}},
 
-			// BOTTOM (y = -0.5), normal ~ (0,-1,0) map x->u, z->v
-			{{-0.5f,-0.5f,-0.5f},{1,1,1},{0,0}},
-			{{ 0.5f,-0.5f,-0.5f},{1,1,1},{1,0}},
-			{{ 0.5f,-0.5f, 0.5f},{1,1,1},{1,1}},
-			{{-0.5f,-0.5f, 0.5f},{1,1,1},{0,1}},
+			// BOTTOM (y = -0.5), normal (0,-1,0) map x->u, z->v
+			{{-0.5f,-0.5f,-0.5f},{0,-1,0},{0,0}},
+			{{ 0.5f,-0.5f,-0.5f},{0,-1,0},{1,0}},
+			{{ 0.5f,-0.5f, 0.5f},{0,-1,0},{1,1}},
+			{{-0.5f,-0.5f, 0.5f},{0,-1,0},{0,1}},
 		};
 
 		// Define cube indices (12 triangles, 36 indices)

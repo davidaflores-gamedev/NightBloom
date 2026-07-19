@@ -25,8 +25,16 @@
 #include "Engine/Input/InputSystem.hpp"
 #include "Engine/Window/Window.hpp"
 #include "Engine/Terrain/TerrainSystem.hpp"
+#include "Engine/Renderer/Components/ResourceManager.hpp"
+#include "Engine/Gameplay/Pawn.hpp"
+#include "Engine/Gameplay/CharacterPawn.hpp"
+#include "Engine/Gameplay/VehiclePawn.hpp"
+#include "Engine/Gameplay/ThirdPersonCameraRig.hpp"
 
+#include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <cstdlib>  // __argc / __argv
 
@@ -91,6 +99,10 @@ namespace Nightbloom
 			// frame (shadow quality, vsync, windowed resolution).
 			ApplySettings();
 
+			// Pawn system + third-person body (Phase 1). Possess an on-foot character;
+			// the vehicle pawn slots in beside it in Phase 2.
+			InitCharacter();
+
 			// Grab the mouse for always-on mouselook (Esc opens the menu + frees it).
 			GetWindow()->SetRelativeMouseMode(true);
 		}
@@ -109,11 +121,18 @@ namespace Nightbloom
 		{
 			UpdatePauseAndCapture();
 
-			// Walk on the terrain once it has CPU height data; otherwise fly.
-			if (m_TerrainReady && m_Terrain.HasHeightData())
-				UpdateCharacter(deltaTime);
+			// Walk on the terrain (third-person) once it has CPU height data;
+			// otherwise fall back to the free-fly camera (no visible body).
+			const bool characterMode = (m_TerrainReady && m_Terrain.HasHeightData());
+			if (characterMode)
+				UpdateCharacterMode(deltaTime);
 			else
 				UpdateFlyCam(deltaTime);
+
+			// The placeholder bodies only exist in character mode; hide them when the
+			// fly-cam fallback is driving.
+			if (SceneObject* body = SceneObjectAt(m_BodyIndex)) body->visible = characterMode;
+			if (SceneObject* bike = SceneObjectAt(m_BikeIndex)) bike->visible = characterMode;
 
 			GetRenderer()->SetViewMatrix(m_Camera->GetViewMatrix());
 			GetRenderer()->SetProjectionMatrix(m_Camera->GetProjectionMatrix());
@@ -145,6 +164,8 @@ namespace Nightbloom
 			// gets rendered in the post-process pass — so the menu is just widgets here.
 			if (m_MenuOpen)
 				DrawPauseMenu();
+			else
+				DrawInteractPrompt();
 		}
 
 	private:
@@ -257,6 +278,52 @@ namespace Nightbloom
 			ImGui::End();
 		}
 
+		// Contextual interact prompt, low-center. Shows "ride" when you're on foot and
+		// in range of the bike, and "dismount" while riding. Deliberately a plain
+		// borderless overlay, not a window — this is diegetic HUD, not settings UI.
+		void DrawInteractPrompt()
+		{
+			const char* label = nullptr;
+			if (IsRiding())        label = "[E]  Dismount";
+			else if (CanMount())   label = "[E]  Ride Hoverbike";
+			ImGuiIO& io = ImGui::GetIO();
+
+			// Fade both ways so the prompt doesn't pop as you cross the mount radius.
+			// Fading OUT means drawing after the prompt is logically gone, so the last
+			// label is cached — `label` is already null by then. Labels are string
+			// literals, so caching the pointer is safe.
+			if (label)
+			{
+				m_PromptLabel = label;
+				m_PromptAlpha = std::min(1.0f, m_PromptAlpha + io.DeltaTime * kPromptFadeInRate);
+			}
+			else
+			{
+				m_PromptAlpha = std::max(0.0f, m_PromptAlpha - io.DeltaTime * kPromptFadeOutRate);
+			}
+
+			// Nothing to draw: never shown yet, or the fade-out has finished.
+			if (!m_PromptLabel || m_PromptAlpha <= 0.0f)
+				return;
+
+			ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.82f),
+				ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+			ImGui::SetNextWindowBgAlpha(0.45f * m_PromptAlpha);
+
+			ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
+				| ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing
+				| ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs
+				| ImGuiWindowFlags_AlwaysAutoResize;
+
+			if (ImGui::Begin("##InteractPrompt", nullptr, flags))
+			{
+				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, m_PromptAlpha));
+				ImGui::TextUnformatted(m_PromptLabel);
+				ImGui::PopStyleColor();
+			}
+			ImGui::End();
+		}
+
 		void DrawResolutionCombo()
 		{
 			struct Res { int w, h; const char* label; };
@@ -313,63 +380,203 @@ namespace Nightbloom
 			m_Camera->Update(deltaTime);
 		}
 
-		// Kinematic character: WASD walks in the look plane, gravity + snap to the
-		// terrain surface (via TerrainSystem::GetHeightAt), Space jumps. The camera is
-		// driven from the body's eye position; the Camera class is used for orientation
-		// only. Right-mouse to look for now — cursor-lock for always-on mouselook is the
-		// obvious feel follow-up (needs a window cursor-capture API).
-		void UpdateCharacter(float deltaTime)
+		// Build the pawn framework: an on-foot CharacterPawn and a hoverbike
+		// VehiclePawn, each with a placeholder body, sharing one ground sampler and
+		// one camera rig. Possession starts on foot.
+		void InitCharacter()
 		{
-			if (!m_CharInitialized)
+			// Ground-height query. Lazy: returns a flat floor until the terrain's CPU
+			// heightfield readback completes, then real heights. Shared by both pawns
+			// (foot snap / hover) and the camera rig (boom clearance).
+			m_GroundFn = [this](float x, float z) -> float {
+				if (m_TerrainReady && m_Terrain.HasHeightData())
+					return m_Terrain.GetHeightAt(x, z);
+				return 0.0f;
+			};
+
+			m_Character = std::make_unique<CharacterPawn>();
+			m_Character->SetGroundSampler(m_GroundFn);
+
+			m_Bike = std::make_unique<VehiclePawn>();
+			m_Bike->SetGroundSampler(m_GroundFn);
+
+			Possess(m_Character.get());
+
+			// Placeholder bodies: scaled test cubes (uv_checker so facing reads while
+			// turning). Swap for real meshes later.
+			//
+			// Scene::AddPrimitive emplaces into a vector, so an earlier SceneObject*
+			// dangles once a later add reallocates it — these are stored as indices
+			// and resolved per use.
+			m_BodyIndex = AddPlaceholder("PlayerBody");
+			m_BikeIndex = AddPlaceholder("Hoverbike");
+		}
+
+		// Adds a uv_checker unit cube primitive; returns its scene index (-1 on
+		// failure, e.g. no test geometry).
+		int AddPlaceholder(const char* name)
+		{
+			auto* vb = GetRenderer()->GetTestVertexBuffer();
+			auto* ib = GetRenderer()->GetTestIndexBuffer();
+			uint32_t ic = GetRenderer()->GetTestIndexCount();
+			if (!vb || !ib || ic == 0)
+				return -1;
+
+			auto mesh = std::make_unique<MeshDrawable>(vb, ib, ic, PipelineType::Mesh);
+			if (auto* res = GetRenderer()->GetResourceManager())
+				if (auto* tex = res->GetTexture("uv_checker"))
+					mesh->AddTexture(tex);
+			m_Scene->AddPrimitive(name, std::move(mesh));
+			return static_cast<int>(m_Scene->GetObjectCount()) - 1;
+		}
+
+		SceneObject* SceneObjectAt(int index)
+		{
+			if (index < 0 || index >= static_cast<int>(m_Scene->GetObjectCount()))
+				return nullptr;
+			return m_Scene->GetObject(static_cast<size_t>(index));
+		}
+
+		// Possession = swap which pawn receives input + drives the camera. The boom
+		// length is a property of the pawn, so it re-reads on every swap.
+		void Possess(Pawn* pawn)
+		{
+			if (m_Possessed == pawn)
+				return;
+			if (m_Possessed)
+				m_Possessed->OnUnpossess();
+			m_Possessed = pawn;
+			if (m_Possessed)
 			{
-				glm::vec3 p = m_Camera->GetPosition();
-				m_CharPos = glm::vec3(p.x, m_Terrain.GetHeightAt(p.x, p.z), p.z);
-				m_CharVelY = 0.0f;
-				m_CharInitialized = true;
+				m_Possessed->OnPossess();
+				m_CameraRig.GetConfig().distance = m_Possessed->GetCameraDistance();
 			}
+		}
 
-			m_Camera->SetRotationInput(LookDelta());       // always-on mouselook when captured
-			m_Camera->SetMovementInput(glm::vec3(0.0f));   // body movement handled below
-			m_Camera->Update(deltaTime);
+		bool IsRiding() const { return m_Possessed == m_Bike.get(); }
 
+		// On foot and close enough to the bike to mount it. Drives both the E
+		// handler and the on-screen prompt, so they can't disagree about range.
+		bool CanMount() const
+		{
+			if (IsRiding() || !m_CharacterStarted)
+				return false;
+			const glm::vec3 toBike = m_Bike->GetPosition() - m_Character->GetPosition();
+			return glm::dot(toBike, toBike) <= kMountRadius * kMountRadius;
+		}
+
+		// Third-person control: feed the look delta to the camera rig, build a
+		// device-neutral PawnInput, step whichever pawn is possessed, then orbit the
+		// camera around it and sync the placeholder bodies.
+		void UpdateCharacterMode(float deltaTime)
+		{
 			const bool controlling = GetWindow()->IsRelativeMouseMode();
 
-			// Horizontal wish-direction in the look-yaw plane (ignore pitch).
-			glm::vec3 fwd = m_Camera->GetForward();  fwd.y = 0.0f;
-			glm::vec3 right = m_Camera->GetRight();  right.y = 0.0f;
-			if (glm::dot(fwd, fwd) > 1e-5f)     fwd = glm::normalize(fwd);
-			if (glm::dot(right, right) > 1e-5f) right = glm::normalize(right);
+			// Place the pawns on first entry (handles the fly->walk switch once the
+			// terrain readback lands), mirroring the old lazy init.
+			if (!m_CharacterStarted)
+			{
+				glm::vec3 camPos = m_Camera->GetPosition();
+				m_Character->SetPosition(glm::vec3(camPos.x, m_GroundFn(camPos.x, camPos.z), camPos.z));
+				m_Character->SetYaw(m_Camera->GetYaw());
+				m_CameraRig.SetYawPitch(m_Camera->GetYaw(), m_Camera->GetPitch());
 
-			glm::vec3 wish(0.0f);
+				// Park the bike a few metres ahead so it's findable on spawn.
+				glm::vec3 bikePos = m_Character->GetPosition() + m_Character->GetForward() * 6.0f;
+				bikePos.y = m_GroundFn(bikePos.x, bikePos.z) + m_Bike->GetConfig().hoverHeight;
+				m_Bike->SetPosition(bikePos);
+				m_Bike->SetYaw(m_Character->GetYaw());
+
+				m_CharacterStarted = true;
+			}
+
+			m_CameraRig.ApplyLook(controlling ? LookDelta() : glm::vec2(0.0f));
+
+			// One input struct, all intents filled; each pawn reads what it cares
+			// about (CharacterPawn ignores throttle/steer, VehiclePawn ignores move).
+			PawnInput in;
+			in.cameraForward = m_CameraRig.GetFlatForward();
+			in.cameraRight   = m_CameraRig.GetFlatRight();
 			if (controlling)
 			{
-				if (GetInput()->IsDown(InputCode::Key_W)) wish += fwd;
-				if (GetInput()->IsDown(InputCode::Key_S)) wish -= fwd;
-				if (GetInput()->IsDown(InputCode::Key_D)) wish += right;
-				if (GetInput()->IsDown(InputCode::Key_A)) wish -= right;
+				if (GetInput()->IsDown(InputCode::Key_W)) in.move.y += 1.0f;
+				if (GetInput()->IsDown(InputCode::Key_S)) in.move.y -= 1.0f;
+				if (GetInput()->IsDown(InputCode::Key_D)) in.move.x += 1.0f;
+				if (GetInput()->IsDown(InputCode::Key_A)) in.move.x -= 1.0f;
+				in.sprint      = GetInput()->IsDown(InputCode::Key_Shift);
+				in.jumpPressed = GetInput()->IsPressed(InputCode::Key_Space);
+
+				in.throttle        = GetInput()->IsDown(InputCode::Key_W) ? 1.0f : 0.0f;
+				in.brake           = GetInput()->IsDown(InputCode::Key_S) ? 1.0f : 0.0f;
+				in.steer           = in.move.x;
+				in.interactPressed = GetInput()->IsPressed(InputCode::Key_E);
 			}
-			if (glm::dot(wish, wish) > 1e-5f) wish = glm::normalize(wish);
 
-			float speed = kWalkSpeed * (GetInput()->IsDown(InputCode::Key_Shift) ? kSprintMul : 1.0f);
-			m_CharPos.x += wish.x * speed * deltaTime;
-			m_CharPos.z += wish.z * speed * deltaTime;
+			if (in.interactPressed)
+				ToggleRide();
 
-			// Gravity, then snap to the ground.
-			m_CharVelY += kGravity * deltaTime;
-			m_CharPos.y += m_CharVelY * deltaTime;
+			m_Possessed->Update(in, deltaTime);
 
-			float groundY = m_Terrain.GetHeightAt(m_CharPos.x, m_CharPos.z);
-			bool grounded = false;
-			if (m_CharPos.y <= groundY)
+			// The bike keeps hovering (and settling onto the terrain) while parked, so
+			// it doesn't sink or hang in the air after you step off.
+			if (!IsRiding())
+				m_Bike->Update(PawnInput{}, deltaTime);
+
+			m_CameraRig.UpdateCamera(*m_Camera, m_Possessed->GetCameraFocus(), &m_GroundFn);
+			SyncBodies();
+		}
+
+		// Mount if on foot and close enough to the bike; dismount if riding.
+		void ToggleRide()
+		{
+			if (IsRiding())
 			{
-				m_CharPos.y = groundY;
-				m_CharVelY = 0.0f;
-				grounded = true;
+				// Step off to the bike's right, snapped to the ground.
+				m_Character->SetPosition(m_Bike->GetDismountPosition(1.0f));
+				m_Character->SetYaw(m_Bike->GetYaw());
+				Possess(m_Character.get());
+				return;
 			}
-			if (grounded && controlling && GetInput()->IsPressed(InputCode::Key_Space))
-				m_CharVelY = kJumpSpeed;
 
-			m_Camera->SetPosition(m_CharPos + glm::vec3(0.0f, kEyeHeight, 0.0f));
+			if (CanMount())
+				Possess(m_Bike.get());
+		}
+
+		// Drive the placeholder primitives from the pawns. While riding, the rider
+		// box is parked on the bike's seat (so mounting visibly reads) — it follows
+		// the bike's full transform, bank and all.
+		void SyncBodies()
+		{
+			// Bike: a long, low box. Front is +X to match the pawn yaw convention.
+			if (SceneObject* bikeObj = SceneObjectAt(m_BikeIndex))
+			{
+				if (bikeObj->meshDrawable)
+				{
+					const glm::vec3 bikeScale(2.2f, 0.5f, 0.7f);
+					bikeObj->meshDrawable->SetTransform(
+						m_Bike->GetVisualTransform() * glm::scale(glm::mat4(1.0f), bikeScale));
+				}
+			}
+
+			// Rider: person-sized box, feet on the ground when walking, seated when riding.
+			if (SceneObject* bodyObj = SceneObjectAt(m_BodyIndex))
+			{
+				if (bodyObj->meshDrawable)
+				{
+					const glm::vec3 bodyScale(0.6f, 1.8f, 0.4f);
+					const float halfHeight = 0.9f;  // half the 1.8 m box
+
+					glm::mat4 base = IsRiding()
+						? m_Bike->GetVisualTransform()
+							* glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, m_Bike->GetConfig().seatHeight, 0.0f))
+						: m_Character->GetVisualTransform();
+
+					bodyObj->meshDrawable->SetTransform(
+						base
+						* glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, halfHeight, 0.0f))
+						* glm::scale(glm::mat4(1.0f), bodyScale));
+				}
+			}
 		}
 
 		float AspectRatio() const
@@ -487,13 +694,6 @@ namespace Nightbloom
 
 		static constexpr uint32_t kTerrainResolution = 256;
 
-		// Kinematic character tunables (feel — expect to tweak these live).
-		static constexpr float kEyeHeight = 1.7f;    // camera height above the feet
-		static constexpr float kWalkSpeed = 6.0f;    // m/s
-		static constexpr float kSprintMul = 2.0f;
-		static constexpr float kGravity   = -20.0f;  // m/s^2 (snappier than 9.8)
-		static constexpr float kJumpSpeed = 8.0f;    // m/s initial jump velocity
-
 		std::unique_ptr<Scene>  m_Scene;
 		std::unique_ptr<Camera> m_Camera;
 		Project                 m_Project;
@@ -503,9 +703,30 @@ namespace Nightbloom
 		GameSettings            m_Settings;         // persisted video/controls settings
 		bool                    m_MenuOpen = false; // pause/settings menu shown
 
-		glm::vec3 m_CharPos = glm::vec3(0.0f);  // feet position
-		float     m_CharVelY = 0.0f;
-		bool      m_CharInitialized = false;
+		// Pawn framework. Possession is a simple Pawn* here; CharacterPawn owns the
+		// kinematic walking, VehiclePawn the hoverbike, the rig the camera.
+		std::unique_ptr<CharacterPawn>    m_Character;
+		std::unique_ptr<VehiclePawn>      m_Bike;
+		Pawn*                             m_Possessed = nullptr;
+		ThirdPersonCameraRig              m_CameraRig;
+		std::function<float(float, float)> m_GroundFn;             // terrain height query
+		bool                              m_CharacterStarted = false;
+
+		// Placeholder bodies, held as scene *indices* — Scene::AddPrimitive emplaces
+		// into a vector, so a stored SceneObject* would dangle on the next add.
+		int m_BodyIndex = -1;
+		int m_BikeIndex = -1;
+
+		// How close you must be, on foot, to mount the bike.
+		static constexpr float kMountRadius = 3.5f;
+
+		// Interact-prompt fade. Out is slower than in: appearing should feel
+		// responsive, disappearing shouldn't yank your eye back to it.
+		static constexpr float kPromptFadeInRate  = 6.0f;   // alpha/sec
+		static constexpr float kPromptFadeOutRate = 3.5f;   // alpha/sec
+
+		float       m_PromptAlpha = 0.0f;
+		const char* m_PromptLabel = nullptr;  // last shown label, kept alive for the fade-out
 	};
 
 	Application* CreateApplication()
