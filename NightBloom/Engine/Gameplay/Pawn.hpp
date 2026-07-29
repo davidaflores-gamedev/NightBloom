@@ -13,6 +13,8 @@
 //------------------------------------------------------------------------------
 #pragma once
 
+#include "Engine/Math/MathUtils.hpp"   // ShortestAngleDelta, used by pawn facing
+
 #include <glm/glm.hpp>
 
 namespace Nightbloom
@@ -36,6 +38,8 @@ namespace Nightbloom
 		glm::vec3 cameraRight   = glm::vec3(1.0f, 0.0f, 0.0f);
 
 		bool sprint          = false;  // held
+		bool crouch          = false;  // held — crouch stance (CharacterPawn)
+		bool prone           = false;  // held/toggled — prone crawl; overrides crouch
 		bool jumpPressed     = false;  // edge — down this frame only
 		bool interactPressed = false;  // edge — enter/exit vehicle (Phase 3)
 

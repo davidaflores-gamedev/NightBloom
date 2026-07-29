@@ -72,6 +72,14 @@ endif()
 # to the editor exe. Shared with the future Game runtime; see
 # cmake/NightbloomShaders.cmake (P4 in .claude/RENDERER_ASSESSMENT.md).
 #------------------------------------------------------------------------------
+# The helper module is included by the ROOT CMakeLists, so a root build already
+# has this command. Generating this target standalone (Editor/GenerateEditor.bat,
+# and therefore BuildAll.bat) never runs the root, so without this guarded
+# include the call below dies with 'Unknown CMake command'.
+if(NOT COMMAND nightbloom_compile_shaders)
+    include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NightbloomShaders.cmake")
+endif()
+
 nightbloom_compile_shaders(NightbloomEditor)
 
 # Group files in IDE

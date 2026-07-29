@@ -1,8 +1,24 @@
 //------------------------------------------------------------------------------
-// VulkanTest.cpp - Standalone test (create this in a temp folder)
+// RendererTests.cpp
+//
+// Vulkan environment smoke tests: can we load the loader, create an instance,
+// and see a physical device. These catch "the machine/SDK/driver is wrong"
+// before any renderer test bothers to run.
+//
+// HISTORY — worth knowing, because it hid every other test in this target:
+// this file used to be a standalone scratch program with its own `int main()`.
+// Because a .obj's `main` beats the one inside gtest_main.lib, that main
+// silently won the link and NightbloomTests.exe ran ONLY this Vulkan probe —
+// every TEST() in LoggerTests/MathTests was compiled, linked, and never
+// executed. It also ended in std::cin.get(), so the "suite" hung forever on
+// any automated runner. Don't reintroduce a main() here; gtest_main provides it.
+//
+// Everything is resolved dynamically (VK_NO_PROTOTYPES + LoadLibraryA) so this
+// links without the Vulkan import library.
 //------------------------------------------------------------------------------
 
-#include <iostream>
+#include <gtest/gtest.h>
+
 #include <vector>
 #include <windows.h>
 
@@ -19,85 +35,121 @@ typedef void (VKAPI_PTR* PFN_vkDestroyInstance)(VkInstance instance, const VkAll
 typedef VkResult(VKAPI_PTR* PFN_vkEnumeratePhysicalDevices)(VkInstance instance, uint32_t* pPhysicalDeviceCount, VkPhysicalDevice* pPhysicalDevices);
 typedef void (VKAPI_PTR* PFN_vkGetPhysicalDeviceProperties)(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties* pProperties);
 
-#pragma comment(lib, "C:/VulkanSDK/1.4.321.1/Lib/vulkan-1.lib")
+namespace
+{
+	// Loads vulkan-1.dll and the handful of entry points these tests need.
+	// Frees the module on destruction so a failing test doesn't leak it.
+	struct VulkanLoader
+	{
+		HMODULE lib = nullptr;
+		PFN_vkCreateInstance              createInstance = nullptr;
+		PFN_vkDestroyInstance             destroyInstance = nullptr;
+		PFN_vkEnumeratePhysicalDevices    enumeratePhysicalDevices = nullptr;
+		PFN_vkGetPhysicalDeviceProperties getPhysicalDeviceProperties = nullptr;
 
-int main() {
-	std::cout << "Testing Vulkan SDK..." << std::endl;
-
-	// Load Vulkan functions manually
-	HMODULE vulkanLib = LoadLibraryA("vulkan-1.dll");
-	if (!vulkanLib) {
-		std::cout << "? Failed to load vulkan-1.dll" << std::endl;
-		return -1;
-	}
-
-	auto vkCreateInstance = (PFN_vkCreateInstance)GetProcAddress(vulkanLib, "vkCreateInstance");
-	auto vkDestroyInstance = (PFN_vkDestroyInstance)GetProcAddress(vulkanLib, "vkDestroyInstance");
-	auto vkEnumeratePhysicalDevices = (PFN_vkEnumeratePhysicalDevices)GetProcAddress(vulkanLib, "vkEnumeratePhysicalDevices");
-	auto vkGetPhysicalDeviceProperties = (PFN_vkGetPhysicalDeviceProperties)GetProcAddress(vulkanLib, "vkGetPhysicalDeviceProperties");
-
-	if (!vkCreateInstance || !vkDestroyInstance || !vkEnumeratePhysicalDevices || !vkGetPhysicalDeviceProperties) {
-		std::cout << "? Failed to load Vulkan functions" << std::endl;
-		FreeLibrary(vulkanLib);
-		return -1;
-	}
-
-	// Test 1: Check if we can create a Vulkan instance
-	VkApplicationInfo appInfo{};
-	appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-	appInfo.pApplicationName = "Vulkan Test";
-	appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-	appInfo.pEngineName = "Test";
-	appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-	appInfo.apiVersion = VK_API_VERSION_1_0;
-
-	VkInstanceCreateInfo createInfo{};
-	createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-	createInfo.pApplicationInfo = &appInfo;
-
-	VkInstance instance;
-	VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
-
-	if (result == VK_SUCCESS) {
-		std::cout << "? Vulkan instance created successfully!" << std::endl;
-
-		// Test 2: Enumerate physical devices
-		uint32_t deviceCount = 0;
-		vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
-
-		if (deviceCount > 0) {
-			std::cout << "? Found " << deviceCount << " Vulkan-compatible device(s)" << std::endl;
-
-			std::vector<VkPhysicalDevice> devices(deviceCount);
-			vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
-
-			// Get info about first device
-			VkPhysicalDeviceProperties deviceProperties;
-			vkGetPhysicalDeviceProperties(devices[0], &deviceProperties);
-
-			std::cout << "Primary GPU: " << deviceProperties.deviceName << std::endl;
-			std::cout << "Vulkan API Version: "
-				<< VK_VERSION_MAJOR(deviceProperties.apiVersion) << "."
-				<< VK_VERSION_MINOR(deviceProperties.apiVersion) << "."
-				<< VK_VERSION_PATCH(deviceProperties.apiVersion) << std::endl;
-		}
-		else {
-			std::cout << "?? No Vulkan-compatible devices found!" << std::endl;
+		VulkanLoader()
+		{
+			lib = LoadLibraryA("vulkan-1.dll");
+			if (!lib) return;
+			createInstance = (PFN_vkCreateInstance)GetProcAddress(lib, "vkCreateInstance");
+			destroyInstance = (PFN_vkDestroyInstance)GetProcAddress(lib, "vkDestroyInstance");
+			enumeratePhysicalDevices = (PFN_vkEnumeratePhysicalDevices)GetProcAddress(lib, "vkEnumeratePhysicalDevices");
+			getPhysicalDeviceProperties = (PFN_vkGetPhysicalDeviceProperties)GetProcAddress(lib, "vkGetPhysicalDeviceProperties");
 		}
 
-		vkDestroyInstance(instance, nullptr);
-		std::cout << "? Vulkan test completed successfully!" << std::endl;
-	}
-	else {
-		std::cout << "? Failed to create Vulkan instance! Error code: " << result << std::endl;
-		std::cout << "Common causes:" << std::endl;
-		std::cout << "- Vulkan SDK not properly installed" << std::endl;
-		std::cout << "- Graphics drivers don't support Vulkan" << std::endl;
-		std::cout << "- Running on virtual machine without GPU passthrough" << std::endl;
-	}
+		~VulkanLoader() { if (lib) FreeLibrary(lib); }
 
-	FreeLibrary(vulkanLib);
-	std::cout << "\nPress Enter to exit..." << std::endl;
-	std::cin.get();
-	return 0;
+		bool IsValid() const
+		{
+			return lib && createInstance && destroyInstance
+				&& enumeratePhysicalDevices && getPhysicalDeviceProperties;
+		}
+
+		VulkanLoader(const VulkanLoader&) = delete;
+		VulkanLoader& operator=(const VulkanLoader&) = delete;
+	};
+
+	// Creates a minimal instance for a test and destroys it on scope exit.
+	struct ScopedInstance
+	{
+		const VulkanLoader& loader;
+		VkInstance handle = VK_NULL_HANDLE;
+		VkResult   result = VK_ERROR_INITIALIZATION_FAILED;
+
+		explicit ScopedInstance(const VulkanLoader& l) : loader(l)
+		{
+			VkApplicationInfo appInfo{};
+			appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+			appInfo.pApplicationName = "Nightbloom Tests";
+			appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+			appInfo.pEngineName = "Nightbloom";
+			appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+			appInfo.apiVersion = VK_API_VERSION_1_0;
+
+			VkInstanceCreateInfo createInfo{};
+			createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+			createInfo.pApplicationInfo = &appInfo;
+
+			result = loader.createInstance(&createInfo, nullptr, &handle);
+		}
+
+		~ScopedInstance()
+		{
+			if (result == VK_SUCCESS && handle != VK_NULL_HANDLE)
+				loader.destroyInstance(handle, nullptr);
+		}
+
+		ScopedInstance(const ScopedInstance&) = delete;
+		ScopedInstance& operator=(const ScopedInstance&) = delete;
+	};
+}
+
+TEST(VulkanEnvironment, LoaderAndEntryPointsResolve)
+{
+	VulkanLoader loader;
+	ASSERT_NE(loader.lib, nullptr)
+		<< "vulkan-1.dll not found — Vulkan runtime/driver missing?";
+	EXPECT_NE(loader.createInstance, nullptr);
+	EXPECT_NE(loader.destroyInstance, nullptr);
+	EXPECT_NE(loader.enumeratePhysicalDevices, nullptr);
+	EXPECT_NE(loader.getPhysicalDeviceProperties, nullptr);
+}
+
+TEST(VulkanEnvironment, CanCreateInstance)
+{
+	VulkanLoader loader;
+	ASSERT_TRUE(loader.IsValid()) << "Vulkan loader unavailable";
+
+	ScopedInstance instance(loader);
+	EXPECT_EQ(instance.result, VK_SUCCESS)
+		<< "vkCreateInstance failed (code " << instance.result << "). "
+		<< "Usual causes: SDK not installed, drivers without Vulkan support, "
+		<< "or a VM with no GPU passthrough.";
+}
+
+TEST(VulkanEnvironment, ReportsAtLeastOnePhysicalDevice)
+{
+	VulkanLoader loader;
+	ASSERT_TRUE(loader.IsValid()) << "Vulkan loader unavailable";
+
+	ScopedInstance instance(loader);
+	ASSERT_EQ(instance.result, VK_SUCCESS);
+
+	uint32_t deviceCount = 0;
+	loader.enumeratePhysicalDevices(instance.handle, &deviceCount, nullptr);
+	ASSERT_GT(deviceCount, 0u) << "No Vulkan-compatible devices found";
+
+	std::vector<VkPhysicalDevice> devices(deviceCount);
+	loader.enumeratePhysicalDevices(instance.handle, &deviceCount, devices.data());
+
+	VkPhysicalDeviceProperties props{};
+	loader.getPhysicalDeviceProperties(devices[0], &props);
+
+	// Surfaced as test output so a failing run says which GPU/driver it saw.
+	std::cout << "  Primary GPU: " << props.deviceName
+		<< " (Vulkan " << VK_VERSION_MAJOR(props.apiVersion)
+		<< "." << VK_VERSION_MINOR(props.apiVersion)
+		<< "." << VK_VERSION_PATCH(props.apiVersion) << ")\n";
+
+	EXPECT_GT(props.apiVersion, 0u);
 }

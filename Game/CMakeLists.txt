@@ -31,6 +31,12 @@ target_link_libraries(NightbloomGame PRIVATE NightbloomEngine)
 
 # Deploy the engine-owned shaders next to the game exe (same shared function the
 # editor uses — this is the payoff of P4).
+# See the note in Editor/CMakeLists.txt: the root includes this module, a
+# standalone generate does not.
+if(NOT COMMAND nightbloom_compile_shaders)
+    include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NightbloomShaders.cmake")
+endif()
+
 nightbloom_compile_shaders(NightbloomGame)
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${GAME_SOURCES})

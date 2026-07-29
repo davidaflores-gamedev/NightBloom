@@ -36,6 +36,15 @@ namespace Nightbloom
 	inline float DegreesToRadians(float degrees) { return degrees * DEG_TO_RAD; }
 	inline float RadiansToDegrees(float radians) { return radians * RAD_TO_DEG; }
 
+	// Shortest signed angular difference in DEGREES, wrapped to [-180, 180].
+	// Used by everything that slews a yaw toward a target (character facing,
+	// guard turning). Without the wrap, turning across the 0/360 seam takes the
+	// long way round — a 10-degree turn becomes a 350-degree spin.
+	inline float ShortestAngleDelta(float fromDegrees, float toDegrees)
+	{
+		return std::fmod(toDegrees - fromDegrees + 540.0f, 360.0f) - 180.0f;
+	}
+
 	// Float Comparison functions
 	inline bool IsNearlyEqual(float a, float b, float epsilon = EPSILON)
 	{
