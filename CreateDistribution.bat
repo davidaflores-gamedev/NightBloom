@@ -30,8 +30,9 @@ mkdir "%DIST_DIR%\Shaders"
 copy "Build\Editor\%BUILD_CONFIG%\Shaders\*.spv" "%DIST_DIR%\Shaders\"
 
 REM Copy assets
-if exist "Editor\Assets" (
-    xcopy "Editor\Assets" "%DIST_DIR%\Assets\" /E /I /Y
+REM Single shared Assets tree at the repo root (Editor\Assets was merged into it).
+if exist "Assets" (
+    xcopy "Assets" "%DIST_DIR%\Assets\" /E /I /Y
 )
 
 echo.

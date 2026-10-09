@@ -49,12 +49,14 @@ target_include_directories(NightbloomEditor PRIVATE
 )
 
 #------------------------------------------------------------------------------
-# Copy assets to output directory
+# Copy the repo-root Assets/ tree to the output directory. In a dev checkout
+# AssetManager finds the repo root (via .git/Setup.bat) and reads Assets/ there
+# directly; this copy is what a packaged editor (CreateDistribution.bat) uses.
 #------------------------------------------------------------------------------
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Assets")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Assets")
     add_custom_command(TARGET NightbloomEditor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/Assets
+        ${CMAKE_CURRENT_SOURCE_DIR}/../Assets
         $<TARGET_FILE_DIR:NightbloomEditor>/Assets
     )
 endif()
