@@ -1,23 +1,16 @@
-# NightBloom
+# NightBloom (engine library)
 
-Nightbloom is currently a project im developing that is focused on displaying and achieving advanced rendering concepts and techniques. As my engine progresses, and i get it to a state of usability, i will use it to create various 2D and 3D games.
+The engine static library (`NightbloomEngine`): a Vulkan renderer, environment systems, gameplay foundation, and unit tests. It is focused on advanced real-time rendering techniques and is used as the base for several game prototypes.
 
 ## Building
-1. Run `Scripts/GenerateProject.bat`
 
-2\. Open `Build/NightbloomEngine.sln`
+Build from the **repository root** with `BuildAll.bat`. That builds the engine together with the editor, the game runtime, and the tests into the single `Build/` tree. See the root `README.txt`.
 
-3\. Build in Visual Studio (F7)
+`Scripts/GenerateProject.bat` still generates an engine-only solution into `NightBloom/Build/`, but it builds neither the editor nor the game. It's normally not what you want.
 
+## Feature status
 
-
-\## Planned Features
-
-\- \[ ] Window Creation
-
-\- \[ ] Vulkan Renderer
-
-\- \[ ] Volumetric Clouds
-
-\- \[ ] Physics Integration
-
+- [x] Window creation (Win32 only for now)
+- [x] Vulkan renderer (CSM shadows, HDR + bloom, planar reflections)
+- [x] Volumetric clouds
+- [~] Physics: raycasts and line of sight only; no rigid bodies yet

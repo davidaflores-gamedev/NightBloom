@@ -15,5 +15,5 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo Engine project generated successfully!
-echo Next: Build Sandbox project
+echo Note: engine-only. For editor + game + tests, run BuildAll.bat from the repo root.
 pause

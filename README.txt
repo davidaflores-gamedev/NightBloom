@@ -1,29 +1,42 @@
 # Nightbloom Engine
 
-A custom real-time rendering engine built with Vulkan 1.4 and C++, designed as both a portfolio piece and foundation for game development.
+A custom real-time rendering engine built with Vulkan 1.4 and C++20, designed as both a portfolio piece and a foundation for game prototypes.
 
 ## Features
 
 ### Rendering
-- **Vulkan 1.4** core with VMA memory management
-- **PBR Materials** with glTF 2.0 model loading
-- **Shadow Mapping** for directional lights
-- **Point Lights** support
-- **Reverse-Z Depth** for improved precision
-- **Mipmap Generation**
+- **Vulkan 1.4** core with VMA memory management, 2 frames in flight
+- **glTF 2.0** model loading (cgltf) and stb_image textures, with mipmap generation
+- **Cascaded shadow maps** (4 cascades, PCF, blend bands, live-tunable resolution)
+- Directional + point lights, **reverse-Z** infinite projection
+- **HDR pipeline**: ACES tonemapping, bloom, FXAA, exposure, vignette
+- Camera **frustum culling**
 
-### Compute Pipeline
-- GPU-based **procedural noise generation** (Perlin, Worley, Perlin-Worley, FBM)
-- Two-tier memory/disk caching for generated textures
-- Foundation for volumetric clouds, GPU culling, and particle systems
+### Environment systems
+- **Terrain** displaced from a GPU-generated heightmap, slope/height material blend, distance LOD
+- **Water** with planar reflections, Fresnel and animated normals
+- **GPU grass** (instanced blades)
+- **Volumetric clouds** raymarched in a low-resolution compute pass
+- **Fireflies**: GPU boids flocking simulation
+- Day/night cycle
+
+### Compute
+- GPU procedural noise generation (Perlin, Worley, Perlin-Worley, FBM) for heightmaps and cloud textures
+
+### Gameplay foundation
+- Scene + project serialization (`.nbscene` / `.nbproj` JSON)
+- Standalone game runtime (`NightbloomGame`) with a kinematic character controller
+- Pawn / vehicle / third-person camera framework
+- Raycast and line-of-sight queries; guard AI with vision cones and detection
+- Keyboard/mouse, XInput and DualSense input
 
 ### Editor
 - **ImGui-based interface** with dockable panels
-- Scene hierarchy and inspector
-- **Shader node editor** with GLSL/SPIR-V hot-reload
-- Debug visualization panel
+- Scene hierarchy, inspector, lighting, terrain/water/grass/cloud/firefly panels
+- **Shader node editor** and runtime shader compilation
+- GPU profiler + debug panel
 
-## Controls
+## Controls (Editor)
 
 | Input | Action |
 |-------|--------|
@@ -35,7 +48,7 @@ A custom real-time rendering engine built with Vulkan 1.4 and C++, designed as b
 
 1. Download the latest release from the [Releases](../../releases) page
 2. Extract the zip file
-3. Run `Editor.exe`
+3. Run the executable
 
 **Requirements:**
 - Windows 10/11
@@ -45,54 +58,51 @@ A custom real-time rendering engine built with Vulkan 1.4 and C++, designed as b
 ## Building from Source
 
 ### Prerequisites
-- **Visual Studio 2022** or **Visual Studio 2026**
+- **Visual Studio 2026** (`BuildAll.bat` uses the `Visual Studio 18 2026` generator; for VS 2022, run CMake yourself with `-G "Visual Studio 17 2022"`)
 - **Vulkan SDK** — install from [LunarG](https://vulkan.lunarg.com/)
-  - Ensure the `VULKAN_SDK` environment variable is set
+  - Ensure the `VULKAN_SDK` environment variable is set (`glslc` is used to compile shaders)
 - **CMake 3.20+**
 
 ### Build Steps
 
-1. Clone the repository:
+1. Clone the repository (with submodules, for googletest):
 ```bash
-   git clone https://github.com/davidaflores-gamedev/Nightbloom.git
-   cd Nightbloom/NightBloom
+   git clone --recursive https://github.com/davidaflores-gamedev/NightBloom.git
+   cd NightBloom
 ```
 
-2. Generate and build:
+2. Generate and build everything (engine, editor, game runtime, tests):
 ```batch
-   call BuildAll.bat
+   call BuildAll.bat          REM or: BuildAll.bat Release
 ```
 
-3. Open the solution in Visual Studio:
-   - VS 2022: `Build\NightbloomWorkspace.sln`
-   - VS 2026: `Build\NightbloomWorkspace.slnx`
+3. Open `Build\NightbloomWorkspace.slnx` in Visual Studio. The Editor is the default startup project.
 
-4. Set **Editor** as the startup project and run (F5)
+Everything builds into the single `Build\` tree:
+- `Build\Editor\<Config>\Editor.exe`
+- `Build\Game\<Config>\NightbloomGame.exe`
+- `Build\bin\<Config>\NightbloomTests.exe`
 
-### Creating a Distribution
+### Packaging a game
 
-To package a standalone release build:
-```batch
-call CreateDistribution.bat
-```
-
-The distributable files will be in the `Distribution` folder.
+`Packaging\PackageGame.ps1` builds a Release runtime plus a project into a zip under `dist\`.
 
 ## Project Structure
 ```
-Nightbloom/
-├── NightBloom/
-│   ├── Engine/           # Core engine library
-│   │   ├── Core/         # Application, logging, input
-│   │   ├── Math/         # Vec2/3/4, Mat44, Quaternion
-│   │   └── Renderer/     # Vulkan backend, materials, models
-│   ├── ThirdParty/       # Dependencies (ImGui, VMA, GLM, cgltf)
-│   └── Build/            # Generated build files
-├── Editor/
-│   ├── Source/           # Editor application code
-│   ├── Shaders/          # GLSL shaders (.vert, .frag, .comp)
-│   └── Assets/           # Models, textures
-└── Distribution/         # Packaged release builds (not in repo)
+NightBloom/                 # repo root
+├── CmakeLists.txt          # root project — the only one you should generate
+├── BuildAll.bat
+├── cmake/                  # shared CMake helpers (shader compilation)
+├── NightBloom/             # engine static library
+│   ├── Engine/             # Core, Renderer (+Vulkan, Components), Terrain, Foliage,
+│   │                       # Hydro, VFX, Gameplay, Physics, Input, Window, Math, Tests
+│   ├── Shaders/            # GLSL sources (.vert .frag .comp), compiled at build time
+│   └── ThirdParty/         # GLM, ImGui, VMA, cgltf, stb_image, nlohmann/json, googletest
+├── Editor/                 # editor application
+├── Game/                   # standalone game runtime
+├── Packaging/              # packaging scripts
+├── Assets/                 # shared models and textures
+└── Build/                  # generated build tree (not in repo)
 ```
 
 ## Third-Party Libraries
@@ -102,10 +112,12 @@ Nightbloom/
 - [GLM](https://github.com/g-truc/glm)
 - [cgltf](https://github.com/jkuhlmann/cgltf)
 - [stb_image](https://github.com/nothings/stb)
+- [nlohmann/json](https://github.com/nlohmann/json)
+- [GoogleTest](https://github.com/google/googletest)
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE). (Applies to the engine, editor and game runtime in this repo.)
 
 ## Author
 
