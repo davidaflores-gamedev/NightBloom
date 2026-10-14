@@ -26,7 +26,7 @@ namespace Nightbloom
 
         // --- Cycle state ---
         bool  enabled       = true;   // when off, only the moon position tracks the light
-        float timeOfDay     = 22.0f;  // hours [0,24)
+        float timeOfDay     = 17.5f;  // hours [0,24); new projects open in late-afternoon light
         bool  autoAdvance   = false;
         float speedHours    = 1.0f;   // game-hours advanced per real second
         float arcTilt       = 0.35f;  // radians; spreads the sun/moon arc off the pure X-Y plane

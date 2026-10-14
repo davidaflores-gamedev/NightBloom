@@ -101,8 +101,8 @@ namespace Nightbloom {
 
             // Camera
             m_Camera = std::make_unique<Camera>();
-            m_Camera->SetPosition(glm::vec3(3.0f, 3.0f, 3.0f));
-            m_Camera->SetRotation(-135.0f, -20.0f);
+            m_Camera->SetPosition(kDefaultCameraPos);
+            m_Camera->SetRotation(kDefaultCameraYaw, kDefaultCameraPitch);
             m_Camera->SetPerspectiveInfiniteReverseZ(m_CameraFov, 1280.0f / 720.0f, 0.1f);
             GetRenderer()->SetCameraPosition(m_Camera->GetPosition());
             GetRenderer()->SetViewMatrix(m_Camera->GetViewMatrix());
@@ -118,6 +118,14 @@ namespace Nightbloom {
             io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
             io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 #endif
+
+            // First run on this machine (no saved window layout yet)? Lay the panels out
+            // cleanly instead of ImGui's default of stacking every window in one spot.
+            {
+                const char* ini = ImGui::GetIO().IniFilename;
+                m_FirstRunLayoutFrames = (ini && !std::filesystem::exists(ini)) ? 3 : 0;
+                if (m_FirstRunLayoutFrames > 0 && GetWindow()) GetWindow()->Maximize();
+            }
 
             // Initialize panels
             m_ShaderCompiler.Initialize();
@@ -397,6 +405,10 @@ namespace Nightbloom {
         std::unique_ptr<Camera> m_Camera;
         bool m_CameraControlActive = false;
         float m_CameraFov = 45.0f;
+        // Default framing for new projects and scenes: the terrain and its central lake.
+        static constexpr glm::vec3 kDefaultCameraPos   = glm::vec3(-60.0f, 40.0f, -110.0f);
+        static constexpr float     kDefaultCameraYaw   = 61.4f;
+        static constexpr float     kDefaultCameraPitch = -17.5f;
 
         // Demo mode (EditorDemo.hpp). Inactive unless launched with --demo.
         bool              m_DemoActive = false;
@@ -406,6 +418,9 @@ namespace Nightbloom {
         size_t            m_DemoTerrainNext = 0;
         size_t            m_DemoSelectNext = 0;
         std::string       m_DemoSignalPath;
+
+        // First-run panel layout (see ApplyFirstRunLayout): frames left to apply it.
+        int               m_FirstRunLayoutFrames = 0;
         bool              m_DemoPropsSpawned = false;
 
         // Project info
@@ -546,6 +561,12 @@ namespace Nightbloom {
                 }
 
             m_ShaderCompiler.Draw(ctx);
+
+            if (m_FirstRunLayoutFrames > 0 && !m_DemoActive)
+            {
+                ApplyFirstRunLayout();
+                --m_FirstRunLayoutFrames;
+            }
 
             if (m_ShowDemoWindow)    ImGui::ShowDemoWindow(&m_ShowDemoWindow);
             if (m_ShowMetricsWindow) ImGui::ShowMetricsWindow(&m_ShowMetricsWindow);
@@ -688,6 +709,45 @@ namespace Nightbloom {
             {
                 LOG_INFO("Escape pressed - exiting editor");
                 Quit();
+            }
+        }
+
+        // -------------------------------------------------------------------------
+        // First-run layout. Without imgui.ini every panel opens on top of the others.
+        // Left column: scene hierarchy + inspector. Right column: the environment and
+        // lighting panels as COLLAPSED title bars (one click to open). Collapsing is
+        // used rather than closing because each environment system initializes inside
+        // its panel's Draw, which still runs while collapsed. Applied for a few frames
+        // so the maximized window size has settled; ImGui then saves it to imgui.ini.
+        // -------------------------------------------------------------------------
+        void ApplyFirstRunLayout()
+        {
+            m_FireflyPanel.isOpen = true;   // collapsed below, but initialized
+            m_DebugPanel.isOpen = false;
+            m_NoiseDebug.isOpen = false;
+            m_LiveShaderTest.isOpen = false;
+
+            const ImVec2 size = ImGui::GetIO().DisplaySize;
+            const float top = 28.0f, pad = 8.0f, leftW = 320.0f, rightW = 360.0f;
+
+            auto place = [](const char* name, ImVec2 pos, ImVec2 sz, bool collapsed) {
+                ImGui::SetWindowPos(name, pos);
+                ImGui::SetWindowSize(name, sz);
+                ImGui::SetWindowCollapsed(name, collapsed);
+            };
+
+            const float hierH = 280.0f;
+            place("Scene Hierarchy", ImVec2(pad, top), ImVec2(leftW, hierH), false);
+            place("Inspector", ImVec2(pad, top + hierH + pad), ImVec2(leftW, 380.0f), false);
+            place("Console", ImVec2(pad, size.y - 220.0f - pad), ImVec2(size.x * 0.45f, 220.0f), true);
+            place("Viewport", ImVec2(leftW + 2.0f * pad, top), ImVec2(300.0f, 120.0f), true);
+
+            const char* right[] = { "Terrain", "Water", "Grass", "Clouds", "Fireflies", "Lighting", "Day / Night" };
+            float y = top;
+            for (const char* name : right)
+            {
+                place(name, ImVec2(size.x - rightW - pad, y), ImVec2(rightW, 520.0f), true);
+                y += ImGui::GetFrameHeight() + 6.0f;   // stack the collapsed title bars
             }
         }
 
@@ -989,6 +1049,10 @@ namespace Nightbloom {
                     LOG_INFO("Found engine root at: {}", engineRoot.string());
                     break;
                 }
+                // A drive root is its own parent (C: root -> C: root), so has_parent_path()
+                // never turns false there: stop at the top or this spins forever when
+                // the editor runs outside a source checkout (e.g. a packaged build).
+                if (searchPath.parent_path() == searchPath) break;
                 searchPath = searchPath.parent_path();
             }
 
@@ -1001,9 +1065,10 @@ namespace Nightbloom {
             }
             else
             {
-                LOG_WARN("Could not find engine root, using fallback path");
-                m_CurrentProjectPath =
-                    std::filesystem::path("D:/GitLibrary/Personal/NightBloom_Engine/Sandbox");
+                // Not inside a source checkout (e.g. a packaged build): work out of
+                // the folder the editor runs from, never a developer's absolute path.
+                LOG_INFO("No source checkout found; using the working directory");
+                m_CurrentProjectPath = exePath / "Sandbox";
                 m_CurrentProjectName = "Sandbox";
             }
 
@@ -1297,8 +1362,8 @@ namespace Nightbloom {
             m_ScenePath.clear();
 
             // Reset camera to the editor's default framing.
-            m_Camera->SetPosition(glm::vec3(3.0f, 3.0f, 3.0f));
-            m_Camera->SetRotation(-135.0f, -20.0f);
+            m_Camera->SetPosition(kDefaultCameraPos);
+            m_Camera->SetRotation(kDefaultCameraYaw, kDefaultCameraPitch);
             LOG_INFO("New (empty) scene");
         }
 

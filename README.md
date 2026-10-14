@@ -69,9 +69,11 @@ A third-person space-combat prototype: dual-mode hover/boost flight, sticky lock
 
 ## Download
 
-Grab the latest build from the [Releases](../../releases) page, unzip it, and run `NightbloomGame.exe`.
+Grab the **NightBloom Editor** from the [Releases](../../releases) page, unzip the whole folder, and run `Editor.exe`. The first launch creates a `Projects\Sample` project next to the exe and opens it. Hold the right mouse button and use W A S D to fly; the environment panels are on the right.
 
-**Requirements:** Windows 10/11 x64 and a GPU with up-to-date Vulkan 1.2+ drivers.
+**Requirements:** Windows 10/11 x64 and a GPU with up-to-date Vulkan 1.2+ drivers. The exe isn't code-signed, so Windows SmartScreen may warn on first run: choose **More info → Run anyway**.
+
+The stealth prototype isn't in the release yet; build it from source (below).
 
 ## Building from source
 
