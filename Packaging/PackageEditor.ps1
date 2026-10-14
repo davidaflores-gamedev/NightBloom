@@ -20,7 +20,7 @@
     imports ships with Windows 10/11, and vulkan-1.dll comes with the GPU driver.
 
 .PARAMETER Version
-    Release version used in the folder/zip name. Default v0.1.0.
+    Release version used in the folder/zip name. Default v0.2.0.
 
 .PARAMETER SkipBuild
     Package the existing Release build instead of building first.
@@ -29,7 +29,7 @@
     powershell -ExecutionPolicy Bypass -File Packaging\PackageEditor.ps1
 #>
 param(
-    [string]$Version = "v0.1.0",
+    [string]$Version = "v0.2.0",
     [switch]$SkipBuild
 )
 

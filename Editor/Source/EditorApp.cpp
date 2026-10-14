@@ -657,7 +657,7 @@ namespace Nightbloom {
             if (ImGui::BeginMenu("Help"))
             {
                 if (ImGui::MenuItem("Documentation")) {}
-                if (ImGui::MenuItem("About")) { LOG_INFO("Nightbloom Editor v0.1.0"); }
+                if (ImGui::MenuItem("About")) { LOG_INFO("Nightbloom Editor v0.2.0"); }
                 ImGui::EndMenu();
             }
 
@@ -1085,7 +1085,7 @@ namespace Nightbloom {
 
         void UpdateWindowTitle()
         {
-            std::string title = "Nightbloom Editor v0.1.0 | Project: " + m_CurrentProjectName;
+            std::string title = "Nightbloom Editor v0.2.0 | Project: " + m_CurrentProjectName;
             GetWindow()->SetTitle(title);
         }
 
