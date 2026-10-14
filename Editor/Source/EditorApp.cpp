@@ -383,7 +383,8 @@ namespace Nightbloom {
 
             m_TerrainPanel.SubmitTerrainDraw(drawList, m_Camera->GetPosition());
             m_GrassPanel.SubmitGrassDraw(drawList, frustum, m_TerrainPanel.GetTerrainSystem(), m_Camera->GetPosition());
-            m_FireflyPanel.SubmitFireflyDraw(drawList);
+            if (!m_DemoActive || m_Demo.fireflies)
+                m_FireflyPanel.SubmitFireflyDraw(drawList);
             m_CloudPanel.SubmitCloudDraw(drawList);
             m_WaterPanel.SubmitWaterDraw(drawList);
             drawList.SortByPipeline();
@@ -405,6 +406,7 @@ namespace Nightbloom {
         size_t            m_DemoTerrainNext = 0;
         size_t            m_DemoSelectNext = 0;
         std::string       m_DemoSignalPath;
+        bool              m_DemoPropsSpawned = false;
 
         // Project info
         std::string           m_CurrentProjectName = "Sandbox";
@@ -800,12 +802,70 @@ namespace Nightbloom {
                 m_CloudPanel.GetSystem().ResizeResultImage(GetRenderer()->GetWidth(), GetRenderer()->GetHeight());
             }
 
+            FireflyParamsData& fp = m_FireflyPanel.GetSystem().GetParams();
+            set(m_Demo.fireflySpeed, "minSpeed", fp.params2.z);
+            set(m_Demo.fireflySpeed, "maxSpeed", fp.params2.w);
+
+            set(m_Demo.dayNight, "dayLightIntensity", m_DayNight.dayLightIntensity);
+            set(m_Demo.dayNight, "nightLightIntensity", m_DayNight.nightLightIntensity);
+            set(m_Demo.dayNight, "horizonStrength", m_DayNight.horizonStrength);
+            set(m_Demo.dayNight, "dayAmbientIntensity", m_DayNight.dayAmbientIntensity);
+            if (m_Demo.dayNight.is_object() && m_Demo.dayNight.contains("dayLightColor"))
+            {
+                const auto& c3 = m_Demo.dayNight["dayLightColor"];
+                m_DayNight.dayLightColor = glm::vec3(c3.at(0).get<float>(), c3.at(1).get<float>(), c3.at(2).get<float>());
+            }
+            if (m_Demo.exposure > 0.0f) GetRenderer()->GetPostProcessSettings().exposure = m_Demo.exposure;
+            for (auto& obj : m_EditorScene->GetObjects())
+                if (std::find(m_Demo.hide.begin(), m_Demo.hide.end(), obj.name) != m_Demo.hide.end())
+                    obj.visible = false;
+
             WaterDesc& w = m_WaterPanel.GetSystem().GetDesc();
             set(m_Demo.water, "waterY", w.waterY);
             set(m_Demo.water, "waveAmplitude", w.waveAmplitude);
             set(m_Demo.water, "waveSpeed", w.waveSpeed);
             set(m_Demo.water, "fresnelPower", w.fresnelPower);
             set(m_Demo.water, "alpha", w.alpha);
+        }
+
+        // A grid of white pillars standing on the terrain (shot file "pillars"):
+        // clear shadow casters, so a cascaded-shadow shot has something to show.
+        void SpawnDemoPillars()
+        {
+            const nlohmann::json& p = m_Demo.pillars;
+            if (!p.is_object()) return;
+            auto* vb = GetRenderer()->GetTestVertexBuffer();
+            auto* ib = GetRenderer()->GetTestIndexBuffer();
+            const uint32_t ic = GetRenderer()->GetTestIndexCount();
+            ResourceManager* res = GetRenderer()->GetResourceManager();
+            Texture* white = res ? res->GetTexture("default_white") : nullptr;
+            if (!vb || !ib || ic == 0) return;
+
+            const int nx = p.at("grid").at(0).get<int>();
+            const int nz = p.at("grid").at(1).get<int>();
+            const float cx = p.at("center").at(0).get<float>();
+            const float cz = p.at("center").at(1).get<float>();
+            const float spacing = p.value("spacing", 8.0f);
+            const glm::vec3 size(p.at("size").at(0).get<float>(), p.at("size").at(1).get<float>(), p.at("size").at(2).get<float>());
+            const TerrainSystem& terrain = m_TerrainPanel.GetTerrainSystem();
+
+            for (int ix = 0; ix < nx; ++ix)
+                for (int iz = 0; iz < nz; ++iz)
+                {
+                    const float x = cx + (ix - (nx - 1) * 0.5f) * spacing;
+                    const float z = cz + (iz - (nz - 1) * 0.5f) * spacing;
+                    auto cube = std::make_unique<MeshDrawable>(vb, ib, ic, PipelineType::Mesh);
+                    if (white) cube->AddTexture(white);
+                    SceneObject* o = m_EditorScene->AddPrimitive("DemoPillar", std::move(cube));
+                    o->pipeline = PipelineType::Mesh;
+                    o->primitiveKind = PrimitiveKind::TestCube;
+                    o->primitiveTexture = "default_white";
+                    o->primitiveScale = size;
+                    // Test cube spans [-0.5, 0.5]; sink the base slightly into the ground.
+                    o->primitivePosition = glm::vec3(x, terrain.GetHeightAt(x, z) + size.y * 0.5f - 0.3f, z);
+                    o->UpdatePrimitiveTransform();
+                }
+            LOG_INFO("Demo: spawned {} pillars", nx * nz);
         }
 
         void ApplyDemoCamera(float t)
@@ -856,6 +916,13 @@ namespace Nightbloom {
                     signal << m_Demo.name << "\n";
                 }
                 LOG_INFO("Demo: rolling");
+            }
+
+            // Shot props need the terrain's heights, so spawn them once it exists.
+            if (!m_DemoPropsSpawned && m_TerrainPanel.GetTerrainSystem().IsReady())
+            {
+                SpawnDemoPillars();
+                m_DemoPropsSpawned = true;
             }
 
             ApplyDemoCamera(t);

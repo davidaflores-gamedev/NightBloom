@@ -44,6 +44,14 @@
 //                   layerMinY, layerMaxY }
 //   water         { waterY, waveAmplitude, waveSpeed, fresnelPower, alpha }
 //                 Both apply at t = 0, exactly like moving the panel's sliders.
+//   fireflies     false hides the swarm for this shot, or { minSpeed, maxSpeed }
+//   dayNight      { dayLightIntensity, dayLightColor:[r,g,b], horizonStrength,
+//                   dayAmbientIntensity, nightLightIntensity }   (Day / Night panel)
+//   exposure      post-process exposure multiplier for this shot
+//   hide          [ "ToyCar", ... ] scene objects hidden for this shot
+//   pillars       { grid:[nx,nz], center:[x,z], spacing, size:[w,h,d] } a grid of
+//                 white pillars standing on the terrain - shadow casters for a
+//                 shot about shadows. Spawned during warmup, never saved.
 //------------------------------------------------------------------------------
 
 #include "Engine/Core/CameraPath.hpp"
@@ -91,6 +99,12 @@ namespace Nightbloom
 		CameraPath               camera;   // built from keys by BuildCamera()
 		nlohmann::json           clouds;   // slider overrides, applied at t = 0
 		nlohmann::json           water;
+		bool                     fireflies = true;
+		nlohmann::json           fireflySpeed;
+		nlohmann::json           dayNight;
+		float                    exposure = 0.0f;   // <= 0: leave unchanged
+		nlohmann::json           pillars;
+		std::vector<std::string> hide;
 		std::vector<TerrainEdit> terrain;
 		std::vector<SelectEdit>  select;
 
@@ -174,6 +188,15 @@ namespace Nightbloom
 
 				if (j.contains("clouds")) out.clouds = j["clouds"];
 				if (j.contains("water"))  out.water  = j["water"];
+				if (j.contains("fireflies"))
+				{
+					if (j["fireflies"].is_boolean()) out.fireflies = j["fireflies"].get<bool>();
+					else                             out.fireflySpeed = j["fireflies"];
+				}
+				if (j.contains("dayNight")) out.dayNight = j["dayNight"];
+				if (j.contains("pillars"))  out.pillars  = j["pillars"];
+				if (j.contains("hide"))     out.hide = j["hide"].get<std::vector<std::string>>();
+				out.exposure = j.value("exposure", 0.0f);
 				out.groundRelative = j.value("groundRelative", false);
 				out.minClearance   = j.value("minClearance", 1.0f);
 				for (const auto& k : j.at("camera"))

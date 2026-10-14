@@ -1,6 +1,6 @@
 {
   "warmup": 5,
-  "timeOfDay": 14.0,
+  "timeOfDay": 17.2,
   "groundRelative": true,
   "clouds": {
     "layerMinY": 800,
@@ -34,9 +34,9 @@
         -40
       ],
       "lookAt": [
-        -150,
-        110,
-        160
+        -200,
+        30,
+        -80
       ]
     },
     {
@@ -47,10 +47,24 @@
         -40
       ],
       "lookAt": [
-        150,
-        110,
-        160
+        -200,
+        30,
+        40
       ]
     }
+  ],
+  "fireflies": false,
+  "dayNight": {
+    "dayLightIntensity": 0.95,
+    "dayLightColor": [
+      1.0,
+      0.97,
+      0.92
+    ],
+    "horizonStrength": 0.6
+  },
+  "exposure": 0.9,
+  "hide": [
+    "ToyCar"
   ]
 }

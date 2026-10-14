@@ -1,6 +1,6 @@
 {
   "warmup": 5,
-  "timeOfDay": 9.0,
+  "timeOfDay": 8.3,
   "groundRelative": true,
   "shadowResolution": 4096,
   "clouds": {
@@ -28,49 +28,68 @@
   },
   "cascadeDebug": [
     [
-      5,
-      9
+      4,
+      10
     ]
   ],
   "camera": [
     {
       "t": 0,
       "pos": [
-        40,
-        22,
-        -70
+        -15,
+        3,
+        -88
       ],
       "lookAt": [
-        10,
-        0,
+        5,
+        1,
         -20
       ]
     },
     {
-      "t": 7,
+      "t": 12,
       "pos": [
-        25,
-        24,
-        -62
+        -12,
+        3.5,
+        -78
       ],
       "lookAt": [
-        0,
-        0,
-        -15
-      ]
-    },
-    {
-      "t": 14,
-      "pos": [
-        10,
-        26,
-        -55
-      ],
-      "lookAt": [
-        -10,
-        0,
+        8,
+        1,
         -10
       ]
     }
-  ]
+  ],
+  "fireflies": false,
+  "dayNight": {
+    "dayLightIntensity": 0.95,
+    "dayLightColor": [
+      1.0,
+      0.97,
+      0.92
+    ],
+    "horizonStrength": 0.6
+  },
+  "exposure": 0.9,
+  "pillars": {
+    "grid": [
+      8,
+      8
+    ],
+    "center": [
+      0,
+      -20
+    ],
+    "spacing": 20,
+    "size": [
+      2.0,
+      12,
+      2.0
+    ]
+  },
+  "duration": 12,
+  "hide": [
+    "ToyCar"
+  ],
+  "minClearance": 1.0
 }

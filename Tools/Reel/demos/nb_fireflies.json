@@ -66,5 +66,12 @@
         10
       ]
     }
+  ],
+  "fireflies": {
+    "minSpeed": 0.4,
+    "maxSpeed": 2.5
+  },
+  "hide": [
+    "ToyCar"
   ]
 }

@@ -1,8 +1,8 @@
 {
   "warmup": 5,
-  "timeOfDay": 16.0,
+  "timeOfDay": 9.0,
   "autoAdvance": true,
-  "speedHours": 0.9,
+  "speedHours": 1.18,
   "groundRelative": true,
   "clouds": {
     "layerMinY": 800,
@@ -27,33 +27,64 @@
     "waterY": 13.5,
     "waveAmplitude": 0.05
   },
-  "duration": 26,
+  "duration": 8.5,
   "camera": [
     {
       "t": 0,
       "pos": [
-        -60,
-        18,
-        -60
+        -10,
+        14,
+        -100
       ],
       "lookAt": [
-        20,
-        4,
-        30
+        5,
+        0,
+        -25
       ]
     },
     {
-      "t": 26,
+      "t": 8.5,
       "pos": [
-        -56,
-        18,
-        -63
+        -7,
+        14.5,
+        -98
       ],
       "lookAt": [
-        22,
-        4,
-        30
+        7,
+        0,
+        -25
       ]
     }
-  ]
+  ],
+  "fireflies": false,
+  "dayNight": {
+    "dayLightIntensity": 0.95,
+    "dayLightColor": [
+      1.0,
+      0.97,
+      0.92
+    ],
+    "horizonStrength": 0.7,
+    "nightLightIntensity": 0.2
+  },
+  "exposure": 0.9,
+  "hide": [
+    "ToyCar"
+  ],
+  "pillars": {
+    "grid": [
+      8,
+      8
+    ],
+    "center": [
+      0,
+      -20
+    ],
+    "spacing": 20,
+    "size": [
+      2.0,
+      12,
+      2.0
+    ]
+  }
 }

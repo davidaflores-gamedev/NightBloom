@@ -39,7 +39,11 @@ namespace Nightbloom
 
         float dayFactor     = glm::smoothstep(-0.05f, 0.30f, sunPos.y);          // 0 night .. 1 day
         float horizonFactor = (1.0f - glm::smoothstep(0.0f, 0.30f, bodyUp.y)) * horizonStrength;
-        float discFade      = glm::smoothstep(0.0f, 0.30f, bodyUp.y);            // hide the horizon swap
+        float discFade      = glm::smoothstep(0.0f, 0.40f, bodyUp.y);            // hide the horizon swap
+        // The light itself also swaps sides at the horizon (sun sets in the west,
+        // moon is up in the east the same instant). Dim it through the swap so the
+        // terrain doesn't visibly flip from west-lit to east-lit in one frame.
+        float swapFade      = glm::mix(0.15f, 1.0f, glm::smoothstep(0.0f, 0.15f, bodyUp.y));
 
         Light* light = (scene.GetLightCount() > 0) ? scene.GetLight(0) : nullptr;
 
@@ -50,7 +54,7 @@ namespace Nightbloom
             glm::vec3 lc = glm::mix(nightLightColor, dayLightColor, dayFactor);
             lc = glm::mix(lc, horizonColor, horizonFactor);
             light->color = lc;
-            light->intensity = glm::mix(nightLightIntensity, dayLightIntensity, dayFactor);
+            light->intensity = glm::mix(nightLightIntensity, dayLightIntensity, dayFactor) * swapFade;
 
             glm::vec3 amb = glm::mix(nightAmbientColor, dayAmbientColor, dayFactor);
             float ambI    = glm::mix(nightAmbientIntensity, dayAmbientIntensity, dayFactor);

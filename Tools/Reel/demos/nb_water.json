@@ -66,5 +66,19 @@
         18
       ]
     }
+  ],
+  "fireflies": false,
+  "dayNight": {
+    "dayLightIntensity": 0.95,
+    "dayLightColor": [
+      1.0,
+      0.97,
+      0.92
+    ],
+    "horizonStrength": 0.6
+  },
+  "exposure": 0.9,
+  "hide": [
+    "ToyCar"
   ]
 }
