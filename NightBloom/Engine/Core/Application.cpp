@@ -122,7 +122,7 @@ namespace Nightbloom
 
 				if (m_Renderer->IsFrameValid())
 				{
-					m_Renderer->Clear(0.1f, 0.1f, 0.2f, 1.0f);  // Dark blue background
+					m_Renderer->Clear(m_ClearColor[0], m_ClearColor[1], m_ClearColor[2], 1.0f);
 					OnRender();  // Your app can override this
 					m_Renderer->FinalizeFrame();
 					m_Renderer->EndFrame();

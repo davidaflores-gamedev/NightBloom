@@ -784,6 +784,21 @@ namespace Nightbloom {
             set(m_Demo.clouds, "windSpeed", c.windSpeed);
             set(m_Demo.clouds, "layerMinY", c.layerMinY);
             set(m_Demo.clouds, "layerMaxY", c.layerMaxY);
+            set(m_Demo.clouds, "extinctionCoefficient", c.extinctionCoefficient);
+            set(m_Demo.clouds, "hgAnisotropy", c.hgAnisotropy);
+            if (m_Demo.clouds.is_object() && m_Demo.clouds.contains("stepCount"))
+                c.stepCount = m_Demo.clouds["stepCount"].get<int>();
+            if (m_Demo.clouds.is_object() && m_Demo.clouds.contains("windDirection"))
+            {
+                const auto& d = m_Demo.clouds["windDirection"];
+                c.windDirection = glm::vec3(d.at(0).get<float>(), d.at(1).get<float>(), d.at(2).get<float>());
+            }
+            if (m_Demo.clouds.is_object() && m_Demo.clouds.contains("resolutionScale"))
+            {
+                // Same as the panel's slider: the raymarch target is resized to match.
+                c.resolutionScale = m_Demo.clouds["resolutionScale"].get<float>();
+                m_CloudPanel.GetSystem().ResizeResultImage(GetRenderer()->GetWidth(), GetRenderer()->GetHeight());
+            }
 
             WaterDesc& w = m_WaterPanel.GetSystem().GetDesc();
             set(m_Demo.water, "waterY", w.waterY);

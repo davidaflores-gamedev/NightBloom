@@ -39,7 +39,9 @@
 //   terrain       [{ t, seed, frequency }, ...]       live terrain edits
 //   select        [{ t, object }, ...]                scene selection changes
 //   clouds        { coverage, shapeScale, detailScale, detailStrength,
-//                   densityMultiplier, windSpeed, layerMinY, layerMaxY }
+//                   densityMultiplier, extinctionCoefficient, hgAnisotropy,
+//                   stepCount, resolutionScale, windSpeed, windDirection:[x,y,z],
+//                   layerMinY, layerMaxY }
 //   water         { waterY, waveAmplitude, waveSpeed, fresnelPower, alpha }
 //                 Both apply at t = 0, exactly like moving the panel's sliders.
 //------------------------------------------------------------------------------

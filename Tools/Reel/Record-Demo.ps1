@@ -5,13 +5,13 @@
 
 .DESCRIPTION
     Shot files live in Tools\Reel\demos\. A shot's app is chosen by its file-name
-    prefix: nb_* runs the Editor (Editor.exe --demo), so_* runs Stolen Orbit
-    (StolenOrbit.exe --demo). The app writes a signal file on the first frame of
-    the shot (after its warmup), so recording starts on the shot, not on the
-    loading screen.
+    prefix: nb_* runs the Editor, so_* runs Stolen Orbit, sg_* runs the stealth
+    game (NightbloomGame), each with --demo. The app writes a signal file on the
+    first frame of the shot (after its warmup), so recording starts on the shot,
+    not on the loading screen.
 
-    Don't click or cover the app window while it records: the capture is of the
-    desktop. Press Esc in the app to abort a shot.
+    Capture is window-only (see Record-Clip.ps1), so other windows may cover the
+    app; just don't minimize it. Press Esc in the app to abort a shot.
 
 .PARAMETER Shot
     One or more shot names (file names in demos\ without .json), or 'all'.
@@ -40,6 +40,7 @@ if (-not $OutDir) { $OutDir = Join-Path $repo '..\Reel\clips' }
 $apps = @{
     'nb' = @{ Exe = Join-Path $repo "Build\Editor\$Config\Editor.exe";           Process = 'Editor' }
     'so' = @{ Exe = Join-Path $repo "Build\StolenOrbit\$Config\StolenOrbit.exe"; Process = 'StolenOrbit' }
+    'sg' = @{ Exe = Join-Path $repo "Build\Game\$Config\NightbloomGame.exe";     Process = 'NightbloomGame' }
 }
 
 # 'powershell -File' passes "a,b" as one string, so split on commas as well.
@@ -53,7 +54,7 @@ foreach ($name in $Shot) {
     $file = Join-Path $demoDir "$name.json"
     if (-not (Test-Path $file)) { throw "No shot file: $file" }
     $prefix = ($name -split '_')[0]
-    if (-not $apps.ContainsKey($prefix)) { throw "Shot '$name' must start with nb_ (editor) or so_ (Stolen Orbit)." }
+    if (-not $apps.ContainsKey($prefix)) { throw "Shot '$name' must start with nb_ (editor), so_ (Stolen Orbit) or sg_ (stealth game)." }
     $app = $apps[$prefix]
     if (-not (Test-Path $app.Exe)) { throw "Not built: $($app.Exe)  (run BuildAll.bat $Config)" }
     if (Get-Process -Name $app.Process -ErrorAction SilentlyContinue) {

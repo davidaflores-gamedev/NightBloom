@@ -29,6 +29,10 @@ namespace Nightbloom
 		void Run();
 		void Quit() { m_Running = false; }
 
+		// Background color the scene clears to each frame (linear HDR, before
+		// tonemapping). There is no sky renderer, so this IS the sky.
+		void SetClearColor(float r, float g, float b) { m_ClearColor[0] = r; m_ClearColor[1] = g; m_ClearColor[2] = b; }
+
 		// Override these methods in game
 		virtual void OnStartup() {}
 		virtual void OnUpdate(float deltaTime) { (void)(deltaTime); }
@@ -71,6 +75,7 @@ namespace Nightbloom
 		std::unique_ptr<InputSystem> m_Input;
 
 		bool m_Running = true;
+		float m_ClearColor[3] = { 0.1f, 0.1f, 0.2f };   // dark blue default
 		float m_LastFrameTime = 0.0f;
 	};
 

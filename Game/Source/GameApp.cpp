@@ -17,6 +17,8 @@
 #include "Engine/Renderer/AssetManager.hpp"
 
 #include <imgui.h>
+#include <cstring>
+#include <fstream>
 #include <string>
 #include "Engine/Renderer/Camera.hpp"
 #include "Engine/Renderer/Renderer.hpp"
@@ -102,6 +104,10 @@ namespace Nightbloom
 			// frame (shadow quality, vsync, windowed resolution).
 			ApplySettings();
 
+			// Scripted AI-debug shot for the reel (--demo <shot.json>): picks the test
+			// range before the level is built, so the first build is the range.
+			StartDemoIfRequested();
+
 			// Force a night mission look. The saved Sample scene is lit for
 			// daytime, which flattens all the stealth lighting — braziers only
 			// read as light against darkness. This overrides the loaded scene's
@@ -113,7 +119,8 @@ namespace Nightbloom
 			InitCharacter();
 
 			// Grab the mouse for always-on mouselook (Esc opens the menu + frees it).
-			GetWindow()->SetRelativeMouseMode(true);
+			// A demo never grabs the user's mouse.
+			if (!m_DemoActive) GetWindow()->SetRelativeMouseMode(true);
 		}
 
 		// Push m_Settings into the renderer/window. Sensitivity + invert-Y are read
@@ -128,7 +135,8 @@ namespace Nightbloom
 
 		void OnUpdate(float deltaTime) override
 		{
-			UpdatePauseAndCapture();
+			if (m_DemoActive) UpdateDemoClock(deltaTime);
+			else              UpdatePauseAndCapture();
 
 			// Walk on the terrain (third-person) once it has CPU height data;
 			// otherwise fall back to the free-fly camera (no visible body).
@@ -192,6 +200,78 @@ namespace Nightbloom
 		}
 
 	private:
+		//----------------------------------------------------------------------
+		// Demo mode — one scripted shot of the AI perception debug overlay, for
+		// the reel (Tools/Reel). Launch: NightbloomGame.exe --demo <shot.json>
+		// [--demo-signal <file>]. Loads the test range, then the player stands in
+		// the range guard's view, crouch-walks toward it, stands up and walks in,
+		// so the cone, range rings and detection meter all react. Never grabs the
+		// mouse or saves settings; quits after `duration` seconds.
+		//----------------------------------------------------------------------
+		bool        m_DemoActive = false;
+		bool        m_DemoRolling = false;
+		float       m_DemoClock = 0.0f;      // negative during warmup
+		float       m_DemoDuration = 14.0f;
+		std::string m_DemoSignalPath;
+
+		void StartDemoIfRequested()
+		{
+			std::string file;
+#ifdef _WIN32
+			for (int i = 1; i + 1 < __argc; ++i)
+			{
+				if (std::strcmp(__argv[i], "--demo") == 0)        file = __argv[i + 1];
+				if (std::strcmp(__argv[i], "--demo-signal") == 0) m_DemoSignalPath = __argv[i + 1];
+			}
+#endif
+			if (file.empty()) return;
+
+			// Shot files are tiny ({ "warmup": 3, "duration": 14 }); a full JSON
+			// parse isn't needed, so read the two numbers directly.
+			std::ifstream in(file);
+			std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+			auto number = [&text](const char* key, float fallback) {
+				const size_t k = text.find(std::string("\"") + key + "\"");
+				if (k == std::string::npos) return fallback;
+				const size_t c = text.find(':', k);
+				return c == std::string::npos ? fallback : std::stof(text.substr(c + 1));
+			};
+			m_DemoClock    = -number("warmup", 3.0f);
+			m_DemoDuration = number("duration", 14.0f);
+			m_DemoActive   = true;
+
+			m_Level = Level::TestRange;
+			m_ShowRangeOverlay = true;
+			GetWindow()->SetSize(1920, 1080);
+			GetWindow()->SetPosition(40, 40);
+			LOG_INFO("Demo: test range ({}s shot)", m_DemoDuration);
+		}
+
+		void UpdateDemoClock(float dt)
+		{
+			if (GetInput()->IsPressed(InputCode::Key_Escape)) { Quit(); return; }   // abort
+
+			const bool wasRolling = m_DemoRolling;
+			m_DemoClock += dt;
+			m_DemoRolling = m_DemoClock >= 0.0f;
+			if (m_DemoRolling && !wasRolling && !m_DemoSignalPath.empty())
+			{
+				std::ofstream signal(m_DemoSignalPath);
+				signal << "rolling\n";
+			}
+			if (m_DemoRolling && m_DemoClock >= m_DemoDuration + 0.5f) Quit();
+		}
+
+		// The walk: hold still in view, crouch-walk in, stand and walk in.
+		void DemoPawnInput(PawnInput& in) const
+		{
+			const float t = m_DemoClock;
+			if (t < 1.5f) return;                                  // stand, in view
+			if (t < 7.0f) { in.move.y = 0.7f; in.crouch = true; return; }
+			if (t < 11.5f) { in.move.y = 1.0f; return; }           // stand up, walk in
+		}
+
+		//----------------------------------------------------------------------
 		// Esc toggles the pause/settings menu. While the menu is open the cursor is
 		// freed (for clicking widgets); while it's closed we play with always-on
 		// mouselook (captured cursor). Quit is a menu button now, not Esc.
@@ -1267,7 +1347,7 @@ namespace Nightbloom
 		// camera around it and sync the placeholder bodies.
 		void UpdateCharacterMode(float deltaTime)
 		{
-			const bool controlling = GetWindow()->IsRelativeMouseMode();
+			const bool controlling = m_DemoActive || GetWindow()->IsRelativeMouseMode();
 
 			// Place the pawns on first entry (handles the fly->walk switch once the
 			// terrain readback lands), mirroring the old lazy init.
@@ -1289,14 +1369,18 @@ namespace Nightbloom
 				m_CharacterStarted = true;
 			}
 
-			m_CameraRig.ApplyLook(controlling ? LookDelta() : glm::vec2(0.0f));
+			m_CameraRig.ApplyLook((controlling && !m_DemoActive) ? LookDelta() : glm::vec2(0.0f));
 
 			// One input struct, all intents filled; each pawn reads what it cares
 			// about (CharacterPawn ignores throttle/steer, VehiclePawn ignores move).
 			PawnInput in;
 			in.cameraForward = m_CameraRig.GetFlatForward();
 			in.cameraRight   = m_CameraRig.GetFlatRight();
-			if (controlling)
+			if (m_DemoActive)
+			{
+				DemoPawnInput(in);
+			}
+			else if (controlling)
 			{
 				if (GetInput()->IsDown(InputCode::Key_W)) in.move.y += 1.0f;
 				if (GetInput()->IsDown(InputCode::Key_S)) in.move.y -= 1.0f;

@@ -1,9 +1,70 @@
 {
-  "warmup": 5, "timeOfDay": 17.2, "groundRelative": false, "minClearance": 0.5,
-  "clouds": { "coverage": 0.30, "shapeScale": 0.0006, "detailScale": 0.006, "densityMultiplier": 1.6 }, "water": { "waterY": 13.5, "waveAmplitude": 0.05 },
+  "warmup": 5,
+  "timeOfDay": 17.2,
+  "groundRelative": false,
+  "minClearance": 0.5,
+  "clouds": {
+    "layerMinY": 800,
+    "layerMaxY": 1400,
+    "windDirection": [
+      1.0,
+      0.0,
+      0.3
+    ],
+    "windSpeed": 24.923,
+    "coverage": 0.396,
+    "shapeScale": 0.00017,
+    "detailScale": 0.001,
+    "detailStrength": 0.304,
+    "densityMultiplier": 3.077,
+    "extinctionCoefficient": 0.354,
+    "hgAnisotropy": 0.2,
+    "stepCount": 121,
+    "resolutionScale": 1.0
+  },
+  "water": {
+    "waterY": 13.5,
+    "waveAmplitude": 0.05
+  },
   "camera": [
-    { "t": 0,  "pos": [-26, 14.6, -12], "lookAt": [20, 17, 30] },
-    { "t": 6,  "pos": [-16, 14.5, -18], "lookAt": [28, 17, 24] },
-    { "t": 12, "pos": [-6, 14.4, -22],  "lookAt": [34, 17, 18] }
+    {
+      "t": 0,
+      "pos": [
+        -26,
+        14.6,
+        -12
+      ],
+      "lookAt": [
+        20,
+        17,
+        30
+      ]
+    },
+    {
+      "t": 6,
+      "pos": [
+        -16,
+        14.5,
+        -18
+      ],
+      "lookAt": [
+        28,
+        17,
+        24
+      ]
+    },
+    {
+      "t": 12,
+      "pos": [
+        -6,
+        14.4,
+        -22
+      ],
+      "lookAt": [
+        34,
+        17,
+        18
+      ]
+    }
   ]
 }
