@@ -4,7 +4,7 @@ The engine static library (`NightbloomEngine`): a Vulkan renderer, environment s
 
 ## Building
 
-Build from the **repository root** with `BuildAll.bat`. That builds the engine together with the editor, the game runtime, and the tests into the single `Build/` tree. See the root `README.txt`.
+Build from the **repository root** with `BuildAll.bat`. That builds the engine together with the editor, the game runtime, and the tests into the single `Build/` tree. See the root `README.md`.
 
 `Scripts/GenerateProject.bat` still generates an engine-only solution into `NightBloom/Build/`, but it builds neither the editor nor the game. It's normally not what you want.
 

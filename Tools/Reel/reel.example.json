@@ -1,0 +1,14 @@
+{
+  "outDir": "out",
+  "fade": 0.4,
+  "music": null,
+  "titleCard": { "duration": 3, "lines": ["NightBloom", "Vulkan / C++20 engine", "rendering  |  tools  |  gameplay"] },
+  "segments": [
+    { "file": "clips/vista.mp4",    "start": 2, "duration": 5,  "caption": "Night scene", "sub": "terrain, grass, water, clouds, fireflies" },
+    { "file": "clips/daynight.mp4", "start": 0, "duration": 5,  "speed": 5, "caption": "Day / night cycle" },
+    { "file": "clips/editor.mp4",   "start": 4, "duration": 4,  "crop": "1280:720:320:180", "caption": "Editor tooling" }
+  ],
+  "endCard": { "duration": 3, "lines": ["NightBloom", "github.com/davidaflores-gamedev/NightBloom"] },
+  "gif": { "file": "clips/vista.mp4", "start": 2, "duration": 5, "width": 800, "fps": 15, "name": "hero.gif" },
+  "screenshots": [ { "name": "vista", "file": "clips/vista.mp4", "time": 4 } ]
+}
