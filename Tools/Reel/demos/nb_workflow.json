@@ -1,0 +1,91 @@
+{
+  "warmup": 5,
+  "timeOfDay": 15.0,
+  "groundRelative": false,
+  "ui": true,
+  "panels": [
+    "Terrain",
+    "Scene Hierarchy",
+    "Inspector"
+  ],
+  "clouds": {
+    "coverage": 0.3,
+    "shapeScale": 0.0006,
+    "detailScale": 0.006,
+    "densityMultiplier": 1.6
+  },
+  "water": {
+    "waterY": 13.5,
+    "waveAmplitude": 0.05
+  },
+  "terrain": [
+    {
+      "t": 3,
+      "seed": 7
+    },
+    {
+      "t": 6.5,
+      "seed": 1234,
+      "frequency": 2.4
+    },
+    {
+      "t": 10,
+      "seed": 42,
+      "frequency": 3.0
+    }
+  ],
+  "select": [
+    {
+      "t": 1,
+      "object": 0
+    }
+  ],
+  "camera": [
+    {
+      "t": 0,
+      "pos": [
+        -105,
+        80,
+        -105
+      ],
+      "lookAt": [
+        0,
+        5,
+        0
+      ]
+    },
+    {
+      "t": 13,
+      "pos": [
+        -128,
+        80,
+        -62
+      ],
+      "lookAt": [
+        0,
+        5,
+        0
+      ]
+    }
+  ],
+  "layout": {
+    "Terrain": [
+      16,
+      30,
+      430,
+      480
+    ],
+    "Scene Hierarchy": [
+      1474,
+      30,
+      430,
+      250
+    ],
+    "Inspector": [
+      1474,
+      292,
+      430,
+      420
+    ]
+  }
+}

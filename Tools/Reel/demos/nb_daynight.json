@@ -1,0 +1,9 @@
+{
+  "warmup": 5, "timeOfDay": 16.0, "autoAdvance": true, "speedHours": 0.9, "groundRelative": true,
+  "clouds": { "coverage": 0.30, "shapeScale": 0.0006, "detailScale": 0.006, "densityMultiplier": 1.6 }, "water": { "waterY": 13.5, "waveAmplitude": 0.05 },
+  "duration": 26,
+  "camera": [
+    { "t": 0,  "pos": [-60, 18, -60], "lookAt": [20, 4, 30] },
+    { "t": 26, "pos": [-56, 18, -63], "lookAt": [22, 4, 30] }
+  ]
+}

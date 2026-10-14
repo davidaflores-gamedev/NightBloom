@@ -29,6 +29,18 @@ namespace Nightbloom
         // world bounds and heightmap descriptor set, see GrassSystem.
         const TerrainSystem& GetTerrainSystem() const { return m_Terrain; }
 
+        // Demo mode (EditorDemo.hpp): change the heightmap noise as if the sliders
+        // were moved, so the panel shows the new values and the terrain regenerates.
+        // Pass seed < 0 / frequency <= 0 to leave that parameter unchanged. Only
+        // seed and frequency, not height scale: grass re-fits to height scale only
+        // from GrassPanel::Draw, but reads the heightmap itself directly.
+        void DemoSetNoise(int seed, float frequency)
+        {
+            if (seed >= 0) m_Seed = seed;
+            if (frequency > 0.0f) m_Frequency = frequency;
+            if (m_TerrainInitialized) m_Terrain.Regenerate(BuildDesc());
+        }
+
     private:
         // Shared source of truth for the resolution dropdown, used by both
         // BuildDesc() and SubmitTerrainDraw()'s LOD base-resolution lookup.

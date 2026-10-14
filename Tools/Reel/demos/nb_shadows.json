@@ -1,0 +1,10 @@
+{
+  "warmup": 5, "timeOfDay": 9.0, "groundRelative": true, "shadowResolution": 4096,
+  "clouds": { "coverage": 0.30, "shapeScale": 0.0006, "detailScale": 0.006, "densityMultiplier": 1.6 }, "water": { "waterY": 13.5, "waveAmplitude": 0.05 },
+  "cascadeDebug": [[5, 9]],
+  "camera": [
+    { "t": 0,  "pos": [40, 22, -70], "lookAt": [10, 0, -20] },
+    { "t": 7,  "pos": [25, 24, -62], "lookAt": [0, 0, -15] },
+    { "t": 14, "pos": [10, 26, -55], "lookAt": [-10, 0, -10] }
+  ]
+}

@@ -20,6 +20,7 @@
 #include "Engine/Core/Project.hpp"
 #include "EditorFileUtils.hpp"
 #include "EditorContext.hpp"
+#include "EditorDemo.hpp"
 
 // Panels
 #include "Panels/ConsolePanel.hpp"
@@ -49,6 +50,8 @@
 #include <fstream>
 #include <cstdlib>
 #include <algorithm>
+#include <cstring>
+#include <iterator>
 
 // Check if docking is available
 #ifdef IMGUI_HAS_DOCK
@@ -82,7 +85,7 @@ namespace Nightbloom {
             m_WaterPanel.Cleanup();
 
             m_EditorScene.reset();
-            SaveEditorSettings();
+            if (!m_DemoActive) SaveEditorSettings();   // a scripted demo run leaves settings untouched
 
             LOG_INFO("=== Nightbloom Editor Shutdown Complete ===");
         }
@@ -100,7 +103,7 @@ namespace Nightbloom {
             m_Camera = std::make_unique<Camera>();
             m_Camera->SetPosition(glm::vec3(3.0f, 3.0f, 3.0f));
             m_Camera->SetRotation(-135.0f, -20.0f);
-            m_Camera->SetPerspectiveInfiniteReverseZ(45.0f, 1280.0f / 720.0f, 0.1f);
+            m_Camera->SetPerspectiveInfiniteReverseZ(m_CameraFov, 1280.0f / 720.0f, 0.1f);
             GetRenderer()->SetCameraPosition(m_Camera->GetPosition());
             GetRenderer()->SetViewMatrix(m_Camera->GetViewMatrix());
             GetRenderer()->SetProjectionMatrix(m_Camera->GetProjectionMatrix());
@@ -124,12 +127,15 @@ namespace Nightbloom {
                 if (width > 0 && height > 0 && m_Camera)
                 {
                     float aspect = static_cast<float>(width) / static_cast<float>(height);
-                    m_Camera->SetPerspectiveInfiniteReverseZ(45.0f, aspect, 0.1f);
+                    m_Camera->SetPerspectiveInfiniteReverseZ(m_CameraFov, aspect, 0.1f);
                 }
                 });
 
             // Boot into a project: last-opened if any, else the bundled Sample.
             BootProject();
+
+            // Scripted showcase shot (Editor.exe --demo <shot.json>)? See EditorDemo.hpp.
+            StartDemoIfRequested();
         }
 
         // Build the engine's default demo scene (ToyCar + test cubes + Moonlight +
@@ -286,8 +292,8 @@ namespace Nightbloom {
                 UpdateWindowTitle();
             }
 
-            // Camera control (right-mouse-held)
-            if (GetInput()->IsDown(InputCode::Mouse_Right))
+            // Camera control (right-mouse-held). A demo drives the camera itself.
+            if (!m_DemoActive && GetInput()->IsDown(InputCode::Mouse_Right))
             {
                 m_CameraControlActive = true;
                 glm::vec2 mouseDelta(GetInput()->GetMouseDeltaX(), GetInput()->GetMouseDeltaY());
@@ -317,6 +323,7 @@ namespace Nightbloom {
             }
 
             m_Camera->Update(deltaTime);
+            if (m_DemoActive) UpdateDemo(deltaTime);
 
             // Day/night cycle: drives lights[0] direction/color/intensity + ambient
             // from the time-of-day slider, and positions/tints the moon disc. Runs
@@ -350,7 +357,15 @@ namespace Nightbloom {
 
             if (m_EditorScene) m_EditorScene->Update(deltaTime);
 
-            HandleEditorShortcuts();
+            if (m_DemoActive)
+            {
+                // Only Esc works during a demo (abort), so stray keys can't edit or save.
+                if (GetInput()->IsPressed(InputCode::Key_Escape)) Quit();
+            }
+            else
+            {
+                HandleEditorShortcuts();
+            }
         }
 
         void OnRender() override
@@ -380,6 +395,16 @@ namespace Nightbloom {
         std::unique_ptr<Scene>  m_EditorScene;
         std::unique_ptr<Camera> m_Camera;
         bool m_CameraControlActive = false;
+        float m_CameraFov = 45.0f;
+
+        // Demo mode (EditorDemo.hpp). Inactive unless launched with --demo.
+        bool              m_DemoActive = false;
+        bool              m_DemoRolling = false;   // past warmup: this is the recorded part
+        EditorDemoScript  m_Demo;
+        float             m_DemoClock = 0.0f;      // negative during warmup
+        size_t            m_DemoTerrainNext = 0;
+        size_t            m_DemoSelectNext = 0;
+        std::string       m_DemoSignalPath;
 
         // Project info
         std::string           m_CurrentProjectName = "Sandbox";
@@ -452,6 +477,10 @@ namespace Nightbloom {
         // -------------------------------------------------------------------------
         void RenderEditorUI()
         {
+            // A clean demo shot draws no editor UI at all. Panels only stop drawing;
+            // the systems they own keep rendering through Submit*Draw in OnRender.
+            if (m_DemoActive && m_DemoRolling && !m_Demo.ui) return;
+
             EditorContext ctx;
             ctx.scene = m_EditorScene.get();
             ctx.renderer = GetRenderer();
@@ -501,7 +530,18 @@ namespace Nightbloom {
             if (m_WaterPanel.isOpen) m_WaterPanel.Draw(ctx);
 
             m_Viewport.isPlayMode = m_Viewport.isPlayMode; // carried from menu bar
-            m_Viewport.Draw(ctx);
+            const bool demoShot = m_DemoActive && m_DemoRolling;
+            if (!demoShot || m_Demo.PanelVisible("Viewport"))
+                m_Viewport.Draw(ctx);
+
+            // A UI demo shot pins its panels to fixed rects, so it frames the same
+            // regardless of the machine's saved imgui.ini layout.
+            if (demoShot)
+                for (const auto& [panel, r] : m_Demo.layout)
+                {
+                    ImGui::SetWindowPos(panel.c_str(), ImVec2(r.x, r.y));
+                    ImGui::SetWindowSize(panel.c_str(), ImVec2(r.z, r.w));
+                }
 
             m_ShaderCompiler.Draw(ctx);
 
@@ -645,6 +685,184 @@ namespace Nightbloom {
             if (GetInput()->IsPressed(InputCode::Key_Escape))
             {
                 LOG_INFO("Escape pressed - exiting editor");
+                Quit();
+            }
+        }
+
+        // -------------------------------------------------------------------------
+        // Demo mode (scripted showcase shots) - see EditorDemo.hpp
+        // -------------------------------------------------------------------------
+        struct PanelFlag { const char* name; bool* open; };
+
+        std::vector<PanelFlag> PanelFlags()
+        {
+            // Names match the View menu, which is what shot files refer to.
+            return { { "Scene Hierarchy",  &m_SceneHierarchy.isOpen },
+                     { "Inspector",        &m_Inspector.isOpen },
+                     { "Console",          &m_Console.isOpen },
+                     { "Asset Browser",    &m_AssetBrowser.isOpen },
+                     { "Project Settings", &m_ProjectSettings.isOpen },
+                     { "Debug Panel",      &m_DebugPanel.isOpen },
+                     { "Noise Debug",      &m_NoiseDebug.isOpen },
+                     { "Live Shader Test", &m_LiveShaderTest.isOpen },
+                     { "Lighting",         &m_Lighting.isOpen },
+                     { "Day / Night",      &m_DayNight.isOpen },
+                     { "Terrain",          &m_TerrainPanel.isOpen },
+                     { "Grass",            &m_GrassPanel.isOpen },
+                     { "Fireflies",        &m_FireflyPanel.isOpen },
+                     { "Clouds",           &m_CloudPanel.isOpen },
+                     { "Water",            &m_WaterPanel.isOpen } };
+        }
+
+        void StartDemoIfRequested()
+        {
+            std::string demoFile;
+#ifdef _WIN32
+            for (int i = 1; i + 1 < __argc; ++i)
+            {
+                if (std::strcmp(__argv[i], "--demo") == 0)        demoFile = __argv[i + 1];
+                if (std::strcmp(__argv[i], "--demo-signal") == 0) m_DemoSignalPath = __argv[i + 1];
+            }
+#endif
+            if (demoFile.empty()) return;
+
+            if (!EditorDemoScript::Load(demoFile, m_Demo))
+            {
+                LOG_ERROR("Demo: could not load '{}' - exiting", demoFile);
+                m_DemoActive = true;   // still skip saving settings on the way out
+                Quit();
+                return;
+            }
+
+            m_DemoActive = true;
+            m_DemoClock = -m_Demo.warmup;
+            LOG_INFO("Demo: '{}' ({}s warmup + {}s shot)", m_Demo.name, m_Demo.warmup, m_Demo.duration);
+
+            // Fixed 1080p client area, so every take frames identically.
+            if (Window* win = GetWindow())
+            {
+                win->SetSize(1920, 1080);
+                win->SetPosition(40, 40);
+                // No Focus(): recording captures this window directly, so it never
+                // needs to steal the foreground from whatever the user is doing.
+            }
+            m_CameraFov = m_Demo.fov;
+            m_Camera->SetPerspectiveInfiniteReverseZ(m_CameraFov, 1920.0f / 1080.0f, 0.1f);
+
+            // Open every panel during warmup: environment systems initialize lazily
+            // in their panel's Draw (fireflies are closed by default).
+            for (auto& p : PanelFlags()) *p.open = true;
+
+            if (m_Demo.hasTimeOfDay)
+            {
+                m_DayNight.enabled = true;
+                m_DayNight.timeOfDay = m_Demo.timeOfDay;
+            }
+            m_DayNight.autoAdvance = false;   // starts at t = 0, so the shot opens on timeOfDay
+            m_DayNight.speedHours = m_Demo.speedHours;
+
+            if (m_Demo.shadowResolution > 0)
+                GetRenderer()->SetShadowResolution(static_cast<uint32_t>(m_Demo.shadowResolution));
+            GetRenderer()->SetDebugCascadeTint(false);
+
+            ApplyDemoCamera(0.0f);
+        }
+
+        // Panel-slider overrides from the shot file (see EditorDemo.hpp). These are
+        // the same live fields the Clouds / Water panels edit.
+        void ApplyDemoSliders()
+        {
+            auto set = [](const nlohmann::json& j, const char* key, float& field) {
+                if (j.is_object() && j.contains(key)) field = j[key].get<float>();
+            };
+            CloudDesc& c = m_CloudPanel.GetSystem().GetDesc();
+            set(m_Demo.clouds, "coverage", c.coverage);
+            set(m_Demo.clouds, "shapeScale", c.shapeScale);
+            set(m_Demo.clouds, "detailScale", c.detailScale);
+            set(m_Demo.clouds, "detailStrength", c.detailStrength);
+            set(m_Demo.clouds, "densityMultiplier", c.densityMultiplier);
+            set(m_Demo.clouds, "windSpeed", c.windSpeed);
+            set(m_Demo.clouds, "layerMinY", c.layerMinY);
+            set(m_Demo.clouds, "layerMaxY", c.layerMaxY);
+
+            WaterDesc& w = m_WaterPanel.GetSystem().GetDesc();
+            set(m_Demo.water, "waterY", w.waterY);
+            set(m_Demo.water, "waveAmplitude", w.waveAmplitude);
+            set(m_Demo.water, "waveSpeed", w.waveSpeed);
+            set(m_Demo.water, "fresnelPower", w.fresnelPower);
+            set(m_Demo.water, "alpha", w.alpha);
+        }
+
+        void ApplyDemoCamera(float t)
+        {
+            CameraPose pose = m_Demo.camera.Evaluate(t);
+            // Keys only pin the camera AT key times; between them the spline can
+            // cut through a hill. Keep a minimum clearance above the terrain.
+            const TerrainSystem& terrain = m_TerrainPanel.GetTerrainSystem();
+            if (m_Demo.minClearance >= 0.0f && terrain.IsReady())
+                pose.position.y = std::max(pose.position.y,
+                    terrain.GetHeightAt(pose.position.x, pose.position.z) + m_Demo.minClearance);
+            m_Camera->SetPosition(pose.position);
+            m_Camera->SetRotation(pose.yaw, pose.pitch);
+        }
+
+        void UpdateDemo(float deltaTime)
+        {
+            // The first frame has already loaded imgui.ini (window layout); stop ImGui
+            // from writing it back, so a demo never rearranges the user's panels.
+            ImGui::GetIO().IniFilename = nullptr;
+
+            const bool wasRolling = m_DemoRolling;
+            m_DemoClock += deltaTime;
+            m_DemoRolling = m_DemoClock >= 0.0f;
+            const float t = std::max(0.0f, m_DemoClock);
+
+            if (m_DemoRolling && !wasRolling)
+            {
+                // t = 0: the recorded part starts. Settle the UI into the shot's state,
+                // and resolve ground-relative camera keys now the terrain exists.
+                const TerrainSystem& terrain = m_TerrainPanel.GetTerrainSystem();
+                if (m_Demo.groundRelative)
+                {
+                    if (terrain.IsReady())
+                        m_Demo.BuildCamera([&terrain](float x, float z) { return terrain.GetHeightAt(x, z); });
+                    else
+                        LOG_WARN("Demo: terrain not ready at t=0 - ground-relative keys used as absolute");
+                }
+                for (auto& p : PanelFlags()) *p.open = m_Demo.ui && m_Demo.PanelVisible(p.name);
+
+                if (m_Demo.hasTimeOfDay) m_DayNight.timeOfDay = m_Demo.timeOfDay;
+                m_DayNight.autoAdvance = m_Demo.autoAdvance;
+                ApplyDemoSliders();
+
+                if (!m_DemoSignalPath.empty())
+                {
+                    std::ofstream signal(m_DemoSignalPath);
+                    signal << m_Demo.name << "\n";
+                }
+                LOG_INFO("Demo: rolling");
+            }
+
+            ApplyDemoCamera(t);
+            if (!m_DemoRolling) return;
+
+            GetRenderer()->SetDebugCascadeTint(m_Demo.CascadeDebugAt(t));
+
+            while (m_DemoTerrainNext < m_Demo.terrain.size() && m_Demo.terrain[m_DemoTerrainNext].t <= t)
+            {
+                const auto& e = m_Demo.terrain[m_DemoTerrainNext++];
+                m_TerrainPanel.DemoSetNoise(e.seed, e.frequency);
+            }
+            while (m_DemoSelectNext < m_Demo.select.size() && m_Demo.select[m_DemoSelectNext].t <= t)
+            {
+                const auto& e = m_Demo.select[m_DemoSelectNext++];
+                if (e.object >= 0 && static_cast<size_t>(e.object) < m_EditorScene->GetObjectCount())
+                    m_EditorScene->Select(e.object);
+            }
+
+            if (t >= m_Demo.duration + 0.5f)
+            {
+                LOG_INFO("Demo: '{}' finished", m_Demo.name);
                 Quit();
             }
         }
