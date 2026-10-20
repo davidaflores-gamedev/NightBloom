@@ -15,7 +15,7 @@ layout(set = 1, binding = 0) uniform sampler2D texSampler;
 // ---- Push Constants ----
 layout(push_constant) uniform PushConstants {
     mat4 model;
-    vec4 customData;   // w > 0.01 => material-driven color (glass); xyz=tint, w=alpha
+    vec4 customData;   // w > 0.01 => material color (glass); 2..3 = sky emissive; >= 3 = world emissive
 } push;
 
 // ---- Fragment Inputs ----
@@ -88,6 +88,16 @@ void main()
     ClipReflection(fragWorldPos);  // drop below-water geometry in the reflection pass
 
     vec4 texColor = texture(texSampler, fragTexCoord);
+
+    // ---- World-space emissive (customData.w >= 3.0) --------------------------
+    // Unlit, flat HDR colour (customData.rgb) at the object's real position and
+    // depth: sparks, tracers, explosions, hit flashes. Unlike the sky branch
+    // below it is NOT pinned to infinity. Keep rgb > 1 for it to bloom.
+    if (push.customData.w >= 3.0)
+    {
+        outColor = vec4(texColor.rgb * push.customData.rgb, 1.0);
+        return;
+    }
 
     // ---- Emissive branch (e.g. the moon) -------------------------------------
     // customData.w >= 2.0 flags an unlit emissive surface (glass uses w in

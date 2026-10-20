@@ -59,7 +59,9 @@ void main() {
     //      infinity, so the clouds' GreaterOrEqual depth test fails over it and the
     //      moon punches through in FRONT of the clouds. Pinning to far lets the
     //      cloud pass blend over it (and real geometry, depth > 0, still occludes).
-    if (push.customData.w >= 2.0) {
+    // (w >= 3.0 is a WORLD-space emissive — sparks, tracers, explosions — and
+    // keeps its normal position and depth, so it is excluded here.)
+    if (push.customData.w >= 2.0 && push.customData.w < 3.0) {
         mat4 viewRotOnly = frame.view;
         viewRotOnly[3] = vec4(0.0, 0.0, 0.0, 1.0); // drop translation column
         gl_Position = frame.proj * viewRotOnly * worldPos;
