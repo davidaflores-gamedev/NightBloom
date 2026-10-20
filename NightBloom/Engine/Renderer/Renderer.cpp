@@ -50,11 +50,12 @@ namespace Nightbloom
 		LOG_INFO("Renderer destroyed");
 	}
 
-	bool Renderer::Initialize(void* windowHandle, uint32_t width, uint32_t height)
+	bool Renderer::Initialize(void* windowHandle, uint32_t width, uint32_t height, uint32_t maxMsaaSamples)
 	{
 		LOG_INFO("=== Initializing Renderer ===");
 		LOG_INFO("Window: {}x{}", width, height);
 
+		m_MaxMsaaSamples = maxMsaaSamples;
 		m_WindowHandle = windowHandle;
 		m_Width = width;
 		m_Height = height;
@@ -851,13 +852,18 @@ namespace Nightbloom
 			return false;
 		}
 
-		// Initialize render passes — request 2x MSAA on the offscreen scene
-		// pass, clamped to what the device's color+depth attachments support.
-		// 2x is a deliberate cost/quality balance: on these clean edges it's
-		// nearly indistinguishable from 4x but roughly halves the MSAA
-		// bandwidth/resolve cost. Bump the cap to VK_SAMPLE_COUNT_4_BIT here if
-		// you want maximum edge quality and can spare the fill cost.
-		VkSampleCountFlagBits sceneSamples = vkDevice->GetMaxUsableSampleCount(VK_SAMPLE_COUNT_2_BIT);
+		// Initialize render passes — MSAA on the offscreen scene pass, capped by
+		// the app's request (Application ctor → Initialize; default 2x) and
+		// clamped to what the device's color+depth attachments support.
+		// 2x is the default cost/quality balance for the grass-heavy scenes
+		// (MSAA multiplies grass fill cost); Stolen Orbit asks for 4x, since
+		// hard-edged geometry against a black sky shows stair-steps at 2x.
+		VkSampleCountFlagBits msaaCap = VK_SAMPLE_COUNT_1_BIT;
+		if      (m_MaxMsaaSamples >= 8) msaaCap = VK_SAMPLE_COUNT_8_BIT;
+		else if (m_MaxMsaaSamples >= 4) msaaCap = VK_SAMPLE_COUNT_4_BIT;
+		else if (m_MaxMsaaSamples >= 2) msaaCap = VK_SAMPLE_COUNT_2_BIT;
+		VkSampleCountFlagBits sceneSamples = vkDevice->GetMaxUsableSampleCount(msaaCap);
+		LOG_INFO("Scene MSAA: {}x (requested up to {}x)", static_cast<int>(sceneSamples), m_MaxMsaaSamples);
 		m_RenderPasses = std::make_unique<RenderPassManager>();
 		if (!m_RenderPasses->Initialize(vkDevice->GetDevice(), m_Swapchain.get(), m_MemoryManager.get(), sceneSamples))
 		{
@@ -1423,7 +1429,7 @@ namespace Nightbloom
 			}
 		}
 
-		// ---- PostProcess pipeline (FXAA composite) -----------------------------------
+		// ---- PostProcess pipeline (final composite) ----------------------------------
 		// Targets a dedicated render pass (writes the actual swapchain image,
 		// not the offscreen scene-color texture every other pipeline above
 		// targets), so it needs the same SetXRenderPass override Shadow/
@@ -1460,7 +1466,7 @@ namespace Nightbloom
 				postProcessConfig.usePostProcessInput = true;
 				postProcessConfig.useBloomInput = true;
 
-				// Tone-mapping / grading params (Debug Panel). 20 bytes: (int aaEnabled,
+				// Tone-mapping / grading params (Debug Panel). 20 bytes: (int edgeBlurEnabled,
 				// int tonemapEnabled, float exposure, float vignetteStrength, float bloomIntensity).
 				// This pass is recorded directly (see RecordPostProcessPass), independent of
 				// CommandRecorder's shared PushConstantData, so the size is local to it.
@@ -1890,7 +1896,7 @@ namespace Nightbloom
 		}
 
 		// =========================================================================
-		// POST-PROCESS PASS - samples the scene-color texture, runs FXAA, and
+		// POST-PROCESS PASS - samples the scene-color texture, runs the edge blur (if on), and
 		// writes the actual swapchain image. UI renders after this, directly
 		// on the swapchain target, so it isn't blurred by the AA filter.
 		// =========================================================================
@@ -2263,7 +2269,7 @@ namespace Nightbloom
 
 	// =====================================================================
 	// RecordPostProcessPass — samples the scene-color texture rendered by
-	// the scene pass, runs FXAA, and writes the swapchain image. A single
+	// the scene pass, runs the post-process composite, and writes the swapchain image. A single
 	// fixed full-screen draw, not a DrawList entry, so this is recorded
 	// directly here rather than through CommandRecorder's per-pipeline-type
 	// binding lists — same precedent as RecordShadowPass/RecordComputePass.
@@ -2313,16 +2319,16 @@ namespace Nightbloom
 				0, 2, sets, 0, nullptr);
 
 			// Must match PushConstants in PostProcess.frag (std430 scalar layout):
-			// (int aaEnabled, int tonemapEnabled, float exposure, float vignetteStrength, float bloomIntensity).
+			// (int edgeBlurEnabled, int tonemapEnabled, float exposure, float vignetteStrength, float bloomIntensity).
 			struct PostProcessPush
 			{
-				int   aaEnabled;
+				int   edgeBlurEnabled;
 				int   tonemapEnabled;
 				float exposure;
 				float vignetteStrength;
 				float bloomIntensity;
 			} push;
-			push.aaEnabled        = m_PostProcessSettings.aaEnabled ? 1 : 0;
+			push.edgeBlurEnabled  = m_PostProcessSettings.edgeBlurEnabled ? 1 : 0;
 			push.tonemapEnabled   = m_PostProcessSettings.tonemapEnabled ? 1 : 0;
 			push.exposure         = m_PostProcessSettings.exposure;
 			push.vignetteStrength = m_PostProcessSettings.vignetteStrength;

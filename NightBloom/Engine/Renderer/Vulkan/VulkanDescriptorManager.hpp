@@ -134,7 +134,7 @@ namespace Nightbloom
 		void UpdateCloudResultSet(VkDescriptorSet set, VulkanTexture* resultTexture);
 		VkDescriptorSetLayout GetCloudResultSetLayout() const { return m_CloudResultSetLayout; }
 
-		// --- Post-process input (set 0 in the PostProcess/FXAA pass): the
+		// --- Post-process input (set 0 in the post-process pass): the
 		//     scene-color texture the scene pass rendered into. Single set,
 		//     not per-frame — recreated whenever RenderPassManager recreates
 		//     the scene-color texture (resize). Takes a raw view+sampler

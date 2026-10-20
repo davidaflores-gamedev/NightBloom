@@ -793,6 +793,10 @@ namespace Nightbloom
 			desc.height = 64;
 			desc.format = TextureFormat::RGBA8;
 			desc.usage = TextureUsage::Sampled | TextureUsage::Transfer;
+			// Mips matter here: a high-contrast pattern with only mip 0 aliases into
+			// crawling dots at distance (each pixel samples one random black/white
+			// texel). File-loaded textures already generate mips; this one didn't.
+			desc.generateMips = true;
 
 			if (!CreateTextureFromMemory("uv_checker", checkerData.pixels.data(),
 				checkerData.pixels.size(), desc))

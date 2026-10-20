@@ -323,7 +323,7 @@ namespace Nightbloom
 		// Subpass dependency for leaving this pass — the post-process pass
 		// samples the color attachment as a fragment-shader input in a
 		// *separate* render pass instance, so nothing else inserts this
-		// barrier automatically; without it the FXAA pass could read before
+		// barrier automatically; without it the post-process pass could read before
 		// this pass's writes are visible.
 		VkSubpassDependency dependencyOut{};
 		dependencyOut.srcSubpass = 0;

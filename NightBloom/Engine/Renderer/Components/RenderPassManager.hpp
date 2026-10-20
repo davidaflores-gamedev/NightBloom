@@ -6,7 +6,7 @@
 //
 // Two passes: the scene pass renders all normal geometry into an offscreen
 // color texture (not the swapchain) so a second post-process pass can
-// sample it, run FXAA, and write the result into the actual swapchain
+// sample it, run the post-process composite, and write the result into the actual swapchain
 // image. See Renderer::RecordCommandBuffer/RecordPostProcessPass.
 //------------------------------------------------------------------------------
 #pragma once

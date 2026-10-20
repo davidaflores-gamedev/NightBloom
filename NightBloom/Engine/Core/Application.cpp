@@ -14,7 +14,7 @@
 
 namespace Nightbloom
 {
-	Application::Application(const std::string& name)
+	Application::Application(const std::string& name, uint32_t maxMsaaSamples)
 	{
 		//Engine handles all system initialization
 		EngineInit();
@@ -47,7 +47,7 @@ namespace Nightbloom
 
 		LOG_INFO("Initializing Renderer...");
 		m_Renderer = std::make_unique<Renderer>();
-		if (!m_Renderer->Initialize(m_Window->GetNativeHandle(), desc.width, desc.height))
+		if (!m_Renderer->Initialize(m_Window->GetNativeHandle(), desc.width, desc.height, maxMsaaSamples))
 		{
 			LOG_ERROR("Failed to initialize Renderer");
 			throw std::runtime_error("Renderer initialization failed");

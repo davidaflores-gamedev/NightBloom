@@ -105,7 +105,11 @@ namespace Nightbloom
                                   "only above-white pixels glow; lower for a dreamier look.");
 
             ImGui::Spacing();
-            ImGui::Checkbox("Anti-Aliasing (FXAA)", &pp.aaEnabled);
+            ImGui::Checkbox("Edge Blur (soft AA)", &pp.edgeBlurEnabled);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("A box blur on high-contrast pixels -- not real FXAA.\n"
+                                  "Smooths jagged edges but also softens textures.\n"
+                                  "MSAA still handles geometry edges with this off.");
             ImGui::TextDisabled("Toggle to compare edge softening in the same view.");
         }
 

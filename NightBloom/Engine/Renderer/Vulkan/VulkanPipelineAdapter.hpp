@@ -288,7 +288,7 @@ namespace Nightbloom
 				vkConfig.descriptorSetLayouts.push_back(cloudResultLayout);
 			}
 
-			// The PostProcess/FXAA pass needs nothing but this one sampler —
+			// The post-process pass needs nothing but this one sampler —
 			// no useUniformBuffer/useLighting set for this pipeline, so this
 			// lands at set 0, same reasoning as useCloudResult above.
 			if (config.usePostProcessInput && m_DescriptorManager)

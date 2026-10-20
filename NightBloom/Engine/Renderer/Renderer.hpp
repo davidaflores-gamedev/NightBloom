@@ -54,7 +54,8 @@ namespace Nightbloom
 		~Renderer();
 
 		// Lifecycle
-		bool Initialize(void* windowHandle, uint32_t width, uint32_t height);
+		// maxMsaaSamples caps scene-pass MSAA (1/2/4/8); the device may grant less.
+		bool Initialize(void* windowHandle, uint32_t width, uint32_t height, uint32_t maxMsaaSamples = 2);
 		void Shutdown();
 
 		// Frame operations
@@ -131,11 +132,14 @@ namespace Nightbloom
 		// Shadow controls
 		bool IsShadowEnabled() const { return m_ShadowEnabled; }
 		// Post-process / tone-mapping controls. The scene renders into a linear HDR target;
-		// the post-process pass applies exposure + ACES tonemap + vignette (+ FXAA) and writes
+		// the post-process pass applies exposure + ACES tonemap + vignette (+ optional edge blur) and writes
 		// the sRGB swapchain. Edited live from the Debug panel via the mutable getter.
 		struct PostProcessSettings
 		{
-			bool  aaEnabled        = true;   // FXAA edge-aware AA
+			// Edge blur: a 9-tap box blur on high-contrast pixels. NOT real FXAA (no
+			// edge-direction search) — it softens the whole image, textures included.
+			// Cheap AA for the grassy scenes; Stolen Orbit turns it off.
+			bool  edgeBlurEnabled  = true;
 			bool  tonemapEnabled   = true;   // ACES filmic tonemap (off = hard clamp)
 			float exposure         = 1.0f;   // linear exposure multiplier (pre-tonemap)
 			float vignetteStrength = 0.25f;  // 0 = off
@@ -145,9 +149,9 @@ namespace Nightbloom
 		PostProcessSettings& GetPostProcessSettings() { return m_PostProcessSettings; }
 		const PostProcessSettings& GetPostProcessSettings() const { return m_PostProcessSettings; }
 
-		// Back-compat wrappers for the existing AA toggle.
-		bool IsPostProcessAAEnabled() const { return m_PostProcessSettings.aaEnabled; }
-		void SetPostProcessAAEnabled(bool enabled) { m_PostProcessSettings.aaEnabled = enabled; }
+		// Convenience wrappers for the edge-blur toggle.
+		bool IsEdgeBlurEnabled() const { return m_PostProcessSettings.edgeBlurEnabled; }
+		void SetEdgeBlurEnabled(bool enabled) { m_PostProcessSettings.edgeBlurEnabled = enabled; }
 		void SetShadowEnabled(bool enabled) { m_ShadowEnabled = enabled; }
 		void SetShadowCenter(const glm::vec3& center) { m_ShadowCenter = center; }
 		void SetShadowConfig(const ShadowConfig& config) { m_ShadowConfig = config; }
@@ -233,7 +237,7 @@ namespace Nightbloom
 		// reflection target is recreated then (like m_PostProcessInputSet).
 		VkDescriptorSet m_ReflectionInputSet = VK_NULL_HANDLE;
 
-		// Post-process (FXAA) — samples the scene-color texture RenderPassManager
+		// Post-process composite — samples the scene-color texture RenderPassManager
 		// owns; set is allocated/updated once in InitializePipelines and
 		// re-updated in HandleSwapchainResize since the texture is recreated then.
 		VkDescriptorSet m_PostProcessInputSet = VK_NULL_HANDLE;
@@ -260,6 +264,8 @@ namespace Nightbloom
 		};
 
 		VulkanTexture* m_NoisePreview = nullptr;  // 2D (depth=1), displayable in ImGui
+
+		uint32_t m_MaxMsaaSamples = 2;  // requested cap, from Initialize
 
 		// Shadow state
 		bool m_ShadowEnabled = true;

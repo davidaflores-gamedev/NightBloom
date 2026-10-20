@@ -16,7 +16,7 @@ NightBloom started as a "render a beautiful night scene" project and grew into a
 
 **Rendering**
 - **Cascaded shadow maps**: 4 cascades in one depth array, stable texel-snapped fitting, PCF with cascade blend bands, live-selectable 1024–4096 resolution
-- **HDR pipeline**: linear HDR scene target, bloom, FXAA, exposure, ACES filmic tonemapping, vignette
+- **HDR pipeline**: linear HDR scene target, bloom, exposure, ACES filmic tonemapping, vignette
 - **Planar-reflection water**: mirrored camera into an MSAA-compatible offscreen target, Fresnel, animated normals, below-surface clipping
 - **Volumetric clouds**: raymarched in a reduced-resolution compute pass, then composited at full resolution with correct depth occlusion
 - **GPU fireflies**: boids flocking simulated in a compute shader, drawn as additive billboards

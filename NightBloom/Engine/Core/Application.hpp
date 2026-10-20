@@ -22,7 +22,9 @@ namespace Nightbloom
 	{
 	public:
 		// ToDo: probably need to replace with an application desc later. once i implement xml
-		Application(const std::string& name = "NightBloom Application");
+		// maxMsaaSamples: scene MSAA cap (1/2/4/8). Passed here because the
+		// renderer is created in this constructor, before a subclass can act.
+		Application(const std::string& name = "NightBloom Application", uint32_t maxMsaaSamples = 2);
 		virtual ~Application();
 
 		//Called by main()

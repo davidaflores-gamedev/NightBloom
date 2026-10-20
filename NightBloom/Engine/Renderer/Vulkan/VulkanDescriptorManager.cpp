@@ -1375,7 +1375,7 @@ namespace Nightbloom
 	}
 
 	// =====================================================================
-	// Post-process input (set 0 in the PostProcess/FXAA pass)
+	// Post-process input (set 0 in the post-process pass)
 	// =====================================================================
 
 	VkDescriptorSetLayout VulkanDescriptorManager::CreatePostProcessInputSetLayout()

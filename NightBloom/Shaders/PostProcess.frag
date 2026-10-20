@@ -2,7 +2,7 @@
 // PostProcess.frag
 //
 // Final composite of the HDR scene into the sRGB swapchain. In order:
-//   1. FXAA-style edge-aware box blur (toggle) — see the AA notes below.
+//   1. Edge blur (toggle) — a contrast-gated box blur, NOT real FXAA; see below.
 //   2. Additive bloom composite (the half-res blurred bright-pass result),
 //      added in LINEAR HDR before tonemapping so highlights bleed naturally.
 //   3. Exposure multiply -> ACES filmic tonemap (toggle; off = hard clamp).
@@ -10,15 +10,17 @@
 // The scene target is linear HDR (B10G11R11), so samples here can exceed 1.0;
 // the sRGB swapchain applies the display OETF on write (no manual gamma).
 //
-// AA note: a directional single-sample variant was tried first and abandoned
-// (it relocated edges instead of averaging — no visible softening); this box
-// blur has no directionality to get wrong. Ideally AA would run post-tonemap
-// on LDR — flagged as a future refinement. See .claude/ROADMAP.md.
+// Edge-blur note: this is NOT FXAA. It box-blurs any pixel whose neighbourhood
+// crosses a luma-contrast threshold, with no edge-direction search — so it also
+// smears high-contrast TEXTURES (a checkerboard blurs everywhere), which is why
+// it reads as a soft image. A directional single-sample variant was tried first
+// and abandoned (it relocated edges instead of averaging). Real FXAA 3.11 would
+// search along the edge and run post-tonemap on LDR. See .claude/ROADMAP.md 1.5.1.
 //
 // Descriptor sets:
 //   set 0 - scene-color texture (the scene pass's offscreen HDR render target)
 //   set 1 - bloom result (half-res blurred bright-pass, linear HDR)
-// Push constants: aaEnabled, tonemapEnabled, exposure, vignetteStrength, bloomIntensity.
+// Push constants: edgeBlurEnabled, tonemapEnabled, exposure, vignetteStrength, bloomIntensity.
 //------------------------------------------------------------------------------
 #version 450
 
@@ -32,7 +34,7 @@ layout(set = 1, binding = 0) uniform sampler2D bloomTex;  // half-res blurred bl
 // (Renderer::RecordPostProcessPass). Push-constant block = std430 scalar layout.
 layout(push_constant) uniform PushConstants
 {
-    int   aaEnabled;        // FXAA edge-aware AA on/off
+    int   edgeBlurEnabled;  // contrast-gated box blur on/off (not real FXAA)
     int   tonemapEnabled;   // ACES filmic tonemap on/off (off = hard clamp to [0,1])
     float exposure;         // linear exposure multiplier applied before tonemap
     float vignetteStrength; // 0 = none; darkens toward frame edges
@@ -57,14 +59,14 @@ vec3 ACESFilmic(vec3 x)
 void main()
 {
     // The scene-color target is now LINEAR HDR (B10G11R11), so these samples can
-    // exceed 1.0. FXAA runs here on HDR values (acceptable; ideally it would run
+    // exceed 1.0. The edge blur runs here on HDR values (acceptable; ideally it would run
     // post-tonemap on LDR — flagged as a future refinement, AA is already a known
     // soft spot). The resolved color is then exposure-scaled, tonemapped, and
     // vignetted before being written to the sRGB swapchain.
     vec3 colorCenter = texture(sceneColor, inUV).rgb;
     vec3 sceneCol = colorCenter;
 
-    if (pc.aaEnabled != 0)
+    if (pc.edgeBlurEnabled != 0)
     {
     vec2 texel = 1.0 / vec2(textureSize(sceneColor, 0));
 
@@ -90,7 +92,7 @@ void main()
     if (lumaRange >= threshold)
     {
         // Widened 9-tap box blur — radius kWideningFactor texels, including
-        // diagonals. See ROADMAP.md for the full FXAA investigation history;
+        // diagonals. See ROADMAP.md 1.5.1 for the AA investigation history;
         // these constants (1.4 / 0.35) are a calm middle point, not final.
         const float kWideningFactor = 1.4;
         vec2 wideTexel = texel * kWideningFactor;
@@ -111,7 +113,7 @@ void main()
         float blendAmount = max(edgeStrength, 0.35);
         sceneCol = mix(colorCenter, blurred, blendAmount);
     }
-    } // end FXAA
+    } // end edge blur
 
     // ---- Bloom composite (additive, in linear HDR before tonemap) ----
     // bloomTex is half-res; the linear sampler upscales it. Adding in HDR (not after

@@ -195,7 +195,7 @@ namespace Nightbloom
 		bool useFireflyStorage = false;  // Pipeline reads the firefly agent storage buffer (vertex+compute stages)
 		bool useFoliageStorage = false;  // Pipeline reads the foliage instance storage buffer (vertex stage only)
 		bool useCloudResult = false;  // Pipeline samples the low-res cloud raymarch result (fragment stage) - the graphics Clouds composite pass's only texture input
-		bool usePostProcessInput = false;  // Pipeline samples the scene-color texture (fragment stage) - the PostProcess/FXAA pass's only texture input
+		bool usePostProcessInput = false;  // Pipeline samples the scene-color texture (fragment stage) - the post-process pass's only texture input
 		bool useReflectionInput = false;  // Pipeline samples the planar-reflection target (fragment stage) - the Water pass; lands last so it's set 2 (after uniform=0, lighting=1)
 		bool useBloomInput = false;  // PostProcess composite samples the bloom result as a SECOND single-sampler set (lands at set 1, after usePostProcessInput's set 0). Reuses the post-process input layout shape.
 
