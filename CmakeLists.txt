@@ -47,6 +47,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/StolenOrbit/CMakeLists.txt")
 endif()
 
 #------------------------------------------------------------------------------
+# Build FighterTest - the 3D competitive-fighter gameplay test
+# (.claude/FIGHTER_TEST_PLAN.md). Same arrangement as StolenOrbit: its own
+# private repo, gitignored here, only built when the folder is present.
+#------------------------------------------------------------------------------
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/FighterTest/CMakeLists.txt")
+    add_subdirectory(FighterTest)
+endif()
+
+#------------------------------------------------------------------------------
 # Packaging (Milestone 3 — see .claude/PACKAGING_ROADMAP.md): assemble a
 # distributable, self-contained NightbloomGame zip. The heavy lifting (staging
 # exe + Shaders/ + Assets/ + the project with project-relative scene paths, then
