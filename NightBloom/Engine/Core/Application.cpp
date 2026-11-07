@@ -104,13 +104,32 @@ namespace Nightbloom
 				continue;
 			}
 
-			// Use input
-			if (m_Input->IsPressed(InputCode::Key_P))
-				m_Renderer->TogglePipeline();
+			// NOTE: the engine used to hard-bind P (TogglePipeline) and R
+			// (ReloadShaders) here, for every app. That stole keys from games
+			// (NightbloomGame's R = restart also recompiled every shader) and
+			// double-fired with the editor's own P binding, cancelling it out.
+			// Those are editor tools now: EditorApp::HandleEditorShortcuts
+			// (Ctrl+R, P) plus the Debug/Viewport panel buttons.
 
-			if (m_Input->IsPressed(InputCode::Key_R))
+			if (m_FixedDeltaTime > 0.0f)
 			{
-				m_Renderer->ReloadShaders();
+				OnPreFixedUpdate(deltaTime);
+
+				m_FixedAccumulator += deltaTime;
+				int steps = 0;
+				while (m_FixedAccumulator >= m_FixedDeltaTime && steps < kMaxFixedStepsPerFrame)
+				{
+					OnFixedUpdate(m_FixedDeltaTime);
+					m_FixedAccumulator -= m_FixedDeltaTime;
+					++m_FixedTickCount;
+					++steps;
+				}
+				// Fell behind (breakpoint, hitch, window drag): drop the backlog
+				// instead of trying to catch up and spiralling.
+				if (steps == kMaxFixedStepsPerFrame && m_FixedAccumulator >= m_FixedDeltaTime)
+					m_FixedAccumulator = 0.0f;
+
+				m_InterpolationAlpha = m_FixedAccumulator / m_FixedDeltaTime;
 			}
 
 			OnUpdate(deltaTime);
