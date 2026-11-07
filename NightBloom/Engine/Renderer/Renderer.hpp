@@ -10,6 +10,7 @@
 #include "Engine/Renderer/PipelineInterface.hpp"
 #include "Engine/Renderer/DrawCommandSystem.hpp"
 #include "Engine/Renderer/Light.hpp"
+#include "Engine/Renderer/DebugDraw.hpp"
 #include <array>
 #include <memory>
 #include <glm/glm.hpp>
@@ -277,6 +278,12 @@ namespace Nightbloom
 		float m_TotalTime = 0.0f;  // Track time for shaders
 		float m_LastDeltaTime = 0.0f;  // Frame-to-frame delta, for systems like FireflySystem
 
+		// DebugDraw (see RecordDebugDraw). Buffers are owned by m_Resources.
+		bool m_DebugLinesReady = false;
+		std::array<VulkanBuffer*, 2> m_DebugLineBuffers{};   // 2 = MAX_FRAMES_IN_FLIGHT
+		std::array<size_t, 2> m_DebugLineCapacity{};          // in vertices
+		std::vector<DebugVertex> m_DebugVertexScratch;
+
 		FireflySystem* m_FireflySystem = nullptr; // not owned
 		CloudSystem* m_CloudSystem = nullptr; // not owned
 		WaterSystem* m_WaterSystem = nullptr; // not owned
@@ -305,6 +312,7 @@ namespace Nightbloom
 		void RecordReflectionPass(uint32_t frameIndex);
 		void RecordBloomPass(uint32_t frameIndex);   // bright-extract + separable blur into the bloom targets
 		void RecordPostProcessPass(uint32_t frameIndex, uint32_t imageIndex);
+		void RecordDebugDraw(uint32_t frameIndex);   // DebugDraw lines, inside the scene pass
 		void UpdateShadowMatrices();
 		bool HandleSwapchainResize();
 

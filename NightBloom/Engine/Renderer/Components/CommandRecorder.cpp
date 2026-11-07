@@ -374,7 +374,7 @@ namespace Nightbloom
 		else if (cmd.vertexCount > 0)
 		{
 			// Non-indexed draw
-			vkCmdDraw(commandBuffer, cmd.vertexCount, cmd.instanceCount, 0, cmd.firstInstance);
+			vkCmdDraw(commandBuffer, cmd.vertexCount, cmd.instanceCount, cmd.firstVertex, cmd.firstInstance);
 		}
 
 		// Execute post-draw callback if provided

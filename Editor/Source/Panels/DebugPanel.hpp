@@ -12,5 +12,9 @@ namespace Nightbloom
 
     private:
         bool m_ComputeTestRan = false;
+
+        // Debug Draw section (lines emitted only while this panel is open)
+        bool m_DrawBounds = false;
+        bool m_DrawGrid = false;
     };
 } // namespace Nightbloom

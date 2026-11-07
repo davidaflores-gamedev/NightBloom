@@ -7,6 +7,8 @@
 #include "Engine/Renderer/Renderer.hpp"
 #include "Engine/Renderer/RenderDevice.hpp"
 #include "Engine/Renderer/DrawCommandSystem.hpp"
+#include "Engine/Renderer/Vertex.hpp"
+#include <string>
 #include "Engine/Renderer/Vulkan/VulkanDevice.hpp"
 #include "Engine/Renderer/Vulkan/VulkanSwapchain.hpp"
 #include "Engine/Renderer/Vulkan/VulkanMemoryManager.hpp"
@@ -32,6 +34,15 @@
 #include "Engine/Core/Logger/Logger.hpp"
 #include "Engine/Core/PerformanceMetrics.hpp"
 #include <filesystem>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 
 namespace Nightbloom
@@ -698,6 +709,14 @@ namespace Nightbloom
 			LOG_WARN("Failed to load clouds fragment shader - continuing without clouds pipeline");
 		}
 
+		// DebugDraw lines. Optional: missing shaders just mean no debug lines
+		// (e.g. an old packaged build), never a failed startup.
+		if (!m_Resources->LoadShader("debugline_vert", ShaderStage::Vertex, "DebugLine.vert") ||
+			!m_Resources->LoadShader("debugline_frag", ShaderStage::Fragment, "DebugLine.frag"))
+		{
+			LOG_WARN("Failed to load debug line shaders - DebugDraw will draw nothing");
+		}
+
 		if (!m_Resources->LoadShader("postprocess_vert", ShaderStage::Vertex, "PostProcess.vert"))
 		{
 			LOG_ERROR("Failed to load post-process vertex shader");
@@ -794,7 +813,20 @@ namespace Nightbloom
 	{
 		// Initialize AssetManager
 		LOG_INFO("=== Initializing Asset Manager ===");
+		// The exe's own folder, not the working directory: the build deploys
+		// Shaders/ next to the exe, so launching from anywhere else (e.g. the
+		// repo root: `.\Build\Editor\Debug\Editor.exe --project ...`) used to
+		// find no shaders. VS's debugger and packaged builds already run with
+		// cwd == exe folder, so for them nothing changes.
 		std::filesystem::path execPath = std::filesystem::current_path();
+#ifdef _WIN32
+		{
+			wchar_t buf[MAX_PATH]{};
+			const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+			if (n > 0 && n < MAX_PATH)
+				execPath = std::filesystem::path(buf).parent_path();
+		}
+#endif
 		if (!AssetManager::Get().Initialize(execPath.string()))
 		{
 			LOG_ERROR("Failed to initialize AssetManager");
@@ -1429,6 +1461,40 @@ namespace Nightbloom
 			}
 		}
 
+		// ---- DebugDraw line pipelines (depth-tested + overlay) ---------------------
+		// Scene-pass pipelines (MSAA-matched by the adapter). World-space LineList
+		// from a per-frame host-visible buffer; set 0 = FrameUniforms only.
+		{
+			VulkanShader* lineVert = m_Resources->GetShader("debugline_vert");
+			VulkanShader* lineFrag = m_Resources->GetShader("debugline_frag");
+			if (lineVert && lineFrag)
+			{
+				PipelineConfig lineConfig;
+				lineConfig.vertexShader = lineVert;
+				lineConfig.fragmentShader = lineFrag;
+				lineConfig.useVertexInput = true;   // VertexPCU-shaped DebugVertex
+				lineConfig.topology = PrimitiveTopology::LineList;
+				lineConfig.polygonMode = PolygonMode::Fill;
+				lineConfig.cullMode = CullMode::None;
+				lineConfig.frontFace = FrontFace::CounterClockwise;
+				lineConfig.depthTestEnable = true;
+				lineConfig.depthWriteEnable = false;
+				lineConfig.depthCompareOp = CompareOp::GreaterOrEqual;  // reverse-Z
+				lineConfig.blendEnable = false;
+				lineConfig.useUniformBuffer = true;
+
+				const bool depthOk = m_PipelineAdapter->CreatePipeline(PipelineType::DebugLines, lineConfig);
+
+				PipelineConfig overlayConfig = lineConfig;
+				overlayConfig.depthTestEnable = false;
+				const bool overlayOk = m_PipelineAdapter->CreatePipeline(PipelineType::DebugLinesOverlay, overlayConfig);
+
+				m_DebugLinesReady = depthOk && overlayOk;
+				if (m_DebugLinesReady) LOG_INFO("DebugDraw line pipelines created successfully");
+				else LOG_WARN("Failed to create DebugDraw line pipelines - DebugDraw will draw nothing");
+			}
+		}
+
 		// ---- PostProcess pipeline (final composite) ----------------------------------
 		// Targets a dedicated render pass (writes the actual swapchain image,
 		// not the offscreen scene-color texture every other pipeline above
@@ -1881,6 +1947,9 @@ namespace Nightbloom
 				m_ViewMatrix, m_ProjectionMatrix);
 		}
 
+		// Debug lines last, so the overlay variant lands on top of everything.
+		RecordDebugDraw(frameIndex);
+
 		m_Commands->EndRenderPass(frameIndex);
 		if (m_GpuProfiler) m_GpuProfiler->EndScope(profCmd, sceneScope);
 
@@ -1907,6 +1976,75 @@ namespace Nightbloom
 		if (m_GpuProfiler) m_GpuProfiler->EndFrame(frameIndex);
 
 		m_Commands->EndCommandBuffer(frameIndex);
+
+		// The lines are now baked into this frame's command buffer: drop the
+		// one-frame ones and age the timed ones.
+		DebugDraw::EndFrame(m_LastDeltaTime);
+	}
+
+	//--------------------------------------------------------------------------
+	// RecordDebugDraw — uploads DebugDraw's lines into this frame's host-visible
+	// vertex buffer (depth-tested range first, overlay range after) and draws
+	// them inside the already-open scene render pass.
+	//
+	// Buffer lifetime: one buffer per frame in flight. BeginFrame already waited
+	// on this frame's fence, so the GPU is done with buffer[frameIndex] and it is
+	// safe to overwrite or grow (recreate) it here.
+	//--------------------------------------------------------------------------
+	void Renderer::RecordDebugDraw(uint32_t frameIndex)
+	{
+		static_assert(sizeof(DebugVertex) == sizeof(VertexPCU), "DebugVertex must match the shared VertexPCU vertex-input layout");
+
+		if (!m_DebugLinesReady || !DebugDraw::IsEnabled() || frameIndex >= m_DebugLineBuffers.size())
+			return;
+
+		m_DebugVertexScratch.clear();
+		DebugDraw::BuildVertices(m_DebugVertexScratch, /*onTop*/ false);
+		const uint32_t depthCount = static_cast<uint32_t>(m_DebugVertexScratch.size());
+		DebugDraw::BuildVertices(m_DebugVertexScratch, /*onTop*/ true);
+		const uint32_t totalCount = static_cast<uint32_t>(m_DebugVertexScratch.size());
+		if (totalCount == 0) return;
+
+		// Grow (power of two, min 16k vertices) when this frame's lines don't fit.
+		if (m_DebugLineCapacity[frameIndex] < totalCount || !m_DebugLineBuffers[frameIndex])
+		{
+			size_t capacity = std::max<size_t>(16384, m_DebugLineCapacity[frameIndex]);
+			while (capacity < totalCount) capacity *= 2;
+			const std::string name = "DebugLines_" + std::to_string(frameIndex);
+			m_DebugLineBuffers[frameIndex] = m_Resources->CreateVertexBuffer(name, capacity * sizeof(DebugVertex), /*hostVisible*/ true);
+			m_DebugLineCapacity[frameIndex] = m_DebugLineBuffers[frameIndex] ? capacity : 0;
+			if (!m_DebugLineBuffers[frameIndex])
+			{
+				LOG_ERROR("DebugDraw: failed to allocate line buffer ({} vertices)", capacity);
+				return;
+			}
+		}
+
+		VulkanBuffer* buffer = m_DebugLineBuffers[frameIndex];
+		if (!buffer->Update(m_DebugVertexScratch.data(), totalCount * sizeof(DebugVertex), 0))
+			return;
+
+		DrawList lines;
+		DrawCommand cmd;
+		cmd.vertexBuffer = buffer;
+		cmd.descriptorBindings.push_back({ 0, BindingSource::FrameUniform, VK_NULL_HANDLE });
+
+		if (depthCount > 0)
+		{
+			cmd.pipeline = PipelineType::DebugLines;
+			cmd.vertexCount = depthCount;
+			cmd.firstVertex = 0;
+			lines.AddCommand(cmd);
+		}
+		if (totalCount > depthCount)
+		{
+			cmd.pipeline = PipelineType::DebugLinesOverlay;
+			cmd.vertexCount = totalCount - depthCount;
+			cmd.firstVertex = depthCount;
+			lines.AddCommand(cmd);
+		}
+
+		m_Commands->ExecuteDrawList(frameIndex, lines, m_PipelineAdapter.get(), m_ViewMatrix, m_ProjectionMatrix);
 	}
 
 	void Renderer::RecordComputePass(uint32_t frameIndex)

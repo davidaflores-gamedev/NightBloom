@@ -20,6 +20,8 @@ namespace Nightbloom
 		m_PipelineNames[PipelineType::PostProcess] = "PostProcess";
 		m_PipelineNames[PipelineType::Compute] = "Compute";
 		m_PipelineNames[PipelineType::NodeGenerated] = "NodeGenerated";   // ADD THIS LINE
+		m_PipelineNames[PipelineType::DebugLines] = "DebugLines";
+		m_PipelineNames[PipelineType::DebugLinesOverlay] = "DebugLinesOverlay";
 
 
 		LOG_INFO("VulkanPipelineManager initialized");

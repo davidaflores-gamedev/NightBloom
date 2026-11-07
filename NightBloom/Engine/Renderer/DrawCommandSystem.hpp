@@ -92,6 +92,7 @@ namespace Nightbloom
 		Buffer* indexBuffer = nullptr;
 		uint32_t indexCount = 0;
 		uint32_t vertexCount = 0;  // For non-indexed draws
+		uint32_t firstVertex = 0;  // Non-indexed draws: start offset into the vertex buffer
 
 		// Instance data
 		uint32_t instanceCount = 1;

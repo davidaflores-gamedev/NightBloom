@@ -48,7 +48,7 @@ namespace Nightbloom
 
         int currentPipeline = (int)(selected->pipeline);
         if (ImGui::Combo("Pipeline", &currentPipeline, pipelineNames,
-            static_cast<int>(PipelineType::Count)))
+            IM_ARRAYSIZE(pipelineNames)))  // only the named entries; PipelineType::Count overran this array
         {
             PipelineType newPipeline = static_cast<PipelineType>(currentPipeline);
             auto* pm = ctx.renderer ? ctx.renderer->GetPipelineManager() : nullptr;

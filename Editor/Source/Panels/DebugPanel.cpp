@@ -3,6 +3,7 @@
 #include "Engine/Renderer/Renderer.hpp"
 #include "Engine/Renderer/Components/GpuProfiler.hpp"
 #include "Engine/Core/Scene.hpp"
+#include "Engine/Renderer/DebugDraw.hpp"
 #include <imgui.h>
 
 namespace Nightbloom
@@ -111,6 +112,39 @@ namespace Nightbloom
                                   "Smooths jagged edges but also softens textures.\n"
                                   "MSAA still handles geometry edges with this off.");
             ImGui::TextDisabled("Toggle to compare edge softening in the same view.");
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Debug Draw");
+        {
+            bool enabled = DebugDraw::IsEnabled();
+            if (ImGui::Checkbox("Enabled", &enabled)) DebugDraw::SetEnabled(enabled);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%zu lines)", DebugDraw::GetLineCount());
+            ImGui::Checkbox("Object bounds", &m_DrawBounds);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Oriented bounds of every scene object (selected one on top, yellow). "
+                                  "Drawn while this panel is open.");
+            ImGui::Checkbox("Ground grid", &m_DrawGrid);
+
+            if (m_DrawGrid)
+                DebugDraw::Grid(glm::vec3(0.0f), 1.0f, 20, glm::vec3(0.35f));
+
+            if (m_DrawBounds && ctx.scene)
+            {
+                const auto& objects = ctx.scene->GetObjects();
+                const int selected = ctx.scene->GetSelectedIndex();
+                for (int i = 0; i < static_cast<int>(objects.size()); ++i)
+                {
+                    glm::vec3 mn, mx;
+                    glm::mat4 xf;
+                    if (!objects[i].GetLocalBounds(mn, mx, xf)) continue;
+                    if (i == selected)
+                        DebugDraw::Box(xf, mn, mx, DebugDraw::Yellow, 0.0f, /*onTop*/ true);
+                    else
+                        DebugDraw::Box(xf, mn, mx, DebugDraw::Cyan);
+                }
+            }
         }
 
         ImGui::Separator();

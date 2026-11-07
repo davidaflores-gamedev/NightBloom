@@ -136,6 +136,11 @@ namespace Nightbloom
 		                // a draw list, so the CommandRecorder draw chains don't reference it. One
 		                // pipeline, run 3x with a push-constant mode (extract / blur H / blur V).
 
+		DebugLines,        // DebugDraw lines, depth-tested. Recorded directly by
+		                   // Renderer::RecordDebugDraw at the end of the scene pass — never in a
+		                   // draw list, so shadow/reflection passes never see them.
+		DebugLinesOverlay, // DebugDraw lines with onTop=true: no depth test, drawn last.
+
 		Count
 	};
 
