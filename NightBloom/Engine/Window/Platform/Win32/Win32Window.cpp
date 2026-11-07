@@ -45,6 +45,16 @@ namespace Nightbloom
 
 		switch (wmMessageCode)
 		{
+		case WM_DEVICECHANGE:
+		{
+			// Broadcast to top-level windows (DBT_DEVNODES_CHANGED) whenever any device
+			// is added or removed. Rescan for DualSenses, and probe the XInput slots on
+			// the next poll instead of waiting for the periodic rescan.
+			window->m_DualSenses.NotifyDevicesChanged();
+			window->m_PadRescanCounter = 0;
+			break;
+		}
+
 		case WM_CLOSE:
 		{
 			window->m_ShuttingDown = true;
@@ -312,7 +322,7 @@ namespace Nightbloom
 	Win32Window::~Win32Window()
 	{
 		// Release the DualSense HID handle before anything else tears down.
-		m_DualSense.Shutdown();
+		m_DualSenses.Shutdown();
 
 		// Restore the OS cursor if we were still capturing it (ShowCursor is a
 		// process-global counter — leaving it negative hides the cursor elsewhere).
@@ -503,22 +513,23 @@ namespace Nightbloom
 			if (connected != m_PadConnected[i])
 			{
 				m_PadConnected[i] = connected;
+				m_PadPrevButtons[i] = 0;
+				m_PadPrevLT[i] = m_PadPrevRT[i] = false;
 				if (connected)
 				{
-					input->OnGamepadConnected(i);
+					m_PadSlot[i] = input->AcquireGamepadSlot();   // -1 if all slots are taken
 				}
-				else
+				else if (m_PadSlot[i] >= 0)
 				{
-					input->OnGamepadDisconnected(i);
-					for (int a = 0; a < 6; ++a)
-						input->OnGamepadAxis(i, a, 0.0f);
-					m_PadPrevButtons[i] = 0;
-					m_PadPrevLT[i] = m_PadPrevRT[i] = false;
+					// OnGamepadDisconnected releases held buttons and zeroes the axes.
+					input->OnGamepadDisconnected(m_PadSlot[i]);
+					m_PadSlot[i] = -1;
 				}
 			}
 
-			if (!connected)
+			if (!connected || m_PadSlot[i] < 0)
 				continue;
+			const int slot = m_PadSlot[i];
 
 			const XINPUT_GAMEPAD& gp = state.Gamepad;
 
@@ -530,28 +541,28 @@ namespace Nightbloom
 				bool now = (cur & b.bit) != 0;
 				bool was = (prev & b.bit) != 0;
 				if (now != was)
-					input->OnGamepadButton(i, b.offset, now);
+					input->OnGamepadButton(slot, b.offset, now);
 			}
 			m_PadPrevButtons[i] = cur;
 
 			// Triggers — analog axes (offsets 4/5) + digital buttons (offsets 6/7) past a threshold.
 			float lt = gp.bLeftTrigger / 255.0f;
 			float rt = gp.bRightTrigger / 255.0f;
-			input->OnGamepadAxis(i, 4, lt);
-			input->OnGamepadAxis(i, 5, rt);
+			input->OnGamepadAxis(slot, 4, lt);
+			input->OnGamepadAxis(slot, 5, rt);
 			bool ltDown = lt > 0.5f;
 			bool rtDown = rt > 0.5f;
-			if (ltDown != m_PadPrevLT[i]) { input->OnGamepadButton(i, 6, ltDown); m_PadPrevLT[i] = ltDown; }
-			if (rtDown != m_PadPrevRT[i]) { input->OnGamepadButton(i, 7, rtDown); m_PadPrevRT[i] = rtDown; }
+			if (ltDown != m_PadPrevLT[i]) { input->OnGamepadButton(slot, 6, ltDown); m_PadPrevLT[i] = ltDown; }
+			if (rtDown != m_PadPrevRT[i]) { input->OnGamepadButton(slot, 7, rtDown); m_PadPrevRT[i] = rtDown; }
 
 			// Sticks — radial deadzone, normalized [-1,1], up = +1.
 			float lx, ly, rx, ry;
 			ApplyStickDeadzone(gp.sThumbLX, gp.sThumbLY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE, lx, ly);
 			ApplyStickDeadzone(gp.sThumbRX, gp.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE, rx, ry);
-			input->OnGamepadAxis(i, 0, lx);
-			input->OnGamepadAxis(i, 1, ly);
-			input->OnGamepadAxis(i, 2, rx);
-			input->OnGamepadAxis(i, 3, ry);
+			input->OnGamepadAxis(slot, 0, lx);
+			input->OnGamepadAxis(slot, 1, ly);
+			input->OnGamepadAxis(slot, 2, rx);
+			input->OnGamepadAxis(slot, 3, ry);
 		}
 	}
 
@@ -560,7 +571,7 @@ namespace Nightbloom
 		RunMessagePump();
 
 		PollGamepads();
-		m_DualSense.Poll(GetInputSystem());
+		m_DualSenses.Poll(GetInputSystem());
 
 		// Relative mouse mode: measure how far the cursor drifted from the client
 		// center this frame, then snap it back. That drift IS the look delta, and it

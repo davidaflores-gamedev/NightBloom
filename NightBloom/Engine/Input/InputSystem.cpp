@@ -252,8 +252,22 @@ namespace Nightbloom
     }
 
     //--------------------------------------------------------------------------
-    // Gamepad input (placeholder for future implementation)
+    // Gamepad input
     //--------------------------------------------------------------------------
+
+    int InputSystem::AcquireGamepadSlot()
+    {
+        for (int pad = 0; pad < kMaxGamepads; ++pad)
+        {
+            if (!IsGamepadConnected(pad))
+            {
+                OnGamepadConnected(pad);
+                return pad;
+            }
+        }
+        LOG_WARN("Gamepad connected but all {} slots are in use; ignoring it", kMaxGamepads);
+        return -1;
+    }
 
     void InputSystem::OnGamepadConnected(int gamepadIndex)
     {
@@ -313,9 +327,16 @@ namespace Nightbloom
 
     void InputSystem::OnGamepadAxis(int gamepadIndex, int axis, float value)
     {
-        // Only the primary pad's axes are enumerated in AxisCode today (pad 2+ have
-        // just a single placeholder entry); feed pad 0, ignore the rest for now.
-        if (gamepadIndex != 0 || axis < 0 || axis > 5) return;
+        if (gamepadIndex < 0 || gamepadIndex >= kMaxGamepads) return;
+        if (axis < 0 || axis >= static_cast<int>(GamepadAxis::Count)) return;
+
+        // Every pad keeps its own axes (GetGamepadAxis). Before 2026-11-07 pads
+        // 2-4 were dropped here, so a second controller could press buttons but
+        // never move.
+        m_PadAxes[static_cast<size_t>(gamepadIndex)][static_cast<size_t>(axis)] = value;
+
+        // AxisCode only enumerates pad 1, so only pad 0 feeds GetAxis().
+        if (gamepadIndex != 0) return;
 
         size_t code = static_cast<size_t>(AxisCode::Gamepad_LeftStickX)
                     + static_cast<size_t>(axis);
@@ -364,6 +385,41 @@ namespace Nightbloom
         return m_Axes[index].delta;
     }
 
+    InputCode InputSystem::GamepadButton(int pad, InputCode button)
+    {
+        const unsigned int base = static_cast<unsigned int>(InputCode::Gamepad_A);
+        const unsigned int code = static_cast<unsigned int>(button);
+        if (pad < 0 || pad >= kMaxGamepads || code < base || code >= base + 0x20u)
+            return InputCode::None;
+        return static_cast<InputCode>(code + static_cast<unsigned int>(pad) * 0x20u);
+    }
+
+    float InputSystem::GetGamepadAxis(int pad, GamepadAxis axis) const
+    {
+        const int a = static_cast<int>(axis);
+        if (pad < 0 || pad >= kMaxGamepads || a < 0 || a >= static_cast<int>(GamepadAxis::Count))
+            return 0.0f;
+        return m_PadAxes[static_cast<size_t>(pad)][static_cast<size_t>(a)];
+    }
+
+    bool InputSystem::IsGamepadDown(int pad, InputCode button) const
+    {
+        const InputCode code = GamepadButton(pad, button);
+        return code != InputCode::None && IsDown(code);
+    }
+
+    bool InputSystem::IsGamepadPressed(int pad, InputCode button) const
+    {
+        const InputCode code = GamepadButton(pad, button);
+        return code != InputCode::None && IsPressed(code);
+    }
+
+    bool InputSystem::IsGamepadConnected(int pad) const
+    {
+        if (pad < 0 || pad >= kMaxGamepads) return false;
+        return IsDeviceConnected(static_cast<InputDevice>(static_cast<int>(InputDevice::Gamepad1) + pad));
+    }
+
     bool InputSystem::IsDeviceConnected(InputDevice device) const
     {
         size_t index = static_cast<size_t>(device);
@@ -396,6 +452,8 @@ namespace Nightbloom
             axis.lastValue = 0.0f;
             axis.delta = 0.0f;
         }
+        for (auto& pad : m_PadAxes)
+            pad.fill(0.0f);
 
         // Clear event queue safely
         if (!m_IsShuttingDown)
@@ -420,7 +478,22 @@ namespace Nightbloom
             m_InputsDown[static_cast<size_t>(InputCode::Mouse_X1)] = false;
             m_InputsDown[static_cast<size_t>(InputCode::Mouse_X2)] = false;
         }
-        // TODO: Add gamepad clearing when implemented
+        else if (device >= InputDevice::Gamepad1 && device <= InputDevice::Gamepad4)
+        {
+            // Release everything this pad held, so unplugging mid-press doesn't
+            // leave a button stuck down.
+            const int pad = static_cast<int>(device) - static_cast<int>(InputDevice::Gamepad1);
+            const size_t first = static_cast<size_t>(InputCode::Gamepad_A) + static_cast<size_t>(pad) * 0x20u;
+            for (size_t i = first; i < first + 0x20u && i < MAX_INPUTS; ++i)
+            {
+                m_InputsDown[i] = false;
+                m_InputsPressed[i] = false;
+            }
+            m_PadAxes[static_cast<size_t>(pad)].fill(0.0f);
+            if (pad == 0)
+                for (size_t a = 0; a < static_cast<size_t>(GamepadAxis::Count); ++a)
+                    m_Axes[static_cast<size_t>(AxisCode::Gamepad_LeftStickX) + a].value = 0.0f;
+        }
     }
 
     //--------------------------------------------------------------------------

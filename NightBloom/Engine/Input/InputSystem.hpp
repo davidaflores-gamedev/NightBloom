@@ -114,6 +114,14 @@ namespace Nightbloom
 		Count
 	};
 
+	// Per-pad analog axes, for GetGamepadAxis(pad, axis). Same order as the
+	// XInput / DualSense pollers' axis indices.
+	enum class GamepadAxis : int
+	{
+		LeftX = 0, LeftY, RightX, RightY, LeftTrigger, RightTrigger,
+		Count
+	};
+
 	// Device types for future use
 	enum class InputDevice : unsigned int
 	{
@@ -173,7 +181,13 @@ namespace Nightbloom
 		void OnMouseMove(int x, int y);
 		void OnMouseWheel(float delta);
 
-		// Gamepad (for later implementation)
+		// Gamepad. Platform backends (XInput, DualSense HID, ...) don't own fixed
+		// slots: on connect they call AcquireGamepadSlot(), which marks the lowest
+		// free slot connected and returns it (-1 when all kMaxGamepads are taken),
+		// and on disconnect they hand it back with OnGamepadDisconnected(slot). So
+		// the first pad plugged in is player 1 whatever its brand, and two backends
+		// can never feed the same slot.
+		int  AcquireGamepadSlot();
 		void OnGamepadConnected(int gamepadIndex);
 		void OnGamepadDisconnected(int gamepadIndex);
 		void OnGamepadButton(int gamepadIndex, int button, bool pressed);
@@ -204,6 +218,17 @@ namespace Nightbloom
 		int GetMouseDeltaX() const { return static_cast<int>(GetAxisDelta(AxisCode::Mouse_X)); }
 		int GetMouseDeltaY() const { return static_cast<int>(GetAxisDelta(AxisCode::Mouse_Y)); }
 		float GetMouseWheel() const { return GetAxis(AxisCode::Mouse_Wheel); }
+
+		// Per-pad queries (pad 0..3). AxisCode / InputCode only name pad 1's
+		// controls, so local multiplayer reads pads through these instead.
+		// 'button' is the pad-1 code (Gamepad_A, Gamepad_DPadUp, ...); the pad's
+		// own block is found by offset. Pad 0 is identical to the old API.
+		static constexpr int kMaxGamepads = 4;
+		static InputCode GamepadButton(int pad, InputCode button);
+		float GetGamepadAxis(int pad, GamepadAxis axis) const;
+		bool  IsGamepadDown(int pad, InputCode button) const;
+		bool  IsGamepadPressed(int pad, InputCode button) const;
+		bool  IsGamepadConnected(int pad) const;
 
 		// Device queries
 		bool IsDeviceConnected(InputDevice device) const;
@@ -251,6 +276,9 @@ namespace Nightbloom
 			float delta = 0.0f;
 		};
 		std::array<AxisState, static_cast<size_t>(AxisCode::Count)> m_Axes;
+
+		// Every pad's axes (pad 0 is ALSO mirrored into m_Axes for GetAxis).
+		std::array<std::array<float, static_cast<size_t>(GamepadAxis::Count)>, kMaxGamepads> m_PadAxes{};
 
 		// Device state
 		std::bitset<static_cast<size_t>(InputDevice::Count)> m_DevicesConnected;

@@ -18,6 +18,7 @@ extern "C" {
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <cwctype>
 
 #pragma comment(lib, "hid.lib")       // HidD_* — links without a CMake edit (matches XInput's pragma)
 #pragma comment(lib, "setupapi.lib")  // SetupDi* device enumeration
@@ -84,6 +85,58 @@ namespace Nightbloom
 		}
 	}
 
+	namespace
+	{
+		// Cheap pre-filter on the device path so a rescan only opens Sony pads, not
+		// every HID device on the machine. USB paths look like
+		// "\?\hid#vid_054c&pid_0ce6&...", Bluetooth ones like "..._vid&0002054c_pid&0ce6...".
+		// HidD_GetAttributes after opening is the real check.
+		bool PathLooksLikeDualSense(std::wstring path)
+		{
+			for (auto& c : path) c = static_cast<wchar_t>(towlower(c));
+			return path.find(L"054c") != std::wstring::npos &&
+				(path.find(L"0ce6") != std::wstring::npos || path.find(L"0df2") != std::wstring::npos);
+		}
+
+		std::vector<std::wstring> EnumerateCandidatePaths()
+		{
+			std::vector<std::wstring> paths;
+
+			GUID hidGuid;
+			HidD_GetHidGuid(&hidGuid);
+			HDEVINFO devInfo = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr,
+				DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+			if (devInfo == INVALID_HANDLE_VALUE)
+				return paths;
+
+			SP_DEVICE_INTERFACE_DATA iface{};
+			iface.cbSize = sizeof(iface);
+			for (DWORD idx = 0; SetupDiEnumDeviceInterfaces(devInfo, nullptr, &hidGuid, idx, &iface); ++idx)
+			{
+				DWORD required = 0;
+				SetupDiGetDeviceInterfaceDetailW(devInfo, &iface, nullptr, 0, &required, nullptr);
+				if (required == 0)
+					continue;
+
+				std::vector<unsigned char> detailBuf(required);
+				auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detailBuf.data());
+				detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+				if (!SetupDiGetDeviceInterfaceDetailW(devInfo, &iface, detail, required, nullptr, nullptr))
+					continue;
+
+				if (PathLooksLikeDualSense(detail->DevicePath))
+					paths.emplace_back(detail->DevicePath);
+			}
+
+			SetupDiDestroyDeviceInfoList(devInfo);
+			return paths;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// DualSenseController
+	//--------------------------------------------------------------------------
+
 	DualSenseController::~DualSenseController()
 	{
 		Shutdown();
@@ -95,70 +148,55 @@ namespace Nightbloom
 		Close(nullptr);
 	}
 
-	bool DualSenseController::TryOpen()
+	bool DualSenseController::Open(const std::wstring& devicePath, InputSystem* input)
 	{
-		GUID hidGuid;
-		HidD_GetHidGuid(&hidGuid);
-
-		HDEVINFO devInfo = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr,
-			DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
-		if (devInfo == INVALID_HANDLE_VALUE)
+		if (!input || m_Handle)
 			return false;
 
-		SP_DEVICE_INTERFACE_DATA iface{};
-		iface.cbSize = sizeof(iface);
-
-		bool opened = false;
-		for (DWORD idx = 0; SetupDiEnumDeviceInterfaces(devInfo, nullptr, &hidGuid, idx, &iface); ++idx)
+		// Open read+write (future rumble/lightbar/trigger output reports), overlapped
+		// for non-blocking reads. Fall back to read-only if write access is denied.
+		HANDLE h = CreateFileW(devicePath.c_str(), GENERIC_READ | GENERIC_WRITE,
+			FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+			FILE_FLAG_OVERLAPPED, nullptr);
+		if (h == INVALID_HANDLE_VALUE)
 		{
-			DWORD required = 0;
-			SetupDiGetDeviceInterfaceDetailW(devInfo, &iface, nullptr, 0, &required, nullptr);
-			if (required == 0)
-				continue;
-
-			std::vector<unsigned char> detailBuf(required);
-			auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detailBuf.data());
-			detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
-			if (!SetupDiGetDeviceInterfaceDetailW(devInfo, &iface, detail, required, nullptr, nullptr))
-				continue;
-
-			// Open read+write (future rumble/lightbar/trigger output reports), overlapped
-			// for non-blocking reads. Fall back to read-only if write access is denied.
-			HANDLE h = CreateFileW(detail->DevicePath, GENERIC_READ | GENERIC_WRITE,
+			h = CreateFileW(devicePath.c_str(), GENERIC_READ,
 				FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
 				FILE_FLAG_OVERLAPPED, nullptr);
 			if (h == INVALID_HANDLE_VALUE)
-			{
-				h = CreateFileW(detail->DevicePath, GENERIC_READ,
-					FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
-					FILE_FLAG_OVERLAPPED, nullptr);
-				if (h == INVALID_HANDLE_VALUE)
-					continue;
-			}
-
-			HIDD_ATTRIBUTES attrs{};
-			attrs.Size = sizeof(attrs);
-			if (HidD_GetAttributes(h, &attrs) &&
-				attrs.VendorID == kSonyVID &&
-				(attrs.ProductID == kDualSensePID || attrs.ProductID == kDualSenseEdgePID))
-			{
-				OVERLAPPED* ov = new OVERLAPPED{};
-				ov->hEvent = CreateEventW(nullptr, TRUE /*manual reset*/, FALSE, nullptr);
-
-				m_Handle = h;
-				m_Overlapped = ov;
-				m_ReadPending = false;
-				opened = true;
-				LOG_INFO("DualSense connected (HID, USB) VID=0x{:04X} PID=0x{:04X}",
-					attrs.VendorID, attrs.ProductID);
-				break;
-			}
-
-			CloseHandle(h);
+				return false;
 		}
 
-		SetupDiDestroyDeviceInfoList(devInfo);
-		return opened;
+		HIDD_ATTRIBUTES attrs{};
+		attrs.Size = sizeof(attrs);
+		const bool isDualSense = HidD_GetAttributes(h, &attrs) &&
+			attrs.VendorID == kSonyVID &&
+			(attrs.ProductID == kDualSensePID || attrs.ProductID == kDualSenseEdgePID);
+		if (!isDualSense)
+		{
+			CloseHandle(h);
+			return false;
+		}
+
+		const int slot = input->AcquireGamepadSlot();
+		if (slot < 0)
+		{
+			CloseHandle(h);
+			return false;
+		}
+
+		OVERLAPPED* ov = new OVERLAPPED{};
+		ov->hEvent = CreateEventW(nullptr, TRUE /*manual reset*/, FALSE, nullptr);
+
+		m_Handle = h;
+		m_Overlapped = ov;
+		m_Path = devicePath;
+		m_Slot = slot;
+		m_ReadPending = false;
+		m_PrevButtons = 0;
+		LOG_INFO("DualSense connected (HID, USB) VID=0x{:04X} PID=0x{:04X} -> gamepad slot {}",
+			attrs.VendorID, attrs.ProductID, slot);
+		return true;
 	}
 
 	void DualSenseController::Close(InputSystem* input)
@@ -182,40 +220,21 @@ namespace Nightbloom
 		m_Overlapped = nullptr;
 		m_ReadPending = false;
 
-		// Release everything we were holding so nothing sticks "down" after unplug.
-		if (m_Connected && input)
+		// Hand the slot back; OnGamepadDisconnected releases held buttons and zeroes
+		// the axes, so nothing sticks "down" after unplug.
+		if (m_Slot >= 0 && input)
 		{
-			for (int off = 0; off <= OFF_MAX; ++off)
-			{
-				if (m_PrevButtons & (1u << off))
-					input->OnGamepadButton(m_PadIndex, off, false);
-			}
-			for (int a = 0; a < 6; ++a)
-				input->OnGamepadAxis(m_PadIndex, a, 0.0f);
-			input->OnGamepadDisconnected(m_PadIndex);
-			LOG_INFO("DualSense disconnected");
+			input->OnGamepadDisconnected(m_Slot);
+			LOG_INFO("DualSense disconnected (gamepad slot {})", m_Slot);
 		}
-		m_Connected = false;
+		m_Slot = -1;
 		m_PrevButtons = 0;
 	}
 
-	void DualSenseController::Poll(InputSystem* input)
+	bool DualSenseController::Poll(InputSystem* input)
 	{
-		if (!input)
-			return;
-
-		if (!m_Connected)
-		{
-			// Scan for the device only occasionally (enumeration is not free), like the
-			// XInput empty-slot rescan.
-			if ((m_RescanCounter++ % 120u) != 0u)
-				return;
-			if (!TryOpen())
-				return;
-			m_Connected = true;
-			m_PrevButtons = 0;
-			input->OnGamepadConnected(m_PadIndex);
-		}
+		if (!input || !m_Handle)
+			return false;
 
 		HANDLE h = static_cast<HANDLE>(m_Handle);
 		OVERLAPPED* ov = static_cast<OVERLAPPED*>(m_Overlapped);
@@ -240,7 +259,7 @@ namespace Nightbloom
 					break;  // will finish on a later frame
 				}
 				Close(input);  // device likely removed
-				return;
+				return false;
 			}
 			else
 			{
@@ -254,9 +273,70 @@ namespace Nightbloom
 				if (GetLastError() == ERROR_IO_INCOMPLETE)
 					break;  // still in flight; check again next frame
 				Close(input);
-				return;
+				return false;
 			}
 		}
+		return true;
+	}
+
+	//--------------------------------------------------------------------------
+	// DualSensePool
+	//--------------------------------------------------------------------------
+
+	void DualSensePool::NotifyDevicesChanged()
+	{
+		// Scan now, then twice more about half a second and two seconds later.
+		m_ScansPending = 3;
+		m_FramesUntilScan = 0;
+	}
+
+	void DualSensePool::Poll(InputSystem* input)
+	{
+		if (!input)
+			return;
+
+		// Poll first, so an unplugged pad frees its slot before a rescan looks for new ones.
+		for (size_t i = 0; i < m_Pads.size();)
+		{
+			if (m_Pads[i]->Poll(input))
+				++i;
+			else
+				m_Pads.erase(m_Pads.begin() + static_cast<std::ptrdiff_t>(i));
+		}
+
+		if (m_ScansPending > 0)
+		{
+			if (m_FramesUntilScan > 0)
+			{
+				--m_FramesUntilScan;
+			}
+			else
+			{
+				Scan(input);
+				--m_ScansPending;
+				m_FramesUntilScan = (m_ScansPending == 2) ? 30 : 90;
+			}
+		}
+	}
+
+	void DualSensePool::Scan(InputSystem* input)
+	{
+		for (const std::wstring& path : EnumerateCandidatePaths())
+		{
+			const bool owned = std::any_of(m_Pads.begin(), m_Pads.end(),
+				[&](const auto& pad) { return pad->DevicePath() == path; });
+			if (owned)
+				continue;
+
+			auto pad = std::make_unique<DualSenseController>();
+			if (pad->Open(path, input))
+				m_Pads.push_back(std::move(pad));
+		}
+	}
+
+	void DualSensePool::Shutdown()
+	{
+		m_Pads.clear();   // each controller's destructor closes its handle silently
 	}
 
 	void DualSenseController::ProcessReport(const unsigned char* r, unsigned long len, InputSystem* input)
@@ -316,7 +396,7 @@ namespace Nightbloom
 			for (int off = 0; off <= OFF_MAX; ++off)
 			{
 				if (changed & (1u << off))
-					input->OnGamepadButton(m_PadIndex, off, (cur & (1u << off)) != 0);
+					input->OnGamepadButton(m_Slot, off, (cur & (1u << off)) != 0);
 			}
 			m_PrevButtons = cur;
 		}
@@ -324,11 +404,11 @@ namespace Nightbloom
 		float lx, ly, rx, ry;
 		NormalizeStick(r[1], r[2], lx, ly);
 		NormalizeStick(r[3], r[4], rx, ry);
-		input->OnGamepadAxis(m_PadIndex, 0, lx);
-		input->OnGamepadAxis(m_PadIndex, 1, ly);
-		input->OnGamepadAxis(m_PadIndex, 2, rx);
-		input->OnGamepadAxis(m_PadIndex, 3, ry);
-		input->OnGamepadAxis(m_PadIndex, 4, l2);
-		input->OnGamepadAxis(m_PadIndex, 5, r2);
+		input->OnGamepadAxis(m_Slot, 0, lx);
+		input->OnGamepadAxis(m_Slot, 1, ly);
+		input->OnGamepadAxis(m_Slot, 2, rx);
+		input->OnGamepadAxis(m_Slot, 3, ry);
+		input->OnGamepadAxis(m_Slot, 4, l2);
+		input->OnGamepadAxis(m_Slot, 5, r2);
 	}
 }

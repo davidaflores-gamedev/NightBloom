@@ -98,10 +98,13 @@ namespace Nightbloom
 		bool           m_PadPrevLT[4] = { false, false, false, false };
 		bool           m_PadPrevRT[4] = { false, false, false, false };
 		bool           m_PadConnected[4] = { false, false, false, false };
+		int            m_PadSlot[4] = { -1, -1, -1, -1 };   // XInput user index -> InputSystem slot (-1 = none)
 		unsigned int   m_PadRescanCounter = 0;
 
-		// PlayStation DualSense over raw HID (XInput can't see it). Polled alongside the
-		// XInput pads in PollEvents; feeds the same InputSystem::OnGamepad* path.
-		DualSenseController m_DualSense;
+		// PlayStation DualSense pads over raw HID (XInput can't see them). Polled alongside
+		// the XInput pads in PollEvents; feeds the same InputSystem::OnGamepad* path.
+		// It enumerates HID devices only at startup and after WM_DEVICECHANGE, never on
+		// a timer, so a connected game doesn't hitch every couple of seconds.
+		DualSensePool m_DualSenses;
 	};
 }
