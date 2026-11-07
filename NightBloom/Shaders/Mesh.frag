@@ -15,7 +15,7 @@ layout(set = 1, binding = 0) uniform sampler2D texSampler;
 // ---- Push Constants ----
 layout(push_constant) uniform PushConstants {
     mat4 model;
-    vec4 customData;   // w > 0.01 => material color (glass); 2..3 = sky emissive; >= 3 = world emissive
+    vec4 customData;   // (0.01,1] = glass tint; (1,2) = opaque tint; 2..3 = sky emissive; >= 3 = world emissive
 } push;
 
 // ---- Fragment Inputs ----
@@ -134,8 +134,15 @@ void main()
     }
 
 
-    bool isMaterialDriven = (push.customData.w > 0.01);
-    vec4 albedo = isMaterialDriven ? push.customData : texColor;
+    // ---- Opaque tint (1.0 < customData.w < 2.0) -----------------------------
+    // Texture * customData.rgb, lit like any opaque surface. The glass branch
+    // below (w in (0.01, 1]) blends toward white + Fresnel, which washes solid
+    // colours out to pastel; use w = 1.5 for "this box is red".
+    bool isOpaqueTint = (push.customData.w > 1.01 && push.customData.w < 2.0);
+    bool isMaterialDriven = (push.customData.w > 0.01) && !isOpaqueTint;
+    vec4 albedo = isMaterialDriven ? push.customData
+                : isOpaqueTint     ? vec4(texColor.rgb * push.customData.rgb, 1.0)
+                :                    texColor;
 
     vec3 N = normalize(fragNormal);
     vec3 V = normalize(frame.cameraPos.xyz - fragWorldPos);

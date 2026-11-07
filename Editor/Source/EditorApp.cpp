@@ -17,6 +17,7 @@
 #include "Engine/Renderer/Components/ResourceManager.hpp"
 #include "Engine/Core/Scene.hpp"
 #include "Engine/Core/SceneSerializer.hpp"
+#include "Engine/Core/SceneRenderSettings.hpp"
 #include "Engine/Core/Project.hpp"
 #include "EditorFileUtils.hpp"
 #include "EditorContext.hpp"
@@ -65,7 +66,9 @@ namespace Nightbloom {
     class EditorApplication : public Application
     {
     public:
-        EditorApplication() : Application("Nightbloom Editor")
+        // 4x scene MSAA, same as Stolen Orbit: the engine default (2x) left
+        // visible stair-steps on high-contrast edges (white walls against sky).
+        EditorApplication() : Application("Nightbloom Editor", 4)
         {
             LOG_INFO("=== Nightbloom Editor Starting ===");
             SetupDefaultProject();
@@ -289,6 +292,12 @@ namespace Nightbloom {
             // free buffers this frame's draw list still references.
             ProcessPendingSceneOps();
 
+            // Honour the scene's environment flags (terrain/water/clouds/...).
+            // Here rather than in OnRender: the renderer's BeginFrame (which runs
+            // between OnUpdate and OnRender) updates registered systems' per-frame
+            // params, so a system must be (un)registered before it, not after.
+            ApplySceneEnvironment();
+
             // FPS tracking
             m_FrameTime += deltaTime;
             m_FrameCount++;
@@ -389,12 +398,17 @@ namespace Nightbloom {
 
             RenderEditorUI();
 
-            m_TerrainPanel.SubmitTerrainDraw(drawList, m_Camera->GetPosition());
-            m_GrassPanel.SubmitGrassDraw(drawList, frustum, m_TerrainPanel.GetTerrainSystem(), m_Camera->GetPosition());
-            if (!m_DemoActive || m_Demo.fireflies)
+            const SceneEnvironment env = CurrentEnvironment();
+            if (env.terrain)
+                m_TerrainPanel.SubmitTerrainDraw(drawList, m_Camera->GetPosition());
+            if (env.terrain && env.grass)
+                m_GrassPanel.SubmitGrassDraw(drawList, frustum, m_TerrainPanel.GetTerrainSystem(), m_Camera->GetPosition());
+            if (env.fireflies && (!m_DemoActive || m_Demo.fireflies))
                 m_FireflyPanel.SubmitFireflyDraw(drawList);
-            m_CloudPanel.SubmitCloudDraw(drawList);
-            m_WaterPanel.SubmitWaterDraw(drawList);
+            if (env.clouds)
+                m_CloudPanel.SubmitCloudDraw(drawList);
+            if (env.water)
+                m_WaterPanel.SubmitWaterDraw(drawList);
             drawList.SortByPipeline();
             GetRenderer()->SubmitDrawList(drawList);
         }
@@ -612,6 +626,25 @@ namespace Nightbloom {
             {
                 if (ImGui::MenuItem("Play", "F5")) TogglePlayMode();
                 if (ImGui::MenuItem("Stop", "F7", false, m_Viewport.isPlayMode)) StopPlayMode();
+                ImGui::EndMenu();
+            }
+
+            if (ImGui::BeginMenu("Scene", m_EditorScene != nullptr))
+            {
+                // Per-scene: saved in the scene file (Ctrl+S). Takes effect next frame.
+                if (ImGui::BeginMenu("Environment"))
+                {
+                    SceneEnvironment& env = m_EditorScene->GetEnvironment();
+                    ImGui::MenuItem("Terrain", nullptr, &env.terrain);
+                    ImGui::MenuItem("Grass", nullptr, &env.grass, env.terrain);
+                    ImGui::MenuItem("Water", nullptr, &env.water);
+                    ImGui::MenuItem("Clouds", nullptr, &env.clouds);
+                    ImGui::MenuItem("Fireflies", nullptr, &env.fireflies);
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("All on"))  env = SceneEnvironment{};
+                    if (ImGui::MenuItem("All off (bare arena)")) env = { false, false, false, false, false };
+                    ImGui::EndMenu();
+                }
                 ImGui::EndMenu();
             }
 
@@ -1108,6 +1141,24 @@ namespace Nightbloom {
         {
             LoadEditorSettings();
 
+            // Editor.exe --project <path.nbproj> opens that project directly
+            // (e.g. a shortcut straight into Projects/FighterLab).
+#ifdef _WIN32
+            for (int i = 1; i + 1 < __argc; ++i)
+            {
+                if (std::strcmp(__argv[i], "--project") != 0) continue;
+                // Relative paths resolve against the working directory first,
+                // then the engine root, so it works from the repo root or the
+                // exe's folder.
+                std::filesystem::path requested = __argv[i + 1];
+                if (requested.is_relative() && !std::filesystem::exists(requested) && !m_EngineRoot.empty())
+                    requested = m_EngineRoot / requested;
+                if (std::filesystem::exists(requested) && OpenProject(requested.string()))
+                    return;
+                LOG_WARN("BootProject: --project '{}' could not be opened; falling back", requested.string());
+            }
+#endif
+
             for (const std::string& recent : m_RecentProjects)
             {
                 if (!recent.empty() && std::filesystem::exists(recent))
@@ -1148,6 +1199,7 @@ namespace Nightbloom {
             cam.pitch = m_Camera->GetPitch();
             cam.fov = m_Camera->GetFov();
             cam.nearPlane = m_Camera->GetNearPlane();
+            CaptureScenePostProcess();
             SceneSerializer::Save(*m_EditorScene, cam, p.StartScenePath().string(),
                 p.Settings().name, SerializeEditorState());
 
@@ -1288,6 +1340,7 @@ namespace Nightbloom {
             cam.fov = m_Camera->GetFov();
             cam.nearPlane = m_Camera->GetNearPlane();
 
+            CaptureScenePostProcess();
             SceneSerializer::Save(*m_EditorScene, cam, path, m_CurrentProjectName,
                 SerializeEditorState());
         }
@@ -1341,6 +1394,7 @@ namespace Nightbloom {
                 m_ScenePath = path;
                 ApplyCameraState(cam);
                 ApplyEditorState(editorState);
+                ApplyScenePostProcess();
 
                 // Re-sync shadow config from the (new) primary light, as OnStartup does.
                 if (m_EditorScene->GetLightCount() > 0)
@@ -1359,6 +1413,8 @@ namespace Nightbloom {
             m_EditorScene->SetAmbient(glm::vec3(0.03f, 0.03f, 0.05f), 1.0f);
 
             m_DayNight = DayNightPanel{};   // reset cycle to defaults (no GPU resources)
+            m_EditorScene->SetEnvironment(SceneEnvironment{});
+            ApplyScenePostProcess();        // back to the default look
             m_ScenePath.clear();
 
             // Reset camera to the editor's default framing.
@@ -1378,6 +1434,43 @@ namespace Nightbloom {
         }
 
         // --- DayNight panel state <-> the scene file's opaque "editor" blob ---
+        // --- Scene post-process look <-> the live renderer settings ---
+        // The renderer's settings are what the Debug panel edits; the scene file
+        // stores them so each scene keeps its own look (the arena wants crisp, no
+        // edge blur, little bloom; the Sample night scene keeps the old defaults).
+        void ApplyScenePostProcess()
+        {
+            if (m_EditorScene && GetRenderer())
+                Nightbloom::ApplyScenePostProcess(*GetRenderer(), m_EditorScene->GetEnvironment().post);
+        }
+
+        void CaptureScenePostProcess()
+        {
+            if (m_EditorScene && GetRenderer())
+                Nightbloom::CaptureScenePostProcess(*GetRenderer(), m_EditorScene->GetEnvironment().post);
+        }
+
+        // The open scene's environment request; all-on when no scene is loaded.
+        SceneEnvironment CurrentEnvironment() const
+        {
+            return m_EditorScene ? m_EditorScene->GetEnvironment() : SceneEnvironment{};
+        }
+
+        // Register only the environment systems the scene wants with the
+        // renderer. Unregistering (not just skipping the draw) also skips their
+        // compute and reflection passes: a flat arena shouldn't pay for a cloud
+        // raymarch or a planar-reflection re-render. The systems stay alive in
+        // their panels, so turning one back on is instant and keeps its settings.
+        void ApplySceneEnvironment()
+        {
+            Renderer* r = GetRenderer();
+            if (!r) return;
+            const SceneEnvironment env = CurrentEnvironment();
+            r->SetWaterSystem(env.water && m_WaterPanel.IsInitialized() ? &m_WaterPanel.GetSystem() : nullptr);
+            r->SetCloudSystem(env.clouds && m_CloudPanel.IsInitialized() ? &m_CloudPanel.GetSystem() : nullptr);
+            r->SetFireflySystem(env.fireflies && m_FireflyPanel.IsInitialized() ? &m_FireflyPanel.GetSystem() : nullptr);
+        }
+
         std::string SerializeEditorState() const
         {
             auto v3 = [](const glm::vec3& v) { return nlohmann::json::array({ v.x, v.y, v.z }); };

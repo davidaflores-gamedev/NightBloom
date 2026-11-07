@@ -210,6 +210,47 @@ namespace Nightbloom
 	};
 
 	//--------------------------------------------------------------------------
+	// Which of the big environment systems a scene wants. The systems themselves
+	// live in the app (the editor's panels, a game's own setup), not in Scene,
+	// so this is a request each app honours. Saved in the scene file's
+	// "environment" block.
+	//
+	// Every flag defaults to ON, and a file with no "environment" block loads as
+	// all-on, so scenes made before this existed (the Sample night scene) look
+	// exactly as they always did. An arena / physics test scene turns them off.
+	//--------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
+	// ScenePostProcess - the post-process look a scene was authored with
+	//
+	// Mirrors Renderer::PostProcessSettings (Core doesn't include Renderer.hpp).
+	// Defaults MUST match the renderer's, so a scene saved before this existed
+	// (no "postProcess" block) loads with exactly the look it always had.
+	//--------------------------------------------------------------------------
+	struct ScenePostProcess
+	{
+		bool  edgeBlur         = true;
+		bool  tonemap          = true;
+		float exposure         = 1.0f;
+		float vignetteStrength = 0.25f;
+		float bloomIntensity   = 0.8f;
+		float bloomThreshold   = 0.8f;
+
+		bool operator==(const ScenePostProcess&) const = default;
+	};
+
+	struct SceneEnvironment
+	{
+		bool terrain   = true;
+		bool grass     = true;   // also needs terrain (blades are placed on it)
+		bool water     = true;
+		bool clouds    = true;
+		bool fireflies = true;
+		ScenePostProcess post;   // saved as its own "postProcess" block
+
+		bool operator==(const SceneEnvironment&) const = default;
+	};
+
+	//--------------------------------------------------------------------------
 	// Scene - Container for SceneObjects with selection tracking
 	//--------------------------------------------------------------------------
 	class Scene
@@ -319,6 +360,10 @@ namespace Nightbloom
 			m_AmbientColor = color;
 			m_AmbientIntensity = intensity;
 		}
+
+		const SceneEnvironment& GetEnvironment() const { return m_Environment; }
+		SceneEnvironment& GetEnvironment() { return m_Environment; }
+		void SetEnvironment(const SceneEnvironment& env) { m_Environment = env; }
 
 		// Iteration
 		std::vector<SceneObject>& GetObjects() { return m_Objects; }
@@ -703,6 +748,7 @@ namespace Nightbloom
 		int m_SelectedLightIndex = -1;
 		glm::vec3 m_AmbientColor = glm::vec3(0.03f, 0.03f, 0.05f);
 		float m_AmbientIntensity = 1.0f;
+		SceneEnvironment m_Environment;
 
 		// Stats from the most recent BuildDrawList call (for debug display)
 		mutable size_t m_LastObjectCount = 0;

@@ -23,6 +23,7 @@ namespace Nightbloom
         }
 
         CloudSystem& GetSystem() { return m_Clouds; }
+        bool IsInitialized() const { return m_Initialized; }
 
     private:
         CloudSystem m_Clouds;

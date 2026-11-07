@@ -181,6 +181,27 @@ namespace Nightbloom
 		}
 		j["objects"] = std::move(objects);
 
+		// Which environment systems this scene wants (see SceneEnvironment).
+		{
+			const SceneEnvironment& env = scene.GetEnvironment();
+			j["environment"] = {
+				{ "terrain", env.terrain },
+				{ "grass", env.grass },
+				{ "water", env.water },
+				{ "clouds", env.clouds },
+				{ "fireflies", env.fireflies },
+			};
+			const ScenePostProcess& pp = env.post;
+			j["postProcess"] = {
+				{ "edgeBlur", pp.edgeBlur },
+				{ "tonemap", pp.tonemap },
+				{ "exposure", pp.exposure },
+				{ "vignette", pp.vignetteStrength },
+				{ "bloomIntensity", pp.bloomIntensity },
+				{ "bloomThreshold", pp.bloomThreshold },
+			};
+		}
+
 		// Opaque editor state (panel settings). Stored as a real nested object so the
 		// file stays human-readable, not an escaped string.
 		if (!editorStateJson.empty())
@@ -267,6 +288,33 @@ namespace Nightbloom
 			scene.SetAmbient(
 				JsonToVec3(a.value("color", json::array()), scene.GetAmbientColor()),
 				a.value("intensity", scene.GetAmbientIntensity()));
+		}
+
+		// --- Environment --- (missing block or key = on: pre-existing scenes are unchanged)
+		{
+			SceneEnvironment env;
+			if (j.contains("environment") && j["environment"].is_object())
+			{
+				const json& e = j["environment"];
+				env.terrain = e.value("terrain", env.terrain);
+				env.grass = e.value("grass", env.grass);
+				env.water = e.value("water", env.water);
+				env.clouds = e.value("clouds", env.clouds);
+				env.fireflies = e.value("fireflies", env.fireflies);
+			}
+			// Missing block or key = renderer defaults (the Sample look).
+			if (j.contains("postProcess") && j["postProcess"].is_object())
+			{
+				const json& pj = j["postProcess"];
+				ScenePostProcess& pp = env.post;
+				pp.edgeBlur = pj.value("edgeBlur", pp.edgeBlur);
+				pp.tonemap = pj.value("tonemap", pp.tonemap);
+				pp.exposure = pj.value("exposure", pp.exposure);
+				pp.vignetteStrength = pj.value("vignette", pp.vignetteStrength);
+				pp.bloomIntensity = pj.value("bloomIntensity", pp.bloomIntensity);
+				pp.bloomThreshold = pj.value("bloomThreshold", pp.bloomThreshold);
+			}
+			scene.SetEnvironment(env);
 		}
 
 		// --- Lights ---

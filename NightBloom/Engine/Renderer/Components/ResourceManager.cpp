@@ -785,12 +785,15 @@ namespace Nightbloom
 			}
 		}
 
-		// Create UV debug checkerboard (64x64, 8x8 checks)
+		// Create UV debug checkerboard (512x512, 8x8 checks of 64 px)
+		// Same pattern as the old 64x64 one, but stretched over a big floor the
+		// old 8 px squares got bilinear-smeared into fuzzy edges up close.
+		// Mips (below) still handle the distance.
 		{
-			ImageData checkerData = TextureLoader::CreateCheckerboard(64, 64, 8);
+			ImageData checkerData = TextureLoader::CreateCheckerboard(512, 512, 64);
 			TextureDesc desc;
-			desc.width = 64;
-			desc.height = 64;
+			desc.width = 512;
+			desc.height = 512;
 			desc.format = TextureFormat::RGBA8;
 			desc.usage = TextureUsage::Sampled | TextureUsage::Transfer;
 			// Mips matter here: a high-contrast pattern with only mip 0 aliases into

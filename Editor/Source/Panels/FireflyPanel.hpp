@@ -28,6 +28,7 @@ namespace Nightbloom
         }
 
         FireflySystem& GetSystem() { return m_Firefly; }
+        bool IsInitialized() const { return m_Initialized; }
 
     private:
         FireflySystem m_Firefly;

@@ -28,6 +28,7 @@ namespace Nightbloom
         }
 
         WaterSystem& GetSystem() { return m_Water; }
+        bool IsInitialized() const { return m_Initialized; }
 
     private:
         WaterSystem m_Water;
