@@ -6,6 +6,11 @@
 // kMaxVoices; past that it steals the oldest one-shot. Loops get their own
 // voice for as long as they run. Each bus is a stereo submix voice feeding the
 // mastering voice, so bus volume is one SetVolume.
+//
+// Effects: every source voice is created with a filter (XAUDIO2_VOICE_USEFILTER;
+// fully open = no effect) and, on the Sfx bus, a second send to the reverb
+// submix (built-in XAudio2 reverb, 100% wet) which itself feeds the Sfx bus —
+// so the reverb runs at processing stage 0 and the buses at stage 1.
 //------------------------------------------------------------------------------
 #include "Engine/Audio/AudioSystem.hpp"
 #include "Engine/Core/Logger/Logger.hpp"
@@ -24,6 +29,7 @@
 #endif
 #include <windows.h>
 #include <xaudio2.h>
+#include <xaudio2fx.h>
 #pragma comment(lib, "xaudio2.lib")   // XAudio2 2.9 (Win10+); links without a CMake edit
 #pragma comment(lib, "ole32.lib")
 #endif
@@ -53,6 +59,7 @@ namespace Nightbloom
 		IXAudio2*               xa = nullptr;
 		IXAudio2MasteringVoice* master = nullptr;
 		IXAudio2SubmixVoice*    buses[static_cast<int>(AudioBus::Count)] = {};
+		IXAudio2SubmixVoice*    reverb = nullptr;   // shared, wet only; feeds the Sfx bus
 		float                   busVolume[static_cast<int>(AudioBus::Count)] = { 1.0f, 1.0f, 1.0f };
 		std::vector<Voice>      voices;
 		bool                    comInitialized = false;
@@ -75,14 +82,16 @@ namespace Nightbloom
 			wf.wBitsPerSample = 16;
 			wf.nBlockAlign = static_cast<WORD>(clip.channels * 2);
 			wf.nAvgBytesPerSec = clip.sampleRate * wf.nBlockAlign;
-			XAUDIO2_SEND_DESCRIPTOR send = { 0, buses[static_cast<int>(bus)] };
-			XAUDIO2_VOICE_SENDS sends = { 1, &send };
+			XAUDIO2_SEND_DESCRIPTOR send[2] = { { 0, buses[static_cast<int>(bus)] }, { 0, reverb } };
+			const bool wet = reverb && bus == AudioBus::Sfx;
+			XAUDIO2_VOICE_SENDS sends = { wet ? 2u : 1u, send };
 			IXAudio2SourceVoice* v = nullptr;
-			if (FAILED(xa->CreateSourceVoice(&v, &wf, 0, kMaxPitch, nullptr, &sends))) return nullptr;
+			if (FAILED(xa->CreateSourceVoice(&v, &wf, XAUDIO2_VOICE_USEFILTER, kMaxPitch, nullptr, &sends))) return nullptr;
 			return v;
 		}
 
-		void Configure(IXAudio2SourceVoice* v, const AudioClip& clip, AudioBus bus, float volume, float pitch, float pan)
+		void Configure(IXAudio2SourceVoice* v, const AudioClip& clip, AudioBus bus, float volume, float pitch, float pan,
+			const PlayFx& fx = PlayFx{})
 		{
 			v->SetVolume(std::max(0.0f, volume));
 			v->SetFrequencyRatio(std::clamp(pitch, 0.05f, kMaxPitch));
@@ -93,13 +102,53 @@ namespace Nightbloom
 				const float a = (std::clamp(pan, -1.0f, 1.0f) + 1.0f) * 0.25f * 3.14159265f;
 				m[0] = std::cos(a);
 				m[1] = std::sin(a);
-				v->SetOutputMatrix(buses[static_cast<int>(bus)], 1, 2, m);
 			}
 			else
 			{
 				m[0] = 1.0f; m[1] = 0.0f; m[2] = 0.0f; m[3] = 1.0f;
-				v->SetOutputMatrix(buses[static_cast<int>(bus)], 2, 2, m);
 			}
+			const UINT32 in = static_cast<UINT32>(clip.channels);
+			v->SetOutputMatrix(buses[static_cast<int>(bus)], in, 2, m);
+			if (reverb && bus == AudioBus::Sfx)
+			{
+				const float k = std::clamp(fx.reverb, 0.0f, 1.0f);
+				float r[4] = { m[0] * k, m[1] * k, m[2] * k, m[3] * k };
+				v->SetOutputMatrix(reverb, in, 2, r);
+			}
+			// Low-pass: XAudio2's state-variable filter takes 2*sin(pi*f/rate);
+			// 1.0 is fully open.
+			XAUDIO2_FILTER_PARAMETERS fp = { LowPassFilter, 1.0f, 1.4142f };   // 1/Q = sqrt(2): no resonance
+			if (fx.lowpassHz > 0.0f)
+				fp.Frequency = std::min(1.0f, 2.0f * std::sin(3.14159265f * std::min(fx.lowpassHz, clip.sampleRate / 6.0f)
+					/ static_cast<float>(clip.sampleRate)));
+			v->SetFilterParameters(&fp);
+		}
+
+		// The shared reverb: a big, dark, slow space. Best effort — no reverb
+		// just means dry sound.
+		void CreateReverb()
+		{
+			XAUDIO2_SEND_DESCRIPTOR toSfx = { 0, buses[static_cast<int>(AudioBus::Sfx)] };
+			XAUDIO2_VOICE_SENDS sends = { 1, &toSfx };
+			if (FAILED(xa->CreateSubmixVoice(&reverb, 2, 44100, 0, 0, &sends))) { reverb = nullptr; return; }
+			IUnknown* fx = nullptr;
+			if (FAILED(XAudio2CreateReverb(&fx)))
+			{
+				reverb->DestroyVoice(); reverb = nullptr; return;
+			}
+			XAUDIO2_EFFECT_DESCRIPTOR desc = { fx, TRUE, 2 };
+			XAUDIO2_EFFECT_CHAIN chain = { 1, &desc };
+			const HRESULT hr = reverb->SetEffectChain(&chain);
+			fx->Release();
+			if (FAILED(hr)) { reverb->DestroyVoice(); reverb = nullptr; return; }
+			XAUDIO2FX_REVERB_I3DL2_PARAMETERS i3 = XAUDIO2FX_I3DL2_PRESET_LARGEHALL;
+			XAUDIO2FX_REVERB_PARAMETERS p;
+			ReverbConvertI3DL2ToNative(&i3, &p);
+			p.WetDryMix = 100.0f;      // a send: wet only
+			p.DecayTime = 3.2f;        // long, open tail
+			p.HighEQGain = 3;          // darker than the hall (0..8, 8 = flat)
+			p.HighEQCutoff = 4;
+			reverb->SetEffectParameters(0, &p, sizeof(p));
 		}
 
 		static void Submit(IXAudio2SourceVoice* v, const AudioClip& clip, bool loop)
@@ -136,13 +185,14 @@ namespace Nightbloom
 			return false;
 		}
 		for (int b = 0; b < static_cast<int>(AudioBus::Count); ++b)
-			if (FAILED(I.xa->CreateSubmixVoice(&I.buses[b], 2, 44100)))
+			if (FAILED(I.xa->CreateSubmixVoice(&I.buses[b], 2, 44100, 0, 1)))   // stage 1: after the reverb
 			{
 				LOG_WARN("Audio: could not create mix bus - running silent");
 				Shutdown();
 				return false;
 			}
-		LOG_INFO("Audio: XAudio2 ready");
+		I.CreateReverb();
+		LOG_INFO("Audio: XAudio2 ready{}", I.reverb ? "" : " (no reverb)");
 		return true;
 	}
 
@@ -152,6 +202,7 @@ namespace Nightbloom
 		Impl& I = *m_Impl;
 		for (auto& v : I.voices) if (v.voice) v.voice->DestroyVoice();
 		I.voices.clear();
+		if (I.reverb) { I.reverb->DestroyVoice(); I.reverb = nullptr; }
 		for (auto*& b : I.buses) if (b) { b->DestroyVoice(); b = nullptr; }
 		if (I.master) { I.master->DestroyVoice(); I.master = nullptr; }
 		if (I.xa) { I.xa->Release(); I.xa = nullptr; }
@@ -160,7 +211,7 @@ namespace Nightbloom
 
 	bool AudioSystem::IsAvailable() const { return m_Impl && m_Impl->xa != nullptr; }
 
-	void AudioSystem::Play(const AudioClip& clip, float volume, float pitch, float pan, AudioBus bus)
+	void AudioSystem::Play(const AudioClip& clip, float volume, float pitch, float pan, AudioBus bus, const PlayFx& fx)
 	{
 		Impl& I = *m_Impl;
 		if (!I.xa || clip.Empty() || volume <= 0.0f) return;
@@ -191,7 +242,7 @@ namespace Nightbloom
 
 		slot->voice->Stop();
 		slot->voice->FlushSourceBuffers();
-		I.Configure(slot->voice, clip, bus, volume, pitch, pan);
+		I.Configure(slot->voice, clip, bus, volume, pitch, pan, fx);
 		Impl::Submit(slot->voice, clip, false);
 		slot->voice->Start();
 		slot->started = ++I.clock;
@@ -229,6 +280,11 @@ namespace Nightbloom
 					const float a = (std::clamp(pan, -1.0f, 1.0f) + 1.0f) * 0.25f * 3.14159265f;
 					float m[2] = { std::cos(a), std::sin(a) };
 					v.voice->SetOutputMatrix(I.buses[static_cast<int>(v.bus)], 1, 2, m);
+					if (I.reverb && v.bus == AudioBus::Sfx)
+					{
+						float r[2] = { 0.0f, 0.0f };   // loops stay dry
+						v.voice->SetOutputMatrix(I.reverb, 1, 2, r);
+					}
 				}
 				return;
 			}
@@ -274,7 +330,7 @@ namespace Nightbloom
 	bool AudioSystem::Initialize() { return false; }
 	void AudioSystem::Shutdown() {}
 	bool AudioSystem::IsAvailable() const { return false; }
-	void AudioSystem::Play(const AudioClip&, float, float, float, AudioBus) {}
+	void AudioSystem::Play(const AudioClip&, float, float, float, AudioBus, const PlayFx&) {}
 	SoundHandle AudioSystem::PlayLoop(const AudioClip&, float, float, AudioBus) { return 0; }
 	void AudioSystem::SetLoop(SoundHandle, float, float, float) {}
 	void AudioSystem::StopLoop(SoundHandle) {}

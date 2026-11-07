@@ -7,10 +7,13 @@
 // volume under a master. Mono clips pan; stereo clips (music) play as-is.
 //
 // Deliberately small: no 3D positioning (callers compute pan + attenuation from
-// their camera, which is a couple of lines), no streaming (clips are in memory),
-// no effects chain. If the device can't be opened (no audio hardware, a test
-// runner, a remote session) Initialize() returns false and every call is a
-// harmless no-op, so nothing upstream needs to care.
+// their camera, which is a couple of lines), no streaming (clips are in memory).
+// Two effects, both per one-shot (PlayFx): a low-pass filter (distance
+// muffling) and a send to a shared reverb that feeds the Sfx bus (space —
+// distant things are mostly tail). If the device can't be opened (no audio
+// hardware, a test runner, a remote session) Initialize() returns false and
+// every call is a harmless no-op, so nothing upstream needs to care. If only
+// the reverb fails, sends are silently dropped.
 //
 // LIFETIME: a clip's samples are read directly while it plays, so a clip must
 // outlive every sound playing it. Keep clips as long-lived members.
@@ -42,6 +45,13 @@ namespace Nightbloom
 
 	using SoundHandle = uint32_t;   // loops only; 0 = invalid
 
+	// Per-sound processing. Defaults = dry and unfiltered.
+	struct PlayFx
+	{
+		float lowpassHz = 0.0f;   // > 0: low-pass cutoff (muffled with distance); 0 = open
+		float reverb = 0.0f;      // 0..1 send to the shared reverb (Sfx bus sounds only)
+	};
+
 	class AudioSystem
 	{
 	public:
@@ -57,7 +67,7 @@ namespace Nightbloom
 		// One-shot. volume 0..1+, pitch as a playback-rate ratio (0.05..4),
 		// pan -1 (left) .. +1 (right).
 		void Play(const AudioClip& clip, float volume = 1.0f, float pitch = 1.0f, float pan = 0.0f,
-			AudioBus bus = AudioBus::Sfx);
+			AudioBus bus = AudioBus::Sfx, const PlayFx& fx = PlayFx{});
 
 		// Looping sound you keep adjusting (engine hum, music).
 		SoundHandle PlayLoop(const AudioClip& clip, float volume = 1.0f, float pitch = 1.0f, AudioBus bus = AudioBus::Sfx);
