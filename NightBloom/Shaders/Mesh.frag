@@ -15,7 +15,7 @@ layout(set = 1, binding = 0) uniform sampler2D texSampler;
 // ---- Push Constants ----
 layout(push_constant) uniform PushConstants {
     mat4 model;
-    vec4 customData;   // (0.01,1] = glass tint; (1,2) = opaque tint; 2..3 = sky emissive; >= 3 = world emissive
+    vec4 customData;   // (0.01,1] = glass tint; (1,2) = opaque tint (below 1.5 = dithered fade); 2..3 = sky emissive; >= 3 = world emissive
 } push;
 
 // ---- Fragment Inputs ----
@@ -140,6 +140,24 @@ void main()
     // colours out to pastel; use w = 1.5 for "this box is red".
     bool isOpaqueTint = (push.customData.w > 1.01 && push.customData.w < 2.0);
     bool isMaterialDriven = (push.customData.w > 0.01) && !isOpaqueTint;
+
+    // Screen-door fade, same mode: w in (1, 1.5) is partially see-through,
+    // opacity = (w - 1) * 2, so 1.5 and up stays fully solid (every existing
+    // tinted object). A 4x4 Bayer pattern discards pixels instead of blending,
+    // so no sorting or transparent pipeline is needed. Used to fade geometry
+    // between a third-person camera and the player.
+    if (isOpaqueTint)
+    {
+        float opacity = clamp((push.customData.w - 1.0) * 2.0, 0.0, 1.0);
+        if (opacity < 0.999)
+        {
+            const float bayer[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
+                                              3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+            ivec2 cell = ivec2(gl_FragCoord.xy) & 3;
+            if (opacity <= (bayer[cell.y * 4 + cell.x] + 0.5) / 16.0)
+                discard;
+        }
+    }
     vec4 albedo = isMaterialDriven ? push.customData
                 : isOpaqueTint     ? vec4(texColor.rgb * push.customData.rgb, 1.0)
                 :                    texColor;
